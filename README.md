@@ -6,7 +6,7 @@ works on it with a served model and external tools, and the user sees a verifiab
 
 The full specification is in [`course_project.pdf`](course_project.pdf).
 
-> **Status:** Team formation and topic selection. The proposal is due **October 29**.
+> **Status:** Team formed. Working on topic selection. The proposal is due **October 29**.
 
 ---
 
@@ -106,7 +106,7 @@ Logs and traces feed into test cases and results.
 
 | # | Milestone | Due | Status |
 |---|-----------|-----|--------|
-| 1 | Team formation (3–5 students) | — | ⬜ |
+| 1 | Team formation (3–5 students) | — | ✅ |
 | 2 | Topic selection + **two-page proposal** (motivation, proposed system, evaluation plan) | **Oct 29** | ⬜ |
 | 3 | Project development: implement, evaluate, and refine scope based on feedback | — | ⬜ |
 | 4 | Final presentation + short demo + final code repository | TBD | ⬜ |
