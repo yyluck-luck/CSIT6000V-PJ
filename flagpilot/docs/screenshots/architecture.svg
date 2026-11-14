@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB',sans-serif">
+  <rect width="960" height="470" fill="#f7f8fa"/>
+
+  <text x="34" y="42" font-size="20" font-weight="600" fill="#111827">FlagPilot 执行链路</text>
+  <text x="34" y="66" font-size="13" fill="#6b7280">一次 attempt 的五个阶段：解出答案不等于通过，脚本必须能复现同一个 flag</text>
+
+  <!-- 1 -->
+  <rect x="34" y="104" width="160" height="104" rx="10" fill="#ffffff" stroke="#d8dde5"/>
+  <text x="50" y="130" font-size="12" fill="#9ca3af">01</text>
+  <text x="50" y="152" font-size="14" font-weight="600" fill="#111827">题目输入</text>
+  <text x="50" y="174" font-size="11.5" fill="#4b5563">题库 index.jsonl</text>
+  <text x="50" y="192" font-size="11.5" fill="#4b5563">或上传自建题</text>
+
+  <!-- 2 -->
+  <rect x="214" y="104" width="160" height="104" rx="10" fill="#ffffff" stroke="#d8dde5"/>
+  <text x="230" y="130" font-size="12" fill="#9ca3af">02</text>
+  <text x="230" y="152" font-size="14" font-weight="600" fill="#111827">沙箱准备</text>
+  <text x="230" y="174" font-size="11.5" fill="#4b5563">附件只读落盘</text>
+  <text x="230" y="192" font-size="11.5" fill="#4b5563">rlimit + 超时杀组</text>
+
+  <!-- 3 大框 -->
+  <rect x="394" y="104" width="212" height="104" rx="10" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="410" y="130" font-size="12" fill="#60a5fa">03</text>
+  <text x="410" y="152" font-size="14" font-weight="600" fill="#1e3a8a">Agent 循环（≤20 轮）</text>
+  <rect x="410" y="164" width="88" height="30" rx="6" fill="#ffffff" stroke="#bfdbfe"/>
+  <text x="454" y="183" font-size="11.5" text-anchor="middle" fill="#1e40af">模型</text>
+  <text x="508" y="183" font-size="13" fill="#60a5fa">↔</text>
+  <rect x="522" y="164" width="70" height="30" rx="6" fill="#ffffff" stroke="#bfdbfe"/>
+  <text x="557" y="183" font-size="11.5" text-anchor="middle" fill="#1e40af">工具箱</text>
+
+  <!-- 4 -->
+  <rect x="626" y="104" width="140" height="104" rx="10" fill="#ffffff" stroke="#d8dde5"/>
+  <text x="642" y="130" font-size="12" fill="#9ca3af">04</text>
+  <text x="642" y="152" font-size="14" font-weight="600" fill="#111827">提交</text>
+  <text x="642" y="174" font-size="11.5" fill="#4b5563">flag</text>
+  <text x="642" y="192" font-size="11.5" fill="#4b5563">+ solve.py</text>
+
+  <!-- 5 -->
+  <rect x="786" y="104" width="140" height="104" rx="10" fill="#ecfdf5" stroke="#86efac"/>
+  <text x="802" y="130" font-size="12" fill="#4ade80">05</text>
+  <text x="802" y="152" font-size="14" font-weight="600" fill="#065f46">重放验证</text>
+  <text x="802" y="174" font-size="11.5" fill="#047857">干净目录重跑</text>
+  <text x="802" y="192" font-size="11.5" fill="#047857">比对 flag</text>
+
+  <!-- 箭头 -->
+  <g stroke="#9ca3af" stroke-width="1.6" fill="none">
+    <path d="M194 156 H208"/><path d="M206 151 L213 156 L206 161"/>
+    <path d="M374 156 H388"/><path d="M386 151 L393 156 L386 161"/>
+    <path d="M606 156 H620"/><path d="M618 151 L625 156 L618 161"/>
+    <path d="M766 156 H780"/><path d="M778 151 L785 156 L778 161"/>
+  </g>
+
+  <!-- 模型服务 -->
+  <rect x="394" y="238" width="212" height="62" rx="10" fill="#ffffff" stroke="#d8dde5" stroke-dasharray="4 3"/>
+  <text x="500" y="262" font-size="12.5" font-weight="600" text-anchor="middle" fill="#374151">模型服务（OpenAI 兼容）</text>
+  <text x="500" y="283" font-size="11.5" text-anchor="middle" fill="#6b7280">vLLM · Ollama · mock</text>
+  <path d="M500 208 V232" stroke="#9ca3af" stroke-width="1.4" stroke-dasharray="3 3"/>
+  <path d="M495 230 L500 237 L505 230" fill="none" stroke="#9ca3af" stroke-width="1.4"/>
+
+  <!-- 产物 -->
+  <rect x="34" y="238" width="330" height="62" rx="10" fill="#ffffff" stroke="#d8dde5"/>
+  <text x="50" y="262" font-size="12.5" font-weight="600" fill="#374151">运行产物（逐事件落盘）</text>
+  <text x="50" y="283" font-size="11.5" fill="#6b7280">runs/&lt;batch&gt;/&lt;run&gt;/trace.jsonl · work/ · replay/</text>
+
+  <!-- 结论 -->
+  <rect x="626" y="238" width="300" height="62" rx="10" fill="#ffffff" stroke="#d8dde5"/>
+  <text x="642" y="262" font-size="12.5" font-weight="600" fill="#374151">四态结论</text>
+  <circle cx="650" cy="282" r="4" fill="#16a34a"/>
+  <text x="660" y="286" font-size="11" fill="#374151">verified</text>
+  <circle cx="722" cy="282" r="4" fill="#d97706"/>
+  <text x="732" y="286" font-size="11" fill="#374151">unverified</text>
+  <circle cx="802" cy="282" r="4" fill="#dc2626"/>
+  <text x="812" y="286" font-size="11" fill="#374151">wrong</text>
+  <circle cx="866" cy="282" r="4" fill="#6b7280"/>
+  <text x="876" y="286" font-size="11" fill="#374151">budget</text>
+
+  <!-- 底部说明 -->
+  <line x1="34" y1="336" x2="926" y2="336" stroke="#e5e7eb"/>
+  <text x="34" y="362" font-size="12.5" font-weight="600" fill="#111827">判据为什么是"重放"而不是"对答案"</text>
+  <text x="34" y="384" font-size="12" fill="#4b5563">flag 只有 sha256 进沙箱，明文不落盘；模型交的 solve.py 会被复制到只有题目附件的新目录里从零执行。</text>
+  <text x="34" y="404" font-size="12" fill="#4b5563">脚本跑出的 flag 与提交值一致才判 verified；flag 对但脚本跑不出 → unverified；没有 gold 的自建题 → reproduced（降级结论）。</text>
+
+  <text x="34" y="438" font-size="11" fill="#9ca3af">零第三方依赖（Python ≥ 3.11） · 同一套代码支持 vLLM 与 Ollama · 沙箱为进程级隔离，非容器级</text>
+</svg>

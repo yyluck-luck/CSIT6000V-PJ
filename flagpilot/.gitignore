@@ -1,0 +1,23 @@
+# 运行产物（含 trace、沙箱现场、重放目录、答疑记录、跨 run 记忆）
+runs/
+.run/
+
+# 题库（体积大且含答案哈希；按 docs/TASKS.md 自行放置）
+tasks/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+
+# 日志与临时包
+*.log
+logs/
+*.tar.gz
