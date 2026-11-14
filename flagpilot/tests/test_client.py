@@ -1,0 +1,186 @@
+"""客户端测试：用一个假服务端模拟"不认识 chat_template_kwargs"的运行时。
+
+这个场景不是假设——Ollama / llama.cpp / 老版本 vLLM 都可能直接 400。
+客户端必须能自己降级，否则本地拿真模型做冒烟会一开始就卡住。
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from flagpilot.client import ChatClient  # noqa: E402
+from flagpilot.config import ModelSpec  # noqa: E402
+
+REQUESTS: list[dict] = []
+
+
+class Stub(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(n) or b"{}")
+        REQUESTS.append(body)
+
+        if "chat_template_kwargs" in body:
+            msg = json.dumps({"error": "unknown field chat_template_kwargs"}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(msg)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(msg)
+            self.close_connection = True
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for chunk in (
+            {"choices": [{"delta": {"content": '{"action":"shell"'}}]},
+            {"choices": [{"delta": {"content": ',"cmd":"ls"}'}, "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 7}},
+        ):
+            self.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
+            self.wfile.flush()
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+        self.close_connection = True
+
+
+class TestDowngrade(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def setUp(self):
+        REQUESTS.clear()
+        self.client = ChatClient(ModelSpec(
+            name="stub",
+            base_url=f"http://127.0.0.1:{self.port}/v1",
+            enable_thinking=False,
+        ))
+
+    def test_retries_without_template_kwargs(self):
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(comp.error, "")
+        self.assertIn("shell", comp.text)
+        self.assertIn("降级", comp.note)
+        self.assertEqual(len(REQUESTS), 2, "第一次 400，应当重试一次")
+        self.assertIn("chat_template_kwargs", REQUESTS[0])
+        self.assertNotIn("chat_template_kwargs", REQUESTS[1])
+
+    def test_downgrade_is_sticky(self):
+        self.client.complete([{"role": "user", "content": "hi"}])
+        REQUESTS.clear()
+        self.client.complete([{"role": "user", "content": "again"}])
+        self.assertEqual(len(REQUESTS), 1, "降级后不应再发会被拒的字段")
+        self.assertNotIn("chat_template_kwargs", REQUESTS[0])
+
+    def test_usage_is_reported(self):
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(comp.prompt_tokens, 12)
+        self.assertEqual(comp.completion_tokens, 7)
+        self.assertEqual(comp.usage_source, "reported")
+
+
+class TestPayloadFields(unittest.TestCase):
+    """关闭思维链要靠 reasoning_effort，而不是 /no_think（Ollama 忽略后者）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def setUp(self):
+        REQUESTS.clear()
+
+    def mk(self, thinking: bool):
+        return ChatClient(ModelSpec(name="stub", base_url=f"http://127.0.0.1:{self.port}/v1",
+                                    enable_thinking=thinking))
+
+    def test_off_sends_reasoning_effort_none(self):
+        self.mk(False).complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(REQUESTS[0].get("reasoning_effort"), "none")
+        self.assertEqual(REQUESTS[0]["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_on_does_not_send_reasoning_effort(self):
+        self.mk(True).complete([{"role": "user", "content": "hi"}])
+        self.assertNotIn("reasoning_effort", REQUESTS[0])
+        self.assertEqual(REQUESTS[0]["chat_template_kwargs"], {"enable_thinking": True})
+
+
+class ReasoningStub(BaseHTTPRequestHandler):
+    """模拟 Ollama：思维链走 reasoning 字段，content 一直是空的。"""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(n)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for chunk in (
+            {"choices": [{"delta": {"reasoning": '{"thought":"看看文件",'}}]},
+            {"choices": [{"delta": {"reasoning": '"action":"shell","cmd":"ls"}'},
+                          "finish_reason": "stop"}]},
+            {"choices": [], "usage": {"prompt_tokens": 20, "completion_tokens": 9}},
+        ):
+            self.wfile.write(b"data: " + json.dumps(chunk, ensure_ascii=False).encode() + b"\n\n")
+            self.wfile.flush()
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+        self.close_connection = True
+
+
+class TestReasoningFallback(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), ReasoningStub)
+        port = cls.srv.server_address[1]
+        cls.client = ChatClient(ModelSpec(name="stub", base_url=f"http://127.0.0.1:{port}/v1",
+                                          enable_thinking=False))
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def test_action_recovered_from_reasoning(self):
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(comp.error, "")
+        # 正文为空时不能直接判死：动作就在 reasoning 里
+        self.assertIn('"action":"shell"', comp.text.replace(" ", ""))
+        self.assertIn("reasoning", comp.note)
+        self.assertTrue(comp.reasoning, "思维链原文要留档，便于事后诊断")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

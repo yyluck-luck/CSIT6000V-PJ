@@ -1,0 +1,59 @@
+# NOTICE
+
+本仓库（FlagPilot）包含的代码与文档，与它**不包含**的第三方数据，归属如下。
+
+## 一、本仓库不含题目内容
+
+`tasks/` 不随仓库分发（见 `.gitignore`）。FlagPilot 只定义一份数据契约，题库需要单独获取：
+
+- 方式一：从上游按 `scripts/build_taskset.py` 重建（推荐，见 `docs/DATASET.md`）
+- 方式二：把已有的 `no-solutions/` 目录放到 `tasks/`，或用 `FLAGPILOT_TASKS` 指向它
+
+因此本仓库**不再分发**任何第三方题目附件。
+
+## 二、题库的上游来源
+
+题目数据来自 **InterCode** 的 CTF 子集：
+
+> InterCode: Standardizing and Benchmarking Interactive Coding with Execution Feedback
+> John Yang, Akshara Prabhakar, Karthik Narasimhan, Shunyu Yao — NeurIPS 2023 Datasets & Benchmarks
+> https://github.com/princeton-nlp/intercode
+>
+> MIT License — Copyright (c) 2023 Princeton Natural Language Processing
+
+InterCode 以 MIT 许可分发其仓库，其中包含 `data/ctf/ic_ctf.json` 与 `data/ctf/task_assets/`。`scripts/build_taskset.py` 对这些内容做的是：按类别筛选、剔除依赖在线服务的题、剥离每题 `solution/`、把 gold 转为 sha256、重排为本地索引。
+
+## 三、题目的原始出处
+
+题面与附件（pcap、磁盘镜像、图片、加密文件等）原始发布于 **picoCTF**，由 Carnegie Mellon University 的 CyLab 主办：
+
+- 练习区：https://play.picoctf.org/practice
+- 每道题的原始链接记录在 `index/tasks.jsonl` 的 `source` 字段，题号在 `pico_challenge_id`
+
+picoCTF 的**平台代码**以 MIT 发布（CMU 与 ForAllSecure 声明）；**题目内容**的再分发授权并未以同等条款明确给出，官方竞赛规则将材料用途限制在参赛相关范围内。
+
+因此：
+
+- 若你只是**使用**这些题目做评测或教学，正常引用出处即可；
+- 若你要**公开再分发**题目附件，请自行评估授权，或改为只分发 `build_taskset.py` 由使用者本地重建。
+
+## 四、本仓库代码
+
+`flagpilot/`、`app/`、`deploy/`、`tests/`、`scripts/`、`docs/` 为本项目原创，许可由项目作者与课程要求决定（若课程未指定，建议 MIT）。
+
+## 五、引用
+
+若在报告或论文中使用本系统或题库，请同时引用：
+
+```bibtex
+@inproceedings{yang2023intercode,
+  title     = {InterCode: Standardizing and Benchmarking Interactive Coding with Execution Feedback},
+  author    = {John Yang and Akshara Prabhakar and Karthik Narasimhan and Shunyu Yao},
+  year      = {2023},
+  eprint    = {2306.14898},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+```
+
+并注明题目原始出处为 picoCTF（Carnegie Mellon University）。

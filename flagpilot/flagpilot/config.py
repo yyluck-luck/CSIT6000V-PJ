@@ -1,0 +1,196 @@
+"""全局配置。所有路径与预算集中在这里，环境变量可覆盖。"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = PACKAGE_ROOT.parent
+
+
+def _env_path(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    return Path(raw).expanduser().resolve() if raw else default
+
+
+# 题库：只挂 no-solutions 版本（题解已剥离、gold 只剩 sha256）。
+# 默认找仓库内的 tasks/；题库放在别处时用 FLAGPILOT_TASKS 指过去。
+# 需要的结构见 docs/TASKS.md。
+TASKS_ROOT = _env_path("FLAGPILOT_TASKS", PROJECT_ROOT / "tasks")
+
+# 运行产物
+RUNS_ROOT = _env_path("FLAGPILOT_RUNS", PROJECT_ROOT / "runs")
+
+# 跨 run 的经验记忆（不含 flag，只记结论）
+MEMORY_ROOT = _env_path("FLAGPILOT_MEMORY", RUNS_ROOT / "memory")
+
+
+@dataclass
+class SandboxLimits:
+    """单次动作的资源上限。默认值按 picoCTF 题目的量级设定。"""
+
+    action_timeout_s: float = 60.0
+    # 单次动作最多占多少 CPU 秒（与 wall timeout 分开：防止 fork 炸弹式忙等）
+    cpu_seconds: int = 60
+    # 地址空间上限，MB。None = 不限制（macOS 上 RLIMIT_AS 行为不可靠）
+    memory_mb: int | None = 2048
+    # 单文件最大写入，MB
+    file_size_mb: int = 64
+    # 进程数上限（含线程）
+    max_procs: int = 256
+
+
+@dataclass
+class Budget:
+    """一次 attempt 的预算。三种上限任一触发即终止。"""
+
+    # TODO(你): 跑完 20 题冒烟后，按真实轮次分布调 max_turns（现在 20 是拍的）。
+
+    max_turns: int = 20
+    max_prompt_tokens: int = 200_000
+    max_completion_tokens: int = 32_000
+    max_wall_s: int = 1500
+
+
+@dataclass
+class Policy:
+    """上下文策略。对应 proposal 的 append-time truncation 那一格。"""
+
+    # 观察截断：保留头尾，中间折叠。None = 不截断（用作 baseline）
+    truncate_head_chars: int | None = 1500
+    truncate_tail_chars: int | None = 1500
+    # 单次观察的硬上限（字符），超长先截再入库，保证历史字节稳定
+    hard_cap_chars: int = 12_000
+    # 上下文压缩（compaction）阈值：messages 总字符超过它就折叠中段。
+    # None = 关闭。为什么按字符不按 token：这里没有 tokenizer，
+    # 按字符是确定性的、可复现的；换算比例写进报告再说明。
+    compact_at_chars: int | None = 48_000
+    # 压缩时保留最近多少条消息（user/assistant 混计）。
+    # 6 条 ≈ 最近 3 轮，够模型接上"我正在干什么"。
+    compact_keep_recent: int = 6
+
+
+@dataclass
+class Ablation:
+    """E1 的加法阶梯。每一档只比前一档多一个变量，其余保持一致。
+
+    这样做是为了让"提升来自哪一层"可归因。如果一档改两个变量，
+    拿到 +8pp 也说不清是截断带来的还是工具箱带来的。
+    """
+
+    name: str = "B3"
+    truncate: bool = True        # B1 起：追加时截断
+    structured_tools: bool = True  # B2 起：file / strings / decode 三个结构化动作
+    prompt: str = "full"         # B3 起：完整规则；minimal = 只给 schema
+
+    @property
+    def desc(self) -> str:
+        parts = [
+            "截断" if self.truncate else "无截断",
+            "结构化工具" if self.structured_tools else "仅 shell/python",
+            "完整 prompt" if self.prompt == "full" else "最小 prompt",
+        ]
+        return " + ".join(parts)
+
+
+# 注册表刻意写死在代码里，而不是读配置文件：
+# 消融的档位一旦能被随手改，报告里的"B2"就不再是可复现的同一件事。
+ABLATIONS: dict[str, Ablation] = {
+    "B0": Ablation(name="B0", truncate=False, structured_tools=False, prompt="minimal"),
+    "B1": Ablation(name="B1", truncate=True, structured_tools=False, prompt="minimal"),
+    "B2": Ablation(name="B2", truncate=True, structured_tools=True, prompt="minimal"),
+    "B3": Ablation(name="B3", truncate=True, structured_tools=True, prompt="full"),
+}
+
+
+def get_ablation(name: str | None) -> Ablation:
+    """取档位。None / 空 / 未知都回落到 B3（当前默认系统）。"""
+    if not name:
+        return Ablation(name="custom")
+    key = str(name).strip().upper()
+    if key in ABLATIONS:
+        return ABLATIONS[key]
+    raise ValueError(f"未知消融档位 {name!r}，可选：{', '.join(ABLATIONS)}")
+
+
+@dataclass
+class ModelSpec:
+    """模型端点。mock 用于无 API 的离线自测。"""
+
+    name: str = "mock"
+    base_url: str = "http://127.0.0.1:8000/v1"
+    api_key: str = "EMPTY"
+    temperature: float = 0.2
+    max_tokens: int = 2048
+    request_timeout_s: float = 180.0
+    # vLLM 的 Prometheus 端点，用于读 prefix cache 命中率；留空则不采
+    metrics_url: str = ""
+    # 计价，仅 Track H 有意义（美元 / 每百万 token）
+    price_in_per_mtok: float = 0.0
+    price_out_per_mtok: float = 0.0
+    # Qwen3 系列默认开 thinking，会吐出 <think>...</think> 并把预算吃光。
+    # Agent 每轮只要一个 JSON 动作，所以默认关掉；要做"思考 vs 不思考"消融再打开。
+    enable_thinking: bool = False
+    # 有些运行时（Ollama）不接受 chat_template_kwargs，此时用 Qwen3 的软开关
+    # ——在用户消息末尾加 /no_think。由 make_model_spec() 按模型名自动打开。
+    soft_no_think: bool = False
+
+
+def make_model_spec(name: str, base_url: str = "", thinking: bool = False, **kw) -> ModelSpec:
+    """构造 ModelSpec 的唯一入口。
+
+    为什么要有这个函数：CLI 和 web 曾经各写一份默认值，结果 web 那份漏了
+    soft_no_think，Qwen3 的思维链把每轮 2048 token 全吃掉，表现成"空回复 →
+    invalid_action → 失败率奇高"。这类 bug 不会报错，只会让数字变难看。
+    所有入口必须走这里，默认值才不会再漂。
+    """
+    lower = str(name).lower()
+    spec = ModelSpec(name=name, base_url=base_url or "http://127.0.0.1:8000/v1", **kw)
+    spec.enable_thinking = bool(thinking)
+    # Ollama 常忽略 chat_template_kwargs（会 400 后降级），所以再压一道软开关。
+    spec.soft_no_think = (not thinking) and "qwen3" in lower
+    return spec
+
+
+@dataclass
+class RunConfig:
+    """一次批跑的完整配置。会随 trace 一起落盘，保证可复现。"""
+
+    batch: str = "dev"
+    track: str = "L"  # L | H
+    model: ModelSpec = field(default_factory=ModelSpec)
+    budget: Budget = field(default_factory=Budget)
+    policy: Policy = field(default_factory=Policy)
+    limits: SandboxLimits = field(default_factory=SandboxLimits)
+    ablation: Ablation = field(default_factory=Ablation)
+    replay_timeout_s: float = 300.0
+    seeds: int = 1
+    # 是否在 prompt 里注入"这道题过去的尝试结论"。
+    # 批跑（E1）默认关：B0 的记录会污染 B1 的对照，四档就不再是只差一个变量。
+    # 交互式 web 由 server 打开——那里要的正是"别每次都从零开始"。
+    memory: bool = False
+    # 题库根目录随配置走，便于测试与在集群上换路径
+    tasks_root: Path = field(default_factory=lambda: TASKS_ROOT)
+
+    def fingerprint(self) -> dict:
+        """写进 trace 的配置快照（不含密钥）。"""
+        return {
+            "batch": self.batch,
+            "track": self.track,
+            "model": {
+                "name": self.model.name,
+                "base_url": self.model.base_url,
+                "temperature": self.model.temperature,
+                "max_tokens": self.model.max_tokens,
+            },
+            "budget": self.budget.__dict__,
+            "policy": self.policy.__dict__,
+            "ablation": self.ablation.__dict__,
+            "limits": {k: v for k, v in self.limits.__dict__.items()},
+            "replay_timeout_s": self.replay_timeout_s,
+            "seeds": self.seeds,
+            "memory": self.memory,
+            "version": __import__("flagpilot").__version__,
+        }

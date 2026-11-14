@@ -1,0 +1,21 @@
+# 统一换行符：Windows 上 clone 时不要把 shell/slurm 脚本转成 CRLF，
+# 否则在 Linux 集群上会报 "bad interpreter: /bin/bash^M"。
+* text=auto eol=lf
+
+# 这些必须是二进制，不能做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary
+*.pcap binary
+*.dd binary
+*.gz binary
+
+# 显式声明脚本类型，避免被识别成文本后按平台转换
+*.sh   text eol=lf
+*.slurm text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
