@@ -214,11 +214,13 @@ def main() -> None:
             r["title"].replace("|", "\\|"), r["pico_challenge_id"]))
     (index_dir / "tasks.md").write_text("\n".join(md) + "\n")
 
-    # ship the verifier so each version is self-contained
+    # ship the verifier so each version is self-contained.
+    # (It was renamed verify.py -> verify_taskset.py; copying the old name made every
+    #  fresh rebuild crash here with exit 1 after all tasks had already been written.)
     scripts_out = out / "scripts"
     scripts_out.mkdir(exist_ok=True)
     here = Path(__file__).resolve().parent
-    shutil.copy2(here / "verify.py", scripts_out / "verify.py")
+    shutil.copy2(here / "verify_taskset.py", scripts_out / "verify_taskset.py")
 
     print(f"kept {len(kept)} tasks")
     for cat in KEEP:
