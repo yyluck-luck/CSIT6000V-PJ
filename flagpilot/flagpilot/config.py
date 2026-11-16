@@ -130,6 +130,13 @@ class ModelSpec:
     # 计价，仅 Track H 有意义（美元 / 每百万 token）
     price_in_per_mtok: float = 0.0
     price_out_per_mtok: float = 0.0
+    # 服务商。决定"关思维链"用哪个参数：vLLM/Ollama 认 chat_template_kwargs，
+    # DeepSeek 只认 {"thinking": {"type": ...}}——发错了要么 400，要么被静默忽略，
+    # 后者更糟：思维链照开，temperature 失效，还按输出 token 计费。
+    provider: str = "openai"          # openai | deepseek
+    # 价目表名（见 pricing.PRICE_TABLES）。给了就按"命中/未命中/输出 + 高峰"计价，
+    # 覆盖上面两个平价字段。
+    price_table: str = ""
     # Qwen3 系列默认开 thinking，会吐出 <think>...</think> 并把预算吃光。
     # Agent 每轮只要一个 JSON 动作，所以默认关掉；要做"思考 vs 不思考"消融再打开。
     enable_thinking: bool = False
@@ -151,7 +158,39 @@ def make_model_spec(name: str, base_url: str = "", thinking: bool = False, **kw)
     spec.enable_thinking = bool(thinking)
     # Ollama 常忽略 chat_template_kwargs（会 400 后降级），所以再压一道软开关。
     spec.soft_no_think = (not thinking) and "qwen3" in lower
+    # DeepSeek：换成它认的 thinking 开关，并挂上官方价目表。
+    # 默认按 host 判定（web 和 CLI 走同一个入口，判定不能只在一处做）；
+    # --track H 另外显式传 provider="deepseek"，端点被改到代理 / 网关时也不会悄悄退回 vLLM 写法。
+    if "api.deepseek.com" in spec.base_url.lower() or kw.get("provider") == "deepseek":
+        spec.provider = kw.get("provider") or "deepseek"
+        if not kw.get("price_table") and lower in DEEPSEEK_FLASH_NAMES \
+                and not (spec.price_in_per_mtok or spec.price_out_per_mtok):
+            spec.price_table = "deepseek-flash"
     return spec
+
+
+# ---------------------------------------------------------------- Track H
+
+# DeepSeek V4.1 = deepseek-flash（官方文档：DeepSeek-V4.1-Flash-1017）。
+# 旧名仍被接受、按 Flash 计价（文档原话），所以一起认。
+DEEPSEEK_FLASH_NAMES = ("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp")
+
+TRACK_H = {
+    "model": "deepseek-flash",
+    "base_url": "https://api.deepseek.com",
+    # 密钥按顺序找：本项目 .env 约定的名字，再是 DeepSeek 文档里的名字。
+    # 刻意不读 FLAGPILOT_API_KEY——deploy/env.sh 把它设成 vLLM 用的 "EMPTY"。
+    "key_env": ("DSV41_API_KEY", "DEEPSEEK_API_KEY"),
+}
+
+
+def track_h_api_key(environ=None) -> str:
+    env = os.environ if environ is None else environ
+    for k in TRACK_H["key_env"]:
+        v = (env.get(k) or "").strip()
+        if v:
+            return v
+    return ""
 
 
 @dataclass

@@ -19,11 +19,11 @@ export FP_MODEL_NAME="${FP_MODEL_NAME:-local-model}"
 export FP_TP="${FP_TP:-2}"                 # tensor parallel，通常 = 申请到的 GPU 数
 export FP_MAX_LEN="${FP_MAX_LEN:-32768}"   # 与课程给的上下文一致
 export FP_PORT="${FP_PORT:-8000}"
-export FP_MAX_SEQS="${FP_MAX_SEQS:-4}"     # 并发闸门，别超过集群允许值
+export FP_MAX_SEQS="${FP_MAX_SEQS:-4}"     # 并发闸门，别超过集群允许值；E3 的 8 并发格要 ≥ 8
 export FP_GPU_UTIL="${FP_GPU_UTIL:-0.90}"
 
 # 服务起来后，客户端用这个地址连。作业内可以用节点名直接访问；
-# 本地调试需要 ssh 隧道（见 docs/TACC部署.md 第 5 节）。
+# 本地调试需要 ssh 隧道（见 docs/TACC.md 第 8 节）。
 export FP_HOST="$(hostname -f 2>/dev/null || hostname)"
 export FLAGPILOT_BASE_URL="${FLAGPILOT_BASE_URL:-http://${FP_HOST}:${FP_PORT}/v1}"
 export FP_METRICS_URL="${FP_METRICS_URL:-http://${FP_HOST}:${FP_PORT}/metrics}"
@@ -35,3 +35,7 @@ export FP_TURNS="${FP_TURNS:-20}"
 export FP_SEEDS="${FP_SEEDS:-1}"
 export FP_ACTION_TIMEOUT="${FP_ACTION_TIMEOUT:-60}"
 export FP_REPLAY_TIMEOUT="${FP_REPLAY_TIMEOUT:-300}"
+
+# ---- GPU 账本（Track L 成本）----
+# run.slurm 后台每 FP_GPU_SAMPLE_S 秒采一次 nvidia-smi，runner 据此记 busy GPU 秒。
+export FP_GPU_SAMPLE_S="${FP_GPU_SAMPLE_S:-2}"

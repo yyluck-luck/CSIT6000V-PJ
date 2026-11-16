@@ -5,7 +5,8 @@
     run    --task general-004  跑一道题，实时打印每一步
     batch  --scope core ...    批量跑 + 续跑 + 分片
     report --batch dev         出指标（可 --md 导出）
-    compare --batches B0,B1    并排对比（E1 出表）
+    compare --batches B0,B1    并排对比（E1 出表；--e3 --ref 出 E3 表）
+    pair   --a X --b Y         配对比较 + 精确 McNemar（同题同 seed 逐对看修好/弄坏）
     probe  --mode brief        记忆探针：不给工具，单轮问 flag
     web                        起演示页面
 """
@@ -19,9 +20,9 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, config, metrics
-from .config import (ABLATIONS, Budget, Policy, RunConfig, SandboxLimits,
-                     get_ablation, make_model_spec)
+from . import __version__, config, gpu, metrics, splits
+from .config import (ABLATIONS, TRACK_H, Budget, Policy, RunConfig, SandboxLimits,
+                     get_ablation, make_model_spec, track_h_api_key)
 from .runner import BatchRunner
 from .tasks import load_index, select
 
@@ -248,14 +249,50 @@ def cmd_run(args) -> int:
 
 # ---------------------------------------------------------------- batch
 
+def _split_pool(args, cfg):
+    """按 --split 取题池；跑 test 时过守卫。返回 (题池, 错误码或 None)。"""
+    pool = load_index()
+    which = getattr(args, "split", "all") or "all"
+    if which == "all":
+        return pool, None
+    path = Path(args.split_file).expanduser() if args.split_file else splits.default_split_path()
+    try:
+        sp = splits.load_split(path)
+    except (FileNotFoundError, ValueError) as e:
+        _p(str(e))
+        return None, 2
+    current = splits.index_sha256()
+    if sp.get("index_sha256") and sp["index_sha256"] != current:
+        msg = f"划分文件对应的题库索引已变（{sp['index_sha256'][:12]} ≠ {current[:12]}）"
+        if which == "test":
+            _p(msg + "，test 不能沿用旧划分。请和团队确认后重新冻结划分。")
+            return None, 2
+        _p("[warn] " + msg + "；dev 继续，但别据此下结论。")
+    pool = splits.filter_tasks(pool, which, sp)
+    if which == "test":
+        fp = {**cfg.fingerprint(), "split": which,
+              "split_test": sorted(sp["test"]), "split_index": sp.get("index_sha256")}
+        try:
+            _p("[guard] " + splits.guard_test_run(config.RUNS_ROOT, cfg.batch,
+                                                  splits.config_hash(fp), args.confirm_test))
+        except PermissionError as e:
+            _p(str(e))
+            return None, 2
+    _p(f"[split] {which}：{len(pool)} 题（{path}）")
+    return pool, None
+
+
 def cmd_batch(args) -> int:
     cfg = _build_cfg(args)
     shard = None
     if args.shard:
         i, n = args.shard.split("/")
         shard = (int(i), int(n))
+    pool, err = _split_pool(args, cfg)
+    if err is not None:
+        return err
     tasks = select(
-        load_index(),
+        pool,
         names=args.tasks.split(",") if args.tasks else None,
         category=args.category,
         scope=args.scope,
@@ -283,7 +320,7 @@ def cmd_report(args) -> int:
         _p(f"找不到 {path}")
         return 1
     results = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    s = metrics.summarize(results)
+    s = metrics.summarize(results, gpu=gpu.load_ledger(path.parent))
     if args.json:
         _p(json.dumps(s, ensure_ascii=False, indent=2))
     else:
@@ -309,15 +346,39 @@ def cmd_compare(args) -> int:
             _p(f"[warn] 跳过 {n}：找不到 {p}")
             continue
         rs = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
-        batches[n] = metrics.summarize(rs, with_tags=False)
+        batches[n] = metrics.summarize(rs, with_tags=False, gpu=gpu.load_ledger(p.parent))
     if not batches:
         return 1
-    table = metrics.compare(batches)
+    if args.ref and args.ref not in batches:
+        _p(f"--ref {args.ref} 不在已加载的批次里")
+        return 1
+    table = metrics.compare(batches, keys=metrics.E3_KEYS if args.e3 else None,
+                            ref=args.ref, guard_pts=args.guard_pts)
     _p(table)
     if args.md:
         out = Path(args.md).expanduser()
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(table + "\n", encoding="utf-8")
+        _p(f"\nMarkdown 已写入 {out}")
+    return 0
+
+
+def cmd_pair(args) -> int:
+    loaded = {}
+    for name in (args.a, args.b):
+        p = config.RUNS_ROOT / name / "runs.jsonl"
+        if not p.exists():
+            _p(f"找不到 {p}")
+            return 1
+        loaded[name] = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()
+                        if l.strip()]
+    res = metrics.paired(loaded[args.a], loaded[args.b], key=args.key)
+    text = metrics.render_paired(res, args.a, args.b)
+    _p(text)
+    if args.md:
+        out = Path(args.md).expanduser()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("```\n" + text + "\n```\n", encoding="utf-8")
         _p(f"\nMarkdown 已写入 {out}")
     return 0
 
@@ -385,19 +446,42 @@ def cmd_web(args) -> int:
 
 # ---------------------------------------------------------------- 工具
 
-def _build_cfg(args) -> RunConfig:
+def _resolve_endpoint(args) -> tuple[str, str, str]:
+    """(model, base_url, api_key)。Track H 一个 --track H 就够，其余自动补全。
+
+    Track H 刻意不读 FLAGPILOT_BASE_URL / FLAGPILOT_API_KEY：deploy/env.sh 把它们
+    设成了 vLLM 节点地址和 "EMPTY"，在集群上沿用会把托管模型的请求打到本地服务上。
+    """
+    if getattr(args, "track", "L") == "H":
+        model = args.model or TRACK_H["model"]
+        base = args.base_url or os.environ.get("FLAGPILOT_H_BASE_URL") or TRACK_H["base_url"]
+        key = args.api_key or track_h_api_key()
+        if not key and not str(model).lower().startswith("mock"):
+            raise SystemExit(
+                "Track H 需要 DeepSeek 密钥：设置环境变量 "
+                + " 或 ".join(TRACK_H["key_env"]) + "，或用 --api-key 传入")
+        return model, base, key or "EMPTY"
+    model = args.model or "mock"
     base = args.base_url or os.environ.get("FLAGPILOT_BASE_URL") \
         or os.environ.get("SERVICE_BASE_URL") or "http://127.0.0.1:8000/v1"
+    return model, base, args.api_key or os.environ.get("FLAGPILOT_API_KEY", "EMPTY")
+
+
+def _build_cfg(args) -> RunConfig:
+    name, base, key = _resolve_endpoint(args)
+    # H 轨就是 DeepSeek：不靠 host 猜（FLAGPILOT_H_BASE_URL 可能指向代理）。
+    extra = {"provider": "deepseek"} if getattr(args, "track", "L") == "H" else {}
     model = make_model_spec(
-        args.model,
+        name,
         base,
         thinking=bool(getattr(args, "thinking", False)),
-        api_key=args.api_key or os.environ.get("FLAGPILOT_API_KEY", "EMPTY"),
+        api_key=key,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         metrics_url=args.metrics_url or "",
         price_in_per_mtok=args.price_in,
         price_out_per_mtok=args.price_out,
+        **extra,
     )
     abl = get_ablation(getattr(args, "ablate", None))
     # 消融档位优先于命令行开关：B0/B1 的"有没有截断"是实验变量，
@@ -436,8 +520,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_common(p):
         p.add_argument("--batch", default="dev")
-        p.add_argument("--track", default="L", choices=["L", "H"])
-        p.add_argument("--model", default="mock")
+        p.add_argument("--track", default="L", choices=["L", "H"],
+                       help="L=自部署 vLLM；H=DeepSeek V4.1（自动补端点/密钥/价目表）")
+        p.add_argument("--model", default=None,
+                       help="默认：Track L 用 mock，Track H 用 deepseek-flash")
         p.add_argument("--base-url")
         p.add_argument("--api-key")
         p.add_argument("--metrics-url", default="")
@@ -477,6 +563,11 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--workers", type=int, default=4)
     b.add_argument("--seeds", type=int, default=1)
     b.add_argument("--no-resume", action="store_true")
+    b.add_argument("--split", default="all", choices=["all", "dev", "test"],
+                   help="题池划分（默认 all 不变）；test 需要 --confirm-test")
+    b.add_argument("--split-file", help="划分文件（默认 FLAGPILOT_SPLITS 或 <题库>/index/splits.json）")
+    b.add_argument("--confirm-test", action="store_true",
+                   help="确认这是定稿配置在 test 上的唯一一次运行")
     b.set_defaults(func=cmd_batch)
 
     rp = sub.add_parser("report", help="出指标")
@@ -489,7 +580,18 @@ def build_parser() -> argparse.ArgumentParser:
     cp = sub.add_parser("compare", help="并排对比多个批次（E1 出表用）")
     cp.add_argument("--batches", required=True, help="逗号分隔，如 B0,B1,B2,B3")
     cp.add_argument("--md", help="导出 Markdown 表格")
+    cp.add_argument("--e3", action="store_true",
+                    help="E3 列：solve p50/p95、缓存、GPU-s/verified、$/verified")
+    cp.add_argument("--ref", help="参照批次：多一列 verified 差值与护栏判定")
+    cp.add_argument("--guard-pts", type=float, default=5.0, help="护栏阈值（百分点）")
     cp.set_defaults(func=cmd_compare)
+
+    pr = sub.add_parser("pair", help="配对比较两个批次（精确 McNemar）")
+    pr.add_argument("--a", required=True, help="基线批次")
+    pr.add_argument("--b", required=True, help="对照批次")
+    pr.add_argument("--key", default="verified", choices=["verified", "raw"])
+    pr.add_argument("--md", help="导出到文件")
+    pr.set_defaults(func=cmd_pair)
 
     pb = sub.add_parser("probe", help="记忆探针：不给工具，单轮问 flag")
     add_common(pb)
