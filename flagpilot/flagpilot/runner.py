@@ -9,11 +9,13 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from . import gpu
 from .agent import run_attempt
 from .config import RunConfig
 from .tasks import Task
@@ -60,6 +62,7 @@ class BatchRunner:
         print(f"[runner] 待跑 {len(jobs)} 个 attempt，并发 {self.workers}")
         out: list[dict] = []
         t0 = time.monotonic()
+        t_start = time.time()           # GPU 账本按墙上时钟对齐 nvidia-smi 采样
 
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futs = {
@@ -97,7 +100,32 @@ class BatchRunner:
                       f"turns={rec.get('turns')} {rec.get('wall_s')}s")
 
         print(f"[runner] 完成 {len(out)} 个，用时 {time.monotonic() - t0:.1f}s")
+        self._record_gpu(t_start, time.time(), len(out))
         return out
+
+    def _record_gpu(self, t_start: float, t_end: float, attempts: int) -> None:
+        """Track L 成本：把本次运行占用的 GPU 秒记进批次账本（续跑会累加）。
+
+        只在作业里检测到 GPU 时才记——本地没有卡就不写，报告显示"—"而不是 0。
+        利用率采样文件由 run.slurm 通过 FP_GPU_UTIL_CSV 传进来，按本次运行的时间窗切片。
+        """
+        n = gpu.detect_gpus()
+        if n <= 0:
+            return
+        wall = max(0.0, t_end - t_start)
+        csv = os.environ.get("FP_GPU_UTIL_CSV")
+        busy = gpu.busy_gpu_seconds(csv, t_start, t_end) if csv else None
+        gpu.append_ledger(self.dir, {
+            "job_id": os.environ.get("SLURM_JOB_ID") or "local",
+            "gpus": n,
+            "started": round(t_start, 3),
+            "finished": round(t_end, 3),
+            "wall_s": round(wall, 2),
+            "gpu_seconds": round(n * wall, 1),
+            "busy_gpu_seconds": round(busy, 1) if busy is not None else None,
+            "attempts": attempts,
+            "workers": self.workers,
+        })
 
     def load_results(self) -> list[dict]:
         if not self.results_path.exists():

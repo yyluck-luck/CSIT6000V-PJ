@@ -21,7 +21,7 @@ from pathlib import Path
 from statistics import median
 from typing import Callable
 
-from . import context, verify
+from . import context, pricing, verify
 from .client import build_client
 from .config import Ablation, RunConfig
 from .memory import MemoryStore
@@ -226,6 +226,11 @@ def run_attempt(
     invalids = 0
     sum_prompt = 0
     sum_completion = 0
+    # 成本逐轮累加：高峰/非高峰按每次请求发出的时刻算，缓存命中按每轮回报算。
+    cost = 0.0
+    # Track H 的前缀缓存只能从 usage 里拿（托管 API 没有 /metrics）。
+    api_hit = api_miss = 0
+    api_seen = False
     ctx_tokens = 0
     ttfts: list[int] = []
     # 时间去处：模型生成 vs 工具执行 vs 其余（解析、拼 prompt、写盘、重放校验）
@@ -257,6 +262,11 @@ def run_attempt(
         comp = client.complete(messages)
         sum_prompt += comp.prompt_tokens
         sum_completion += comp.completion_tokens
+        cost += pricing.turn_cost(cfg.model, comp)
+        if comp.cache_hit_tokens is not None or comp.cache_miss_tokens is not None:
+            api_seen = True
+            api_hit += comp.cache_hit_tokens or 0
+            api_miss += comp.cache_miss_tokens or 0
         sum_model_ms += comp.latency_ms or 0
         ctx_tokens = comp.prompt_tokens
         if comp.ttft_ms > 0:
@@ -270,6 +280,8 @@ def run_attempt(
             ttft_ms=comp.ttft_ms,
             latency_ms=comp.latency_ms,
             usage_source=comp.usage_source,
+            cache_hit_tokens=comp.cache_hit_tokens,
+            cache_miss_tokens=comp.cache_miss_tokens,
             error=comp.error,
             text=comp.text[:4000],
         )
@@ -373,8 +385,6 @@ def run_attempt(
                 tr.event("compact", turn=turns, **cinfo)
 
     wall = time.monotonic() - t0
-    cost = (sum_prompt / 1_000_000) * cfg.model.price_in_per_mtok + \
-           (sum_completion / 1_000_000) * cfg.model.price_out_per_mtok
 
     sm1 = client.scrape_metrics()
     server = _cache_stats(sm0.values, sm1.values)
@@ -415,6 +425,11 @@ def run_attempt(
         "ttft_ms_mean": round(sum(ttfts) / len(ttfts), 1) if ttfts else 0,
         "ttft_ms_p50": round(median(ttfts), 1) if ttfts else 0,
         "cost_usd": round(cost, 6),
+        # 计价依据：价目表名，或 "flat"（--price-in/out），或 None（本地模型不计价）
+        "price_table": cfg.model.price_table or (
+            "flat" if (cfg.model.price_in_per_mtok or cfg.model.price_out_per_mtok) else None),
+        "api_cache_hit_tokens": api_hit if api_seen else None,
+        "api_cache_miss_tokens": api_miss if api_seen else None,
         "ablation": cfg.ablation.name,
         "model": cfg.model.name,
         "server": server,

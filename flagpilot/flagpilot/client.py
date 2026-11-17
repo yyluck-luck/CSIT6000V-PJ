@@ -37,6 +37,13 @@ class Completion:
     note: str = ""
     # Ollama 等运行时会单独返回思维链，正文可能为空。留档用于诊断。
     reasoning: str = ""
+    # 服务端回报的前缀缓存命中 / 未命中 prompt token（DeepSeek：prompt_cache_hit_tokens /
+    # prompt_cache_miss_tokens；OpenAI 风格：prompt_tokens_details.cached_tokens）。
+    # 没回报就是 None——Track H 的缓存命中率只能从这里来，不能从 /metrics 来。
+    cache_hit_tokens: int | None = None
+    cache_miss_tokens: int | None = None
+    # 思维链 token（completion_tokens_details.reasoning_tokens）。关了思维链应为 0。
+    reasoning_tokens: int | None = None
 
     @property
     def tokens(self) -> int:
@@ -49,6 +56,21 @@ class ServerMetrics:
 
     values: dict = field(default_factory=dict)
     error: str = ""
+
+
+def _cache_split(usage: dict, prompt_tokens: int) -> tuple[int | None, int | None]:
+    """从 usage 里取前缀缓存的命中 / 未命中数。取不到返回 (None, None)，不编数字。"""
+    hit = usage.get("prompt_cache_hit_tokens")
+    miss = usage.get("prompt_cache_miss_tokens")
+    if hit is None and miss is None:
+        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+        if cached is None:
+            return None, None
+        hit = int(cached)
+        miss = max(0, int(prompt_tokens) - hit) if prompt_tokens else None
+        return hit, miss
+    return (int(hit) if hit is not None else None,
+            int(miss) if miss is not None else None)
 
 
 class ChatClient:
@@ -79,9 +101,14 @@ class ChatClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if self.spec.provider == "deepseek":
+            # DeepSeek 的开关是 thinking.type（官方文档 Thinking Mode 一节）。
+            # 它默认开思维链；reasoning_effort 只认 low/high/max，没有 "none"，
+            # 所以下面那套 vLLM 写法在这里关不掉思维链。
+            payload["thinking"] = {"type": "enabled" if self.spec.enable_thinking else "disabled"}
         # vLLM 会把 chat_template_kwargs 透传给 tokenizer 的 chat template。
         # 只在服务端支持时才带——不支持会在下面自动降级。
-        if not self._no_template_kwargs:
+        elif not self._no_template_kwargs:
             payload["chat_template_kwargs"] = {"enable_thinking": self.spec.enable_thinking}
             if not self.spec.enable_thinking:
                 # Ollama 的 Qwen3 模板认这个字段，vLLM 也支持；不支持会 400 后降级。
@@ -145,7 +172,7 @@ class ChatClient:
                 detail = e.read().decode("utf-8", "replace")[:500]
             except Exception:
                 pass
-            if e.code == 400 and not self._no_template_kwargs:
+            if e.code == 400 and not self._no_template_kwargs and self.spec.provider != "deepseek":
                 # 大概率是 chat_template_kwargs 不被接受：降级后重试一次
                 self._no_template_kwargs = True
                 retry = self.complete(messages, max_tokens, on_delta=on_delta)
@@ -168,6 +195,8 @@ class ChatClient:
             note = "正文为空，已从 reasoning 字段取回内容"
         p_tok = int(usage.get("prompt_tokens") or 0)
         c_tok = int(usage.get("completion_tokens") or 0)
+        hit, miss = _cache_split(usage, p_tok)
+        r_tok = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
         src = "reported"
         if not p_tok:
             p_tok = sum(len(m.get("content", "")) for m in messages) // 4
@@ -186,6 +215,9 @@ class ChatClient:
             usage_source=src,
             note=note,
             reasoning=reasoning[:2000],
+            cache_hit_tokens=hit,
+            cache_miss_tokens=miss,
+            reasoning_tokens=int(r_tok) if r_tok is not None else None,
         )
 
     # ---------- 可选：服务端指标 ----------

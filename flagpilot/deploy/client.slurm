@@ -42,8 +42,12 @@ SHARD="${FP_SHARD:-}"
 EXTRA=""
 if [[ -n "$LIMIT" ]]; then EXTRA="$EXTRA --limit $LIMIT"; fi
 if [[ -n "$SHARD" ]]; then EXTRA="$EXTRA --shard $SHARD"; fi
+# dev / test 划分（docs/TACC.md 第 3 节）。test 的配置指纹含服务地址，分离式每次地址不同，
+# 续跑会被守卫当成换了配置——定稿 test 请用一体式 run.slurm。
+if [[ -n "${FP_SPLIT:-}" ]]; then EXTRA="$EXTRA --split ${FP_SPLIT}"; fi
+if [[ "${FP_CONFIRM_TEST:-0}" == "1" ]]; then EXTRA="$EXTRA --confirm-test"; fi
 
-echo "[client] batch=${BATCH} scope=${SCOPE} limit=${LIMIT:-all} shard=${SHARD:-1/1}"
+echo "[client] batch=${BATCH} scope=${SCOPE} limit=${LIMIT:-all} shard=${SHARD:-1/1} split=${FP_SPLIT:-all}"
 
 python3 -m flagpilot batch \
   --batch "${BATCH}" \

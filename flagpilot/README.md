@@ -75,6 +75,11 @@ python3 -m flagpilot doctor     # 环境与沙箱能力
 | 批量跑一个批次 | `python3 -m flagpilot batch --batch dev --scope core --workers 4 ...` |
 | 出指标 | `python3 -m flagpilot report --batch dev` |
 | 四档并排对比 | `python3 -m flagpilot compare --batches dev-B0,dev-B1,dev-B2,dev-B3` |
+| 配对显著性（精确 McNemar） | `python3 -m flagpilot pair --a dev-B2 --b dev-B3` |
+| E3 对比（Δ + 质量护栏） | `python3 -m flagpilot compare --e3 --ref <参照批次> --batches ...` |
+| 生成 dev / test 划分 | `python3 scripts/make_split.py --root "$FLAGPILOT_TASKS" --seed 0` |
+| 只跑 dev / 定稿后跑 test | `batch ... --split dev`；`batch ... --split test --confirm-test`（同一配置只允许一次） |
+| H 轨（DeepSeek）一命令 | `scripts/track_h.sh h-dev --split dev --limit 5`（密钥写在 `.env`） |
 | 不给工具问 flag | `python3 -m flagpilot probe --batch probe --mode brief` |
 | 停止 | `./scripts/stop.sh` |
 
@@ -116,7 +121,10 @@ flagpilot/
 │   ├── context.py          上下文压缩（中段折叠成摘要）
 │   ├── memory.py           跨 run 记忆（只存结论，不存 flag）
 │   ├── tagger.py           失败归因（12 类）
-│   ├── metrics.py          Wilson 区间、Markdown 报告、批次对比
+│   ├── metrics.py          Wilson 区间、p50/p95、配对检验、Markdown 报告、批次 / E3 对比
+│   ├── pricing.py          H 轨价目表与逐轮计价（缓存命中 / 未命中 / 高峰价）
+│   ├── gpu.py              GPU 秒账本（nvidia-smi 采样按批次切片）
+│   ├── splits.py           dev / test 划分与"test 只跑一次"守卫
 │   ├── chat.py             答疑会话
 │   ├── custom.py           上传自建题（zip 安全解压）
 │   ├── probe.py            记忆探针（不给工具单轮问 flag）
@@ -131,8 +139,8 @@ flagpilot/
 │   ├── serve.slurm         分离式：只起服务
 │   ├── client.slurm        分离式：只跑客户端
 │   └── upload.sh           打包上传（强制排除答案表）
-├── scripts/                本地启停与自检
-├── tests/                  121 条单元测试
+├── scripts/                本地启停、自检、划分生成、H 轨一命令
+├── tests/                  179 条单元测试
 └── docs/                   设计、题库、TACC、实现状态
 ```
 
@@ -144,6 +152,8 @@ runs/<batch>/<task>-s<seed>/trace.jsonl 全事件 + summary（唯一事实源）
 runs/web/<run_id>/                      网页提交的运行，结构同上
 runs/chat/<session>/chat.jsonl          答疑逐轮记录
 runs/memory/tasks/<task>.jsonl          跨 run 记忆
+runs/<batch>/gpu.jsonl                  GPU 秒账本（检测到 GPU 时才写）
+runs/test_runs.jsonl                    test 守卫账本（每个最终配置一行）
 ```
 
 ---
@@ -163,20 +173,26 @@ runs/memory/tasks/<task>.jsonl          跨 run 记忆
 - Web 界面：SSE 实时链路、工具输出可折叠、指标实时刷新、`?run=` 深链回放
 - 手动上传题目（zip 安全解压）、答疑讲解（命令真执行但不参与评分）
 - 上下文压缩（中段折成摘要）与跨 run 记忆（只存结论）
-- TACC 部署脚本（一体式 / 分离式 / 打包上传 / 分片续跑）
-- 121 条单元测试、11 项自检
+- TACC 部署脚本（一体式 / 分离式 / 打包上传 / 分片续跑；E3 网格一个作业跑完）
+- 延迟分位：端到端与 verified 解题时间的 p50 / p95
+- 配对检验（精确 McNemar）、E3 对比的 Δ 与 5 个点的质量护栏
+- dev / test 划分 + "test 每个最终配置只跑一次"的守卫
+- H 轨一命令（DeepSeek 预设 + 官方价目逐轮计价，对桩服务器测试）
+- 179 条单元测试、11 项自检
 
 ### 未实现 / 未验证
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| **TACC 实机运行** | ❌ 未跑过 | 脚本已就绪，`vLLM` 与 `slurm` 未在集群上实测；报告里不能写"已验证" |
+| **TACC 实机运行** | ❌ 未跑过 | 脚本已就绪，`vLLM` 与 `slurm` 未在集群上实测；报告里不能写"已验证"。GPU 秒、E3 数据都卡在这一步 |
 | E1 正式数据 | ❌ 未跑 | 20 题 × 3 seeds × 四档的表格还没出 |
 | E2 人工复核 | ❌ 未做 | 归因 ≥30 例的人工抽检 |
-| E3 效率实验 | 🟡 部分 | 截断/压缩、cache 开关、轮次与并发参数都在；缺 p95、8 并发、GPU 秒 |
+| E3 效率实验 | 🟡 部分 | 网格、p95、8 并发、GPU 秒都已接好（`FP_E3=1`，见 docs/TACC.md 第 7 节）；**数据未跑** |
 | E4 升级策略 | ❌ 未实现 | proposal 允许最先砍，当前没有 stall 检测与升级预算 |
 | Writeup 生成 | ❌ 未实现 | 提交后只做重放，不产出解题报告 |
-| Hybrid 双轨编排 | 🟡 部分 | `--track H` 只是通用 OpenAI 客户端，没有自动升级链路 |
+| Hybrid 双轨编排 | 🟡 部分 | H 轨已一命令化（`scripts/track_h.sh`），但没有 L→H 自动升级链路 |
+| H 轨真实调用 | ❌ 未跑 | 只对桩服务器测过；需要 `DSV41_API_KEY` 先跑一题，核对成本与账单 |
+| dev / test 划分 | 🟡 待冻结 | 生成器与守卫已就绪；`splits.json` 仍是 `proposed`，团队确认后改 `frozen` |
 | Benchmark 对齐 | ❌ 不一致 | proposal 写 NYU CTF Bench / InterCode / Cybench，当前题库是 picoCTF 53 题（无 RE） |
 | 容器级隔离 | ❌ 未做 | 只有进程级；macOS 上网络隔离是 `proxy-only`，实测可被裸 socket 绕过 |
 | Flag 加密存储 | ❌ 未做 | `trace.jsonl` 里是明文，共享 `runs/` 等于共享答案 |
@@ -197,6 +213,7 @@ for b in B0 B1 B2 B3; do
     --scope core --limit 20 --seeds 3 --workers 1
 done
 python3 -m flagpilot compare --batches e1-B0,e1-B1,e1-B2,e1-B3 --md e1.md
+python3 -m flagpilot pair --a e1-B2 --b e1-B3 --md e1-pair.md   # 相邻两档的配对检验（精确 McNemar）
 ```
 
 `--workers 1`：并发会摊薄 prefix cache 的差值，E1/E3 必须单并发。
@@ -210,13 +227,29 @@ python3 -m flagpilot report --batch e2-probe
 
 `probe` 不给工具、单轮问 flag：命中说明模型可能是"背过"而不是"解出"。`report` 会同时给出 raw 准确率与 verified 率，以及失败归因分布。
 
-### E3：上下文策略
+### E3：效率网格
+
+在 TACC 上跑：prefix cache 开 / 关各一个作业，每个作业跑 6 格（2 种观察策略；最佳策略上轮次 40 / 60、并发 4 / 8），结束时自动出对比表。
 
 ```bash
-python3 -m flagpilot batch --batch e3-trunc  --limit 20
-python3 -m flagpilot batch --batch e3-notrunc --no-truncate --limit 20
-python3 -m flagpilot batch --batch e3-nocompact --no-compact --limit 20
+for pc in 1 0; do
+  sbatch --export=ALL,FP_E3=1,FP_PREFIX_CACHE=$pc,FP_MAX_SEQS=8,FP_LIMIT=20,FP_SPLIT=dev deploy/run.slurm
+done
+python3 -m flagpilot compare --e3 --ref e3-pc1-trunc-t20-w1 \
+  --batches e3-pc1-trunc-t20-w1,e3-pc1-summ-t20-w1,e3-pc0-trunc-t20-w1
 ```
+
+对比表每格对参照格给 Δ，verified 率掉超过 5 个点标 ✗（质量护栏）。格子定义、GPU 秒口径、为什么并发格不报命中率：见 [docs/TACC.md](docs/TACC.md) 第 7 节。
+
+### H 轨：DeepSeek（托管 API，不占 GPU）
+
+```bash
+# 密钥写进本目录的 .env（已 gitignore）：DSV41_API_KEY=...
+scripts/track_h.sh h-smoke --limit 1             # 先冒烟一题，核对成本与 DeepSeek 后台账单
+scripts/track_h.sh h-dev --split dev --workers 4
+```
+
+`--track H` 自动补齐模型 `deepseek-flash`、端点和价目表。成本按官方价目逐轮计：缓存命中 / 未命中 / 输出分开计价，工作日高峰时段价格翻倍（见 `flagpilot/pricing.py`）。
 
 ---
 
@@ -250,6 +283,8 @@ E1 四档一次跑完（同一作业复用同一个服务，省三次排队）�
 ```bash
 sbatch --export=ALL,FP_BATCH=e1,FP_LIMIT=20,FP_WORKERS=1,FP_ABLATIONS="B0 B1 B2 B3" deploy/run.slurm
 ```
+
+跑正式实验前先冻结 dev / test 划分（[docs/TACC.md](docs/TACC.md) 第 3 节）；E3 网格见第 7 节。
 
 ---
 

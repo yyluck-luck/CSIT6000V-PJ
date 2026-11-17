@@ -30,10 +30,21 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - half), min(1.0, centre + half))
 
 
+def percentile(values, q: float) -> float | None:
+    """线性插值分位数（与 numpy 默认口径一致）。空列表返回 None，不编一个 0。"""
+    xs = sorted(float(v) for v in values)
+    if not xs:
+        return None
+    pos = (len(xs) - 1) * q / 100.0
+    lo, hi = math.floor(pos), math.ceil(pos)
+    return round(xs[lo] + (xs[hi] - xs[lo]) * (pos - lo), 3)
+
+
 RAW = ("verified", "unverified")
 
 
-def summarize(results: list[dict], with_tags: bool = True) -> dict:
+def summarize(results: list[dict], with_tags: bool = True, gpu: dict | None = None) -> dict:
+    """gpu：gpu.load_ledger() 的汇总；给了才算 GPU 秒（只有 Track L 作业里才有）。"""
     if not results:
         return {"n": 0}
 
@@ -75,6 +86,25 @@ def summarize(results: list[dict], with_tags: bool = True) -> dict:
     decode = sum((r.get("server") or {}).get("decode_tokens") or 0 for r in results)
     ttfts = [r.get("ttft_ms_p50") or 0 for r in results if r.get("ttft_ms_p50")]
 
+    # vLLM 的 prefix cache / token 计数器是全服务端的。并发 > 1 时，每个 attempt 的
+    # 前后差值里混着别的 attempt 的流量，加总出来的命中率是错数——宁可不报。
+    concurrent = max((int(r.get("workers") or 1) for r in results), default=1) > 1
+
+    # ---- E3：延迟分位（带样本量）----
+    # wall：全部 attempt 的 ReAct 循环墙钟；solve：verified 的端到端时长（含重放，
+    # 旧记录没有 total_s 时退回 wall_s）。分位数小样本下极不稳定，n 必须一起报。
+    walls = [float(r["wall_s"]) for r in results if r.get("wall_s") is not None]
+    solves = [float(r.get("total_s") if r.get("total_s") is not None else r.get("wall_s") or 0)
+              for r in results if r["verdict"] == "verified"]
+
+    # ---- Track H：缓存命中率只能来自 API usage（托管服务没有 /metrics）----
+    api_rows = [r for r in results
+                if r.get("api_cache_hit_tokens") is not None
+                or r.get("api_cache_miss_tokens") is not None]
+    a_hit = sum(r.get("api_cache_hit_tokens") or 0 for r in api_rows)
+    a_miss = sum(r.get("api_cache_miss_tokens") or 0 for r in api_rows)
+    total_cost = sum(r.get("cost_usd") or 0 for r in results)
+
     out = {
         "n": n,
         "verified": k_verified,
@@ -92,10 +122,23 @@ def summarize(results: list[dict], with_tags: bool = True) -> dict:
         "mean_turns": round(_mean("turns"), 2),
         "mean_wall_s": round(_mean("wall_s"), 2),
         "mean_tokens": round(_mean("total_tokens"), 0),
-        "total_cost_usd": round(sum(r.get("cost_usd") or 0 for r in results), 4),
+        # 6 位：DeepSeek 一题冒烟只有几十微美元，4 位会舍成 0，成本行整行消失
+        "total_cost_usd": round(total_cost, 6),
+        "cost_per_verified_usd": round(total_cost / k_verified, 6)
+        if (k_verified and total_cost) else None,
         "mean_ttft_ms_p50": round(sum(ttfts) / len(ttfts), 1) if ttfts else 0,
-        "cache_hit_rate": round(hits / queries, 4) if queries else None,
-        "prefill_share": round(prefill / (prefill + decode), 4) if (prefill + decode) else None,
+        "wall_n": len(walls),
+        "wall_s_p50": percentile(walls, 50),
+        "wall_s_p95": percentile(walls, 95),
+        "solve_n": len(solves),
+        "solve_s_p50": percentile(solves, 50),
+        "solve_s_p95": percentile(solves, 95),
+        "cache_hit_rate": None if concurrent else (round(hits / queries, 4) if queries else None),
+        "server_counters_note": "并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比"
+        if (concurrent and (queries or prefill)) else None,
+        "api_cache_hit_rate": round(a_hit / (a_hit + a_miss), 4) if (a_hit + a_miss) else None,
+        "prefill_share": None if concurrent else (
+            round(prefill / (prefill + decode), 4) if (prefill + decode) else None),
         "ablations": sorted({r.get("ablation") for r in results if r.get("ablation")}),
         "by_category": {
             k: {
@@ -108,6 +151,16 @@ def summarize(results: list[dict], with_tags: bool = True) -> dict:
             for k, v in sorted(by_cat.items())
         },
     }
+
+    if gpu:
+        g_s = gpu.get("gpu_seconds")
+        b_s = gpu.get("busy_gpu_seconds")
+        out["gpu_seconds"] = g_s
+        out["busy_gpu_seconds"] = b_s
+        out["gpu_jobs"] = gpu.get("jobs")
+        out["gpu_s_per_verified"] = round(g_s / k_verified, 1) if (g_s and k_verified) else None
+        out["busy_gpu_s_per_verified"] = round(b_s / k_verified, 1) \
+            if (b_s is not None and k_verified) else None
 
     if with_tags:
         from . import tagger
@@ -142,12 +195,33 @@ def render(summary: dict) -> str:
     ]
     if summary.get("mean_ttft_ms_p50"):
         lines.append(f"TTFT p50        {summary['mean_ttft_ms_p50']:.0f} ms（各题中位数之均值）")
+    if summary.get("wall_s_p50") is not None:
+        lines.append(f"wall p50/p95    {summary['wall_s_p50']:.1f} / {summary['wall_s_p95']:.1f} s"
+                     f"（n={summary['wall_n']}）")
+    if summary.get("solve_s_p50") is not None:
+        lines.append(f"solve p50/p95   {summary['solve_s_p50']:.1f} / {summary['solve_s_p95']:.1f} s"
+                     f"（verified 端到端，n={summary['solve_n']}）")
     if summary.get("cache_hit_rate") is not None:
         lines.append(f"prefix cache    命中率 {summary['cache_hit_rate']:.1%}")
+    if summary.get("server_counters_note"):
+        lines.append(f"prefix cache    — （{summary['server_counters_note']}）")
+    if summary.get("api_cache_hit_rate") is not None:
+        lines.append(f"API cache       命中率 {summary['api_cache_hit_rate']:.1%}（Track H usage，按 token）")
+    if summary.get("gpu_seconds"):
+        busy = summary.get("busy_gpu_seconds")
+        lines.append(f"GPU seconds     {summary['gpu_seconds']:.0f} 申请"
+                     + (f" / {busy:.0f} 忙" if busy is not None else "")
+                     + f"（{summary.get('gpu_jobs')} 个作业）")
+        if summary.get("gpu_s_per_verified") is not None:
+            lines.append(f"GPU-s/verified  {summary['gpu_s_per_verified']:.0f}"
+                         + (f"（忙 {summary['busy_gpu_s_per_verified']:.0f}）"
+                            if summary.get("busy_gpu_s_per_verified") is not None else ""))
     if summary.get("prefill_share") is not None:
         lines.append(f"prefill share   {summary['prefill_share']:.1%}（prefill / (prefill+decode)）")
     if summary["total_cost_usd"]:
-        lines.append(f"total cost      ${summary['total_cost_usd']}")
+        lines.append(f"total cost      ${summary['total_cost_usd']:.6f}")
+        if summary.get("cost_per_verified_usd") is not None:
+            lines.append(f"cost/verified   ${summary['cost_per_verified_usd']:.6f}")
     if summary.get("reasons"):
         top = sorted(summary["reasons"].items(), key=lambda kv: -kv[1])[:6]
         lines.append("reasons         " + ", ".join(f"{k}={v}" for k, v in top))
@@ -188,12 +262,31 @@ def to_markdown(summary: dict, title: str = "") -> str:
     ]
     if summary.get("mean_ttft_ms_p50"):
         lines.append(f"| TTFT p50 | {summary['mean_ttft_ms_p50']:.0f} ms |")
+    if summary.get("wall_s_p50") is not None:
+        lines.append(f"| 墙钟 p50 / p95（全部 attempt） | {summary['wall_s_p50']:.1f} / "
+                     f"{summary['wall_s_p95']:.1f} s（n={summary['wall_n']}） |")
+    if summary.get("solve_s_p50") is not None:
+        lines.append(f"| 解题耗时 p50 / p95（verified，端到端） | {summary['solve_s_p50']:.1f} / "
+                     f"{summary['solve_s_p95']:.1f} s（n={summary['solve_n']}） |")
+    if summary.get("api_cache_hit_rate") is not None:
+        lines.append(f"| API 缓存命中率（Track H） | {summary['api_cache_hit_rate']:.1%} |")
+    if summary.get("gpu_seconds"):
+        busy = summary.get("busy_gpu_seconds")
+        lines.append(f"| GPU 秒（申请 / 忙） | {summary['gpu_seconds']:.0f} / "
+                     + (f"{busy:.0f}" if busy is not None else "—")
+                     + f"（{summary.get('gpu_jobs')} 个作业） |")
+    if summary.get("gpu_s_per_verified") is not None:
+        lines.append(f"| GPU 秒 / verified（申请口径） | {summary['gpu_s_per_verified']:.0f} |")
     if summary.get("cache_hit_rate") is not None:
         lines.append(f"| prefix cache 命中率 | {summary['cache_hit_rate']:.1%} |")
+    if summary.get("server_counters_note"):
+        lines.append(f"| prefix cache 命中率 | —（{summary['server_counters_note']}） |")
     if summary.get("prefill_share") is not None:
         lines.append(f"| prefill 占比 | {summary['prefill_share']:.1%} |")
     if summary["total_cost_usd"]:
-        lines.append(f"| 成本（Track H 计价） | ${summary['total_cost_usd']} |")
+        lines.append(f"| 成本（Track H 计价） | ${summary['total_cost_usd']:.6f} |")
+        if summary.get("cost_per_verified_usd") is not None:
+            lines.append(f"| 成本 / verified | ${summary['cost_per_verified_usd']:.6f} |")
 
     lines += ["", "| 类别 | n | verified | raw | v_rate | r_rate |", "|---|---|---|---|---|---|"]
     for cat, v in summary["by_category"].items():
@@ -213,34 +306,125 @@ def to_markdown(summary: dict, title: str = "") -> str:
     return "\n".join(lines) + "\n"
 
 
-def compare(batches: dict[str, dict], keys: list[str] | None = None) -> str:
-    """多批次并排。E1 出结果表就用这个，不做任何合并计算。"""
+# E3 出表用的列：延迟分位 + 缓存 + 两条轨道各自的成本口径。
+E3_KEYS = ["verified_rate", "solve_s_p50", "solve_s_p95", "solve_n", "mean_turns",
+           "cache_hit_rate", "api_cache_hit_rate", "prefill_share",
+           "gpu_s_per_verified", "cost_per_verified_usd"]
+
+_LABEL = {
+    "verified_rate": "verified", "raw_rate": "raw", "gap": "gap",
+    "mean_turns": "turns", "mean_tokens": "tokens",
+    "cache_hit_rate": "cache hit", "mean_wall_s": "wall s",
+    "mean_ttft_ms_p50": "TTFT p50",
+    "solve_s_p50": "solve p50 s", "solve_s_p95": "solve p95 s", "solve_n": "solve n",
+    "wall_s_p50": "wall p50 s", "wall_s_p95": "wall p95 s",
+    "api_cache_hit_rate": "API cache", "prefill_share": "prefill",
+    "gpu_s_per_verified": "GPU-s/verified", "cost_per_verified_usd": "$/verified",
+}
+_PCT = ("verified_rate", "raw_rate", "gap", "cache_hit_rate", "api_cache_hit_rate", "prefill_share")
+
+
+def _cell(k: str, v) -> str:
+    if v is None:
+        return "—"
+    if k in _PCT:
+        return f"{v:.1%}"
+    if k in ("mean_tokens", "mean_ttft_ms_p50", "gpu_s_per_verified", "solve_n"):
+        return f"{v:.0f}"
+    if k.endswith("_s_p50") or k.endswith("_s_p95"):
+        return f"{v:.1f}"
+    if k == "cost_per_verified_usd":
+        return f"${v:.6f}"
+    return f"{v}"
+
+
+def compare(batches: dict[str, dict], keys: list[str] | None = None,
+            ref: str | None = None, guard_pts: float = 5.0) -> str:
+    """多批次并排。E1 出结果表就用这个，不做任何合并计算。
+
+    ref：参照批次名。给了就多一列"Δ vs ref"（verified 率差，百分点）和护栏判定：
+    E3 的提速只有在 verified 率不比参照格低超过 guard_pts 个点时才算数。
+    """
     keys = keys or ["verified_rate", "raw_rate", "gap", "mean_turns",
                     "mean_tokens", "cache_hit_rate"]
-    label = {
-        "verified_rate": "verified", "raw_rate": "raw", "gap": "gap",
-        "mean_turns": "turns", "mean_tokens": "tokens",
-        "cache_hit_rate": "cache hit", "mean_wall_s": "wall s",
-        "mean_ttft_ms_p50": "TTFT p50",
-    }
-    head = "| batch | n | " + " | ".join(label.get(k, k) for k in keys) + " |"
-    lines = [head, "|" + "---|" * (len(keys) + 2)]
+    base = (batches.get(ref) or {}).get("verified_rate") if ref else None
+    extra = ["Δ vs ref"] if ref else []
+    head = "| batch | n | " + " | ".join([_LABEL.get(k, k) for k in keys] + extra) + " |"
+    lines = [head, "|" + "---|" * (len(keys) + 2 + len(extra))]
     for name, s in batches.items():
         if not s.get("n"):
-            lines.append(f"| {name} | 0 |" + " — |" * len(keys))
+            lines.append(f"| {name} | 0 |" + " — |" * (len(keys) + len(extra)))
             continue
-        cells = []
-        for k in keys:
-            v = s.get(k)
-            if v is None:
-                cells.append("—")
-            elif k in ("verified_rate", "raw_rate", "gap", "cache_hit_rate"):
-                cells.append(f"{v:.1%}")
-            elif k == "mean_tokens":
-                cells.append(f"{v:.0f}")
-            elif k == "mean_ttft_ms_p50":
-                cells.append(f"{v:.0f}")
+        cells = [_cell(k, s.get(k)) for k in keys]
+        if ref:
+            if base is None or name == ref:
+                cells.append("ref" if name == ref else "—")
             else:
-                cells.append(f"{v}")
+                d = (s["verified_rate"] - base) * 100
+                cells.append(f"{d:+.1f} pt {'✓' if d >= -guard_pts else '✗'}")
         lines.append(f"| {name} | {s['n']} | " + " | ".join(cells) + " |")
+    if ref:
+        lines.append("")
+        lines.append(f"护栏：verified 率比 {ref} 低不超过 {guard_pts:g} 个点记 ✓，否则 ✗（提速不计）。")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- 配对比较
+
+def _success(r: dict, key: str) -> bool:
+    return r["verdict"] == "verified" if key == "verified" else r["verdict"] in RAW
+
+
+def _mcnemar_exact(b: int, c: int) -> float:
+    """精确 McNemar（不一致对上的双侧二项检验）。小样本下比卡方近似靠谱。"""
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = sum(math.comb(n, i) for i in range(k + 1)) / (2 ** n)
+    return round(min(1.0, 2 * tail), 6)
+
+
+def paired(results_a: list[dict], results_b: list[dict], key: str = "verified") -> dict:
+    """同一道题、同一个 seed 在两个配置下的逐对变化。
+
+    并排的两个百分比会掩盖"修好 5 题、弄坏 4 题"这种情况；
+    配对把它拆开，并给出精确 McNemar p 值。按 run_id（task-sN）配对。
+    """
+    a = {r["run_id"]: r for r in results_a if r.get("run_id")}
+    b = {r["run_id"]: r for r in results_b if r.get("run_id")}
+    common = sorted(set(a) & set(b))
+    out = {"key": key, "n_pairs": len(common), "fixed": 0, "broken": 0,
+           "both_ok": 0, "both_fail": 0, "unpaired": len(set(a) ^ set(b)),
+           "fixed_ids": [], "broken_ids": []}
+    for rid in common:
+        sa, sb = _success(a[rid], key), _success(b[rid], key)
+        if sa and sb:
+            out["both_ok"] += 1
+        elif not sa and not sb:
+            out["both_fail"] += 1
+        elif sb:
+            out["fixed"] += 1
+            out["fixed_ids"].append(rid)
+        else:
+            out["broken"] += 1
+            out["broken_ids"].append(rid)
+    out["p_value"] = _mcnemar_exact(out["fixed"], out["broken"])
+    return out
+
+
+def render_paired(p: dict, name_a: str, name_b: str) -> str:
+    lines = [
+        f"配对比较（{p['key']}）：{name_a} → {name_b}，{p['n_pairs']} 对",
+        f"  修好（A 失败 → B 成功）  {p['fixed']}",
+        f"  弄坏（A 成功 → B 失败）  {p['broken']}",
+        f"  都成功 / 都失败          {p['both_ok']} / {p['both_fail']}",
+        f"  精确 McNemar p           {p['p_value']}",
+    ]
+    if p["unpaired"]:
+        lines.append(f"  未配对 run_id            {p['unpaired']}（只在一边出现，不计入检验）")
+    if p["fixed_ids"]:
+        lines.append("  修好：" + ", ".join(p["fixed_ids"][:10]))
+    if p["broken_ids"]:
+        lines.append("  弄坏：" + ", ".join(p["broken_ids"][:10]))
     return "\n".join(lines)
