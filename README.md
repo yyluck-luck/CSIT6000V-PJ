@@ -6,7 +6,7 @@ works on it with a served model and external tools, and the user sees a verifiab
 
 The full specification is in [`course_project.pdf`](course_project.pdf).
 
-> **Status:** Team formed. Working on topic selection. The proposal is due **October 29**.
+> **Status:** Team formed. Topic selected: **FlagPilot**, a replay-verified CTF agent. Project development is in progress.
 
 ---
 
@@ -20,17 +20,15 @@ Teams have 3–5 students.
 
 ## Topic
 
-**TBD.** The task needs a clear user need and a useful result. Suggested topics from the spec:
+**FlagPilot: a replay-verified CTF agent.** A user selects or uploads an offline CTF challenge.
+The agent uses a served model and tools to solve it, then submits a flag and a standalone `solve.py`.
+The verifier checks the answer and reruns the script in a fresh directory containing the challenge
+attachments. A correct answer with a successful replay is recorded as `verified`.
 
-| Topic | Agent does | Output |
-|-------|-----------|--------|
-| Trip Planning Agent | Compares transport, stays, and activities, checks budget and time constraints, and revises the plan with the user | Day-by-day itinerary, itemized budget, source links, and alternative options |
-| Literature Research Agent | Finds and reads papers, compares methods and evidence, and follows up on missing information | Cited literature review and a paper comparison table linked to supporting passages |
-| Job Search and Application Assistant | Reads job postings, matches requirements to a résumé, and tailors materials using verified experience | Job shortlist with match reasons, application drafts, and a checklist of next steps |
-
-Other ideas are welcome. The reference sample project is
-[STORM](https://github.com/stanford-oval/storm), which researches a topic and writes a cited article.
-The spec suggests two STORM extensions: improving question selection, and reducing latency and the number of model calls.
+The agent workflow, tool adapters, replay verifier, Web interface, and evaluation tooling are implemented.
+Recent development added the Track H entry point, cost and latency metrics, dev/test split controls,
+and E3 experiment scripts. See [`flagpilot/README.md`](flagpilot/README.md) for usage and
+[`flagpilot/docs/STATUS.md`](flagpilot/docs/STATUS.md) for implementation progress.
 
 ---
 
@@ -107,13 +105,13 @@ Logs and traces feed into test cases and results.
 | # | Milestone | Due | Status |
 |---|-----------|-----|--------|
 | 1 | Team formation (3–5 students) | — | ✅ |
-| 2 | Topic selection + **two-page proposal** (motivation, proposed system, evaluation plan) | **Oct 29** | ⬜ |
-| 3 | Project development: implement, evaluate, and refine scope based on feedback | — | ⬜ |
+| 2 | Topic selection + **two-page proposal** (motivation, proposed system, evaluation plan) | **Oct 29** | Topic selected |
+| 3 | Project development: implement, evaluate, and refine scope based on feedback | — | In progress |
 | 4 | Final presentation + short demo + final code repository | TBD | ⬜ |
 
 ## Final Deliverables
 
-- [ ] Code repository (this repo)
+- [x] Code repository (this repo)
 - [ ] Final report
 - [ ] Demo
 - [ ] Final presentation
@@ -122,4 +120,15 @@ Logs and traces feed into test cases and results.
 
 ## Setup
 
-TBD. This section will cover environment setup, configuration (model endpoint, API keys via `.env`, which is never committed), how to launch the model-serving backend on TACC, and how to run the frontend and backend locally.
+The application uses Python **3.11+** and the standard library. Configure an external challenge dataset,
+then launch the Web interface from the `flagpilot/` directory:
+
+```bash
+cd flagpilot
+export FLAGPILOT_TASKS=/path/to/ctf-tasks/no-solutions
+python3 -m flagpilot web --model mock
+```
+
+Open <http://127.0.0.1:8080> in a browser. The mock model runs the application flow without a model service.
+For dataset preparation and model configuration, see [`flagpilot/README.md`](flagpilot/README.md).
+TACC setup is documented in [`flagpilot/docs/TACC.md`](flagpilot/docs/TACC.md).
