@@ -79,7 +79,7 @@ class ChatClient:
         self._url = spec.base_url.rstrip("/") + "/chat/completions"
         # 有些运行时（Ollama / llama.cpp / 老版本 vLLM）不认识 chat_template_kwargs，
         # 会直接 400。第一次撞上就永久降级，避免每次请求都白撞一遍。
-        self._no_template_kwargs = False
+        self._no_template_kwargs = spec.provider == "openai-compatible"
 
     # ---------- 主路径 ----------
 
@@ -120,6 +120,7 @@ class ChatClient:
             data=body,
             headers={
                 "Content-Type": "application/json",
+                "User-Agent": "FlagPilot/0.1.0",
                 "Authorization": f"Bearer {self.spec.api_key}",
             },
             method="POST",

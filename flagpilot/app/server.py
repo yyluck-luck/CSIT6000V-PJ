@@ -61,7 +61,11 @@ def list_models() -> list[str]:
     """
     base = (SETTINGS["base_url"] or "http://127.0.0.1:8000/v1").rstrip("/")
     try:
-        with urllib.request.urlopen(base + "/models", timeout=5) as r:
+        request = urllib.request.Request(base + "/models", headers={
+            "Authorization": "Bearer " + os.environ.get("FLAGPILOT_API_KEY", "EMPTY"),
+            "User-Agent": "FlagPilot/0.1.0",
+        })
+        with urllib.request.urlopen(request, timeout=5) as r:
             data = json.loads(r.read().decode())
         ids = [str(m.get("id")) for m in (data.get("data") or []) if m.get("id")]
         if ids:
@@ -99,6 +103,7 @@ def _make_cfg(task_batch: str, ablate: str | None = None) -> RunConfig:
         # 必须和 CLI 走同一个构造函数：之前这里直接 new ModelSpec，
         # 漏掉 soft_no_think，Qwen3 的思维链把每轮预算吃光，表现为"空回复"。
         model=make_model_spec(SETTINGS["model"], base,
+                              api_key=os.environ.get("FLAGPILOT_API_KEY", "EMPTY"),
                               metrics_url=SETTINGS.get("metrics_url") or ""),
         budget=Budget(max_turns=20),
         policy=policy,
@@ -597,7 +602,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
           base_url: str = "", track: str = "L", metrics_url: str = "") -> None:
-    SETTINGS.update({"model": model, "base_url": base_url or "", "track": track,
+    SETTINGS.update({"model": model,
+                     "base_url": base_url or os.environ.get("FLAGPILOT_BASE_URL", ""),
+                     "track": track,
                      "host": host,
                      # TACC 的 env.sh 已经导出了 FP_METRICS_URL；没有显式参数时用它，
                      # 这样 vLLM 上的 prefix cache 在网页里也能看到真实数字。

@@ -461,7 +461,7 @@ def _resolve_endpoint(args) -> tuple[str, str, str]:
                 "Track H 需要 DeepSeek 密钥：设置环境变量 "
                 + " 或 ".join(TRACK_H["key_env"]) + "，或用 --api-key 传入")
         return model, base, key or "EMPTY"
-    model = args.model or "mock"
+    model = args.model or os.environ.get("FLAGPILOT_MODEL") or "mock"
     base = args.base_url or os.environ.get("FLAGPILOT_BASE_URL") \
         or os.environ.get("SERVICE_BASE_URL") or "http://127.0.0.1:8000/v1"
     return model, base, args.api_key or os.environ.get("FLAGPILOT_API_KEY", "EMPTY")
@@ -606,7 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("web", help="演示页面")
     w.add_argument("--host", default="127.0.0.1")
     w.add_argument("--port", type=int, default=8080)
-    w.add_argument("--model", default="mock")
+    w.add_argument("--model", default=os.environ.get("FLAGPILOT_MODEL") or "mock")
     w.add_argument("--base-url")
     w.add_argument("--metrics-url", default="",
                    help="vLLM 的 /metrics；给了界面才能显示 prefix cache 命中率")
