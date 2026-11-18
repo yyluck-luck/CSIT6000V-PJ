@@ -21,6 +21,8 @@
 
 from __future__ import annotations
 
+from . import storage
+
 import json
 import re
 import threading
@@ -143,7 +145,7 @@ def read_log(path: Path) -> list[dict]:
                 if not line:
                     continue
                 try:
-                    rec = json.loads(line)
+                    rec = storage.decode_record(line)
                 except json.JSONDecodeError:
                     continue
                 if isinstance(rec, dict):
@@ -204,8 +206,7 @@ class ChatSession:
         rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **rec}
         try:
             with self._io:
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                storage.append_record(self.path, rec)
         except OSError:
             pass      # 落盘失败不该让对话中断
 

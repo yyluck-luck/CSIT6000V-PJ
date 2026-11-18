@@ -29,7 +29,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from flagpilot import config, custom, probe, tagger
+from flagpilot import config, custom, probe, tagger, storage, writeup
 from flagpilot.agent import run_attempt
 from flagpilot.chat import ChatSession, read_log
 from flagpilot.config import (ABLATIONS, Budget, Policy, RunConfig,
@@ -144,7 +144,7 @@ def _load_run_from_disk(rid: str) -> dict | None:
         done = next((e for e in reversed(evs) if e.get("type") == "done"), None)
         summary = next((e for e in reversed(evs) if e.get("type") == "summary"), None)
         if done or summary:
-            return {"q": queue.Queue(), "summary": done or summary,
+            return {"q": queue.Queue(), "summary": {**(done or summary), "web_run_id": rid},
                     "events": evs, "kind": "disk"}
     return None
 
@@ -185,6 +185,7 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
             summary["failure"] = {"primary": "unknown", "tags": [], "evidence": {}}
         # 端到端：从浏览器点下去（POST 到达）到 done 发出。和 wall_s 的差额
         # 就是"沙箱准备 + 归因 + 落盘"这些看不到的开销，界面分开显示。
+        summary["web_run_id"] = run_id
         summary["tag_s"] = round(time.time() - t_tag, 2)
         summary["e2e_s"] = round(time.time() - STATE[run_id].get("t0", t_tag), 2)
         # 先发 done 再置 summary：读端以 events 为准，看到 done 就收尾，
@@ -265,9 +266,17 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        try:
+            self._get()
+        except storage.StorageError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _get(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             return self._html()
+        if path == "/api/writeup":
+            return self._writeup()
         if path == "/api/tasks":
             tasks = [{"name": t.name, "category": t.category, "scope": t.scope,
                       "title": t.title[:90], "custom": False, "has_gold": t.has_gold}
@@ -321,6 +330,35 @@ class Handler(BaseHTTPRequestHandler):
                                         "digest": store.digest(task)})
             return self._json(200, store.stats())
         self._json(404, {"error": "not found"})
+
+    def _writeup(self):
+        rid = self._qid()
+        if not _SID_RE.fullmatch(rid or ""):
+            return self._json(400, {"error": "Invalid run ID"})
+        root = (config.RUNS_ROOT / "web").resolve()
+        base = (root / rid).resolve()
+        if not base.is_relative_to(root):
+            return self._json(404, {"error": "Run not found"})
+        for trace in sorted(base.glob("*/trace.jsonl")):
+            if not trace.resolve().is_relative_to(root):
+                continue
+            path = trace.parent / "writeup.md"
+            if not path.exists() and not path.with_name(path.name + ".enc").exists():
+                try:
+                    writeup.generate(trace.parent)
+                except ValueError as exc:
+                    return self._json(409, {"error": str(exc)})
+            data = storage.read_artifact(path)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="flagpilot-{rid}.md"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        self._json(404, {"error": "Run not found"})
 
     def do_POST(self):
         global RUNNING

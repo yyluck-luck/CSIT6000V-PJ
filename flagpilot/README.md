@@ -2,7 +2,7 @@
 
 重放验证型 CTF Agent。**解出答案不算通过**：模型交出的 `solve.py` 要在只有题目附件的新目录里重跑、复现出同一个 flag，才计一次 `verified`。
 
-零第三方依赖（纯标准库，Python ≥ 3.11）。同一套代码可以接 vLLM、Ollama 或任意 OpenAI 兼容端点。
+The core runtime uses the Python 3.11+ standard library and supports OpenAI-compatible model endpoints. Optional encrypted storage requires `cryptography`; see [Writeups and encrypted storage](docs/WRITEUPS_AND_STORAGE.md).
 
 ![执行链路](docs/screenshots/architecture.svg)
 
@@ -189,13 +189,13 @@ runs/test_runs.jsonl                    test 守卫账本（每个最终配置�
 | E2 人工复核 | ❌ 未做 | 归因 ≥30 例的人工抽检 |
 | E3 效率实验 | 🟡 部分 | 网格、p95、8 并发、GPU 秒都已接好（`FP_E3=1`，见 docs/TACC.md 第 7 节）；**数据未跑** |
 | E4 升级策略 | ❌ 未实现 | proposal 允许最先砍，当前没有 stall 检测与升级预算 |
-| Writeup 生成 | ❌ 未实现 | 提交后只做重放，不产出解题报告 |
+| Writeup generation | Implemented | Completed runs generate an English evidence-based report; Web download and CLI regeneration are available. |
 | Hybrid 双轨编排 | 🟡 部分 | H 轨已一命令化（`scripts/track_h.sh`），但没有 L→H 自动升级链路 |
 | H 轨真实调用 | ❌ 未跑 | 只对桩服务器测过；需要 `DSV41_API_KEY` 先跑一题，核对成本与账单 |
 | dev / test 划分 | 🟡 待冻结 | 生成器与守卫已就绪；`splits.json` 仍是 `proposed`，团队确认后改 `frozen` |
 | Benchmark 对齐 | ❌ 不一致 | proposal 写 NYU CTF Bench / InterCode / Cybench，当前题库是 picoCTF 53 题（无 RE） |
 | 容器级隔离 | ❌ 未做 | 只有进程级；macOS 上网络隔离是 `proxy-only`，实测可被裸 socket 绕过 |
-| Flag 加密存储 | ❌ 未做 | `trace.jsonl` 里是明文，共享 `runs/` 等于共享答案 |
+| Encrypted flag storage | Implemented (opt-in) | Authenticated encryption for records, writeups, and completed attempt files; [setup](docs/WRITEUPS_AND_STORAGE.md). |
 
 > 这些不是"做不完"，而是**当前版本的边界**。写报告、做答辩时按这张表讲，比含糊其辞更安全。
 
@@ -307,7 +307,7 @@ sbatch --export=ALL,FP_BATCH=e1,FP_LIMIT=20,FP_WORKERS=1,FP_ABLATIONS="B0 B1 B2 
 1. **沙箱不是安全边界。** 与主进程同 uid，无 `chroot` / `seccomp` / `cgroup`；`challenge/` 的只读权限可以用 `chmod` 改回来；`shell` 能读进程权限内的任意绝对路径。
 2. **网络隔离是 `proxy-only`。** 只是把 `http_proxy` 指向死端口；实测裸 socket 仍可出网。要真正隔离需要容器或 `--network none`。
 3. **`<run>` 等于任意命令执行。** 这是答疑功能的设计；只应在可信环境使用。
-4. **flag 明文落盘。** `trace.jsonl` 的 `submit` 事件保留明文便于复核，共享 `runs/` 等于共享答案。
+4. **Storage mode.** Records are plaintext by default. Configure a separate local encryption key to protect saved records, writeups, and completed attempt files. Downloads and live results contain decrypted evidence; see [storage setup](docs/WRITEUPS_AND_STORAGE.md).
 5. **Web 服务没有账号体系。** 默认只绑 `127.0.0.1`；不要用 `--host 0.0.0.0` 暴露到公网。
 
 ---

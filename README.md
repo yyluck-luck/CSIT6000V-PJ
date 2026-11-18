@@ -30,6 +30,10 @@ Recent development added the Track H entry point, cost and latency metrics, dev/
 and E3 experiment scripts. See [`flagpilot/README.md`](flagpilot/README.md) for usage and
 [`flagpilot/docs/STATUS.md`](flagpilot/docs/STATUS.md) for implementation progress.
 
+Completed runs now generate English solution writeups with Web downloads. Optional encrypted
+storage protects saved run records and artifacts; see
+[`Writeups and encrypted storage`](flagpilot/docs/WRITEUPS_AND_STORAGE.md).
+
 ---
 
 ## Required System Architecture

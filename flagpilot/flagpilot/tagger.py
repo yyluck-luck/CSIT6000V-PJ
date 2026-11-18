@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections import Counter
 from pathlib import Path
@@ -71,16 +70,9 @@ LABELS = {
 
 
 def _iter_events(trace_path: Path):
+    from .storage import read_records
     try:
-        with trace_path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    continue
+        yield from read_records(trace_path)
     except OSError:
         return
 

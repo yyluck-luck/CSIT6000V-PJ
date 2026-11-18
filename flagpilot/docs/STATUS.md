@@ -3,6 +3,8 @@
 最后核对：2026-11-16。**这张表以代码和实测为准，不以计划为准。**
 写报告、做答辩、分工排期都用这一份。
 
+Update (2026-11-18): trace-based writeups and optional encrypted storage are implemented; see [usage](WRITEUPS_AND_STORAGE.md). Other implementation statuses below retain their previous scope.
+
 图例：✅ 已实现并验证 ｜ 🟡 部分实现 ｜ ❌ 未实现或未验证
 
 ---
@@ -30,7 +32,7 @@
 | 承诺 | 状态 | 说明 |
 |---|---|---|
 | 重放验证器（干净沙箱重跑 + 字面量检查 + 四态） | ✅ | `verify.py`；含 `material_text()` 豁免与 `reproduced` 降级 |
-| 六步流程：读 → 想 → 做 → 提交 → 重放 → writeup | 🟡 | 前五步完整；**writeup 未实现** |
+| Six-stage workflow including writeup | ✅ | Completed attempts generate an English trace-based report with CLI regeneration and Web download. |
 | 提交失败带类型反馈重试（最多两次） | 🟡 | 仅 `wrong` 给 1 次重试；`literal` / `timeout` / `not_reproduced` 不重试 |
 | 每 attempt 一个容器 / 无 root / 无网 / 只读 / 资源限制 | 🟡 | 只读 + rlimit ✅；**非容器**；macOS 无 netns，裸 socket 实测可出网；TACC 待复验 |
 
@@ -111,7 +113,7 @@
 | 6 | 跑 E3 网格（cache 开 / 关各一个作业） | 代码已齐，只差算力 | `runs/e3-pc*-*.md` |
 | 7 | 写 report / slides | 课程交付硬要求 | 报告、幻灯片 |
 | 8 | 对齐 benchmark 或改口径 | 避免"名不符实"的致命问题 | 报告中的数据集章节 |
-| 9 | writeup 生成 | 补上 proposal 第 6 步 | `writeup.md` |
+| 9 | Writeup generation | Implemented | `writeup.md`, or `writeup.md.enc` in encrypted mode |
 | 10 | E4 / Hybrid | proposal 允许最先砍 | 可放弃 |
 
 ---

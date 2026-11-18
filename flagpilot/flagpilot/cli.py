@@ -20,7 +20,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, config, gpu, metrics, splits
+from . import __version__, config, gpu, metrics, splits, storage, writeup
 from .config import (ABLATIONS, TRACK_H, Budget, Policy, RunConfig, SandboxLimits,
                      get_ablation, make_model_spec, track_h_api_key)
 from .runner import BatchRunner
@@ -186,25 +186,9 @@ def _upsert_result(batch_dir: Path, rec: dict) -> None:
     调 prompt 时反复单跑的那几次就成了查不到的黑数。
     """
     path = Path(batch_dir) / "runs.jsonl"
-    rows: list[dict] = []
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                r = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if r.get("run_id") != rec.get("run_id"):
-                rows.append(r)
+    rows = [r for r in storage.read_records(path) if r.get("run_id") != rec.get("run_id")]
     rows.append(rec)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # 全量重写而不是追加：同 run_id 要覆盖。但直接 write_text 被 kill 会留下
-    # 半个文件（TACC 到时限就 SIGKILL）。先写临时文件再原子替换。
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, path)
+    storage.write_records(path, rows)
 
 
 def cmd_run(args) -> int:
@@ -319,7 +303,7 @@ def cmd_report(args) -> int:
     if not path.exists():
         _p(f"找不到 {path}")
         return 1
-    results = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    results = storage.read_records(path)
     s = metrics.summarize(results, gpu=gpu.load_ledger(path.parent))
     if args.json:
         _p(json.dumps(s, ensure_ascii=False, indent=2))
@@ -345,7 +329,7 @@ def cmd_compare(args) -> int:
         if not p.exists():
             _p(f"[warn] 跳过 {n}：找不到 {p}")
             continue
-        rs = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+        rs = storage.read_records(p)
         batches[n] = metrics.summarize(rs, with_tags=False, gpu=gpu.load_ledger(p.parent))
     if not batches:
         return 1
@@ -370,8 +354,7 @@ def cmd_pair(args) -> int:
         if not p.exists():
             _p(f"找不到 {p}")
             return 1
-        loaded[name] = [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines()
-                        if l.strip()]
+        loaded[name] = storage.read_records(p)
     res = metrics.paired(loaded[args.a], loaded[args.b], key=args.key)
     text = metrics.render_paired(res, args.a, args.b)
     _p(text)
@@ -422,9 +405,7 @@ def cmd_probe(args) -> int:
             mark = "HIT " if r["hit"] else ("—   " if not r["error"] else "ERR ")
             _p(f"  [{i}/{len(tasks)}] {mark}{r['task']:<20} {r['answer'][:60]}")
 
-    with path.open("w", encoding="utf-8") as fh:
-        for r in results:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    storage.write_records(path, results)
 
     s = probe.summarize(results)
     _p("")
@@ -506,9 +487,40 @@ def _build_cfg(args) -> RunConfig:
     )
 
 
+def cmd_writeup(args) -> int:
+    output = writeup.generate(Path(args.run_dir), Path(args.out) if args.out else None)
+    _p(f"Writeup saved: {output}")
+    return 0
+
+
+def cmd_encrypt_history(args) -> int:
+    count = storage.protect_history(Path(args.root))
+    _p(f"Encrypted {count} history files.")
+    return 0
+
+
+def cmd_storage_keygen(args) -> int:
+    storage.generate_key(Path(args.out))
+    _p(f"Encryption key saved: {args.out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="flagpilot", description="重放验证型 CTF Agent")
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    wr = sub.add_parser("writeup", help="Generate a solution writeup from a completed run")
+    wr.add_argument("--run-dir", required=True)
+    wr.add_argument("--out", help="Output path; encrypted mode adds .enc")
+    wr.set_defaults(func=cmd_writeup)
+
+    eh = sub.add_parser("encrypt-history", help="Encrypt existing saved records and completed workspaces")
+    eh.add_argument("--root", default=str(config.RUNS_ROOT))
+    eh.set_defaults(func=cmd_encrypt_history)
+
+    kg = sub.add_parser("storage-keygen", help="Create a local storage encryption key")
+    kg.add_argument("--out", required=True)
+    kg.set_defaults(func=cmd_storage_keygen)
 
     d = sub.add_parser("doctor", help="环境自检")
     d.set_defaults(func=cmd_doctor)
