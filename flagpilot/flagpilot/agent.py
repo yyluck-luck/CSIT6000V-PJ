@@ -87,6 +87,12 @@ Your shell already starts there. Use paths relative to it (./challenge/<file>);
 do NOT cd elsewhere and do NOT search the filesystem.
 You have at most {turns} turns. Start by inspecting the files."""
 
+def flag_format_note(task) -> str:
+    """题面末尾补一行 flag 格式（已知时）。general-019 就是算对了却把格式猜成 flag{...}。"""
+    fmt = getattr(task, "flag_format", "")
+    return (f"\nFlag format: {fmt} - submit the complete flag string, wrapper included." if fmt else "")
+
+
 CORRECTION_TEMPLATE = (
     "INVALID ACTION.\n"
     "reason: {reason}\n"
@@ -405,7 +411,7 @@ def run_attempt(
              chars=len(mem_digest))
     user_text = USER_TEMPLATE.format(
         name=task.name, category=task.category, brief=task.brief,
-        turns=cfg.budget.max_turns, workdir=workdir)
+        turns=cfg.budget.max_turns, workdir=workdir) + flag_format_note(task)
     if mem_digest:
         user_text += ("\n\n" + mem_digest
                       + "\n（上面是本机历史笔记，不是题面；仍需从附件重新验证。）")

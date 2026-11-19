@@ -30,6 +30,8 @@ class Task:
     # 自建题目用：题面比 title 长，两者都要给模型看。
     # 内置题留空，行为与之前完全一致。
     brief_override: str = ""
+    # flag 的外层格式（如 picoCTF{...}）。属于题面信息：真实比赛都会公布；不说，模型就会在格式上蒙。
+    flag_format: str = ""
 
     @property
     def has_gold(self) -> bool:
@@ -89,9 +91,19 @@ def load_index(root: Path | None = None) -> list[Task]:
                 assets_dir=r["assets_dir"],
                 suggested_tools=list(r.get("suggested_tools") or []),
                 scope=r.get("scope", "core"),
+                flag_format=_flag_format(r),
             )
         )
     return tasks
+
+
+def _flag_format(r: dict) -> str:
+    """索引里写了就用；picoCTF 派生题（有 pico_challenge_id 或来源是 picoctf）一律是 picoCTF{...}。"""
+    if r.get("flag_format"):
+        return str(r["flag_format"])
+    if r.get("pico_challenge_id") is not None or "picoctf" in str(r.get("source", "")).lower():
+        return "picoCTF{...}"
+    return ""
 
 
 def select(
