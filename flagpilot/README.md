@@ -18,19 +18,29 @@ python3 -m flagpilot web --model mock        # 浏览器打开 127.0.0.1:8080
 
 不需要装任何第三方包，不需要 GPU，不需要 API key。
 
+**只想看一次真实运行长什么样**（不接模型、不接集群）：
+
+```bash
+python3 -m flagpilot web --replay /path/to/runs/<batch>   # 挂载已完成的 run，打印每条地址
+python3 -m flagpilot show --run-dir /path/to/runs/<batch>/<task>-s0   # 终端里看时间线
+```
+
 ---
 
 ## 改完代码先跑这两条
 
 ```bash
-bash scripts/verify.sh                                       # 11 项自检，不花 GPU
-python3 -m unittest discover -s tests -t . -q                # 210 条单元/集成测试
+bash scripts/verify.sh                                       # 12 项自检，不花 GPU
+python3 -m unittest discover -s tests -t . -q                # 307 条单元/集成测试
 ```
 
 `verify.sh` 会**自己造一套合成题库**（临时目录，跑完删掉），所以它不依赖外部题库，
-也不假设"题库里某道题 mock 恰好能解"。助教刚 clone 下来直接跑也能 11/11。
+也不假设"题库里某道题 mock 恰好能解"。助教刚 clone 下来直接跑也能 12/12。
 
 真实实验才需要 `FLAGPILOT_TASKS` 指向 picoCTF 题库（见 [docs/DATASET.md](docs/DATASET.md)）。
+
+**可选依赖**（`requirements.txt`）：`z3-solver` 解锁 `smt` 动作、`cryptography` 解锁
+加密存储、`pycryptodome` / `gmpy2` 供部分 crypto 题使用。全都不装也能跑主流程。
 
 ---
 

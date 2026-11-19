@@ -28,6 +28,12 @@ class TestWebAPI(unittest.TestCase):
         cls.tmp = Path(tempfile.mkdtemp(prefix="fp-web-"))
         cls._runs = config.RUNS_ROOT
         config.RUNS_ROOT = cls.tmp
+        # 接口测试必须自带题库：仓库里的 tasks/ 是本地软链，不进 git，
+        # 全新 clone 后它不存在。有内置 demo-tasks 就用它，保证 clone 下来直接能跑。
+        cls._tasks = config.TASKS_ROOT
+        demo = Path(__file__).resolve().parent.parent / "demo-tasks"
+        if (demo / "index" / "tasks.jsonl").exists():
+            config.TASKS_ROOT = demo
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
         cls.port = cls.srv.server_address[1]
         cls.base = f"http://127.0.0.1:{cls.port}"
@@ -37,6 +43,7 @@ class TestWebAPI(unittest.TestCase):
     def tearDownClass(cls):
         cls.srv.shutdown()
         config.RUNS_ROOT = cls._runs
+        config.TASKS_ROOT = cls._tasks
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def get(self, path):

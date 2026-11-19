@@ -243,6 +243,15 @@ else
   record "网络隔离等级" PASS "proxy-only（只提示，不阻断；集群上必须复验）"
 fi
 
+# ---------------------------------------------------------------- 12. 离线回放
+# 助教复现靠的就是这条：给一个 runs 目录，不接模型也能把每次运行看回来。
+SHOW_OUT="$("$PY" -m flagpilot show --run-dir "runs/$BATCH/$T1-s0" 2>&1)"
+if echo "$SHOW_OUT" | grep -q "verdict=verified"; then
+  record "离线回放（show）" PASS "trace 可复盘出结论，不依赖模型"
+else
+  record "离线回放（show）" FAIL "$(echo "$SHOW_OUT" | head -2 | tr '\n' ' ')"
+fi
+
 # ---------------------------------------------------------------- 汇总
 echo
 printf '%s\n' "${ROWS[@]}"

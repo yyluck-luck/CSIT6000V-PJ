@@ -15,6 +15,8 @@ E1 的消融通过 RunConfig.ablation 控制，只改三处：prompt 内容、�
 
 from __future__ import annotations
 
+import hashlib
+import re
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -23,7 +25,8 @@ from typing import Callable
 
 from . import context, pricing, verify, storage, writeup
 from .client import build_client
-from .config import Ablation, RunConfig
+from .config import (Ablation, ModelSpec, RunConfig, TRACK_H,
+                     make_model_spec, track_h_api_key)
 from .memory import MemoryStore
 from .sandbox import Sandbox, probe_capabilities
 from .tasks import Task
@@ -36,7 +39,10 @@ _SCHEMA_BASE = '''  {"thought": "<short reasoning>", "action": "shell", "cmd": "
 
 _SCHEMA_STRUCTURED = '''  {"thought": "<short reasoning>", "action": "file", "path": "challenge/<file>"}
   {"thought": "<short reasoning>", "action": "strings", "path": "challenge/<file>", "min_len": 6}
-  {"thought": "<short reasoning>", "action": "decode", "scheme": "rot13|base64|hex|url", "text": "<payload>"}'''
+  {"thought": "<short reasoning>", "action": "decode", "scheme": "rot13|base64|hex|url", "text": "<payload>"}
+  {"thought": "<short reasoning>", "action": "smt", "code": "<z3py source; `from z3 import *` is injected>"}
+  {"thought": "<short reasoning>", "action": "disasm", "path": "challenge/<binary>", "text": "<optional section>"}
+  {"thought": "<short reasoning>", "action": "run_script", "script": "<candidate solve.py>"}'''
 
 _RULES = """Rules:
 - Challenge files are in ./challenge/ and are READ-ONLY. Write your own scratch files elsewhere in the current directory.
@@ -44,8 +50,10 @@ _RULES = """Rules:
 - You have a limited number of turns. Prefer informative commands over guessing.
 - To finish you MUST submit both a flag and a standalone script.
 - The script is re-run later in a FRESH directory that contains only ./challenge/ (same files, nothing else). It must print the flag to stdout by itself.
+- Therefore every path in the script must be RELATIVE (./challenge/...). A hard-coded absolute path will not exist on replay.
 - The script MUST NOT contain the flag string, nor its hex or base64 form. It has to derive the flag from the challenge files.
-- If the flag is wrong you will be told so, with one chance to retry.
+- If the flag is wrong, or if your script fails to reproduce the flag on replay, you will be told what went wrong and given one chance to fix it.
+- Before you submit, test the script with the run_script action. It runs in a clean directory containing only ./challenge/ — the same condition as replay — and costs one turn instead of a rejected submission.
 """
 
 
@@ -74,6 +82,9 @@ USER_TEMPLATE = """Challenge: {name} [{category}]
 
 {brief}
 
+Working directory (absolute): {workdir}
+Your shell already starts there. Use paths relative to it (./challenge/<file>);
+do NOT cd elsewhere and do NOT search the filesystem.
 You have at most {turns} turns. Start by inspecting the files."""
 
 CORRECTION_TEMPLATE = (
@@ -82,6 +93,136 @@ CORRECTION_TEMPLATE = (
     "Reply again with a single JSON object matching the schema. "
     "Do not add explanation outside the JSON."
 )
+
+# 截断与"不守协议"要分开纠正：前者是"话太多、预算被自己写满"，
+# 再喂一句"你的 JSON 格式不对"只会让它继续写更多解释，越修越糟。
+CORRECTION_TRUNCATED = (
+    "OUTPUT TRUNCATED: your reply hit the {max_tokens}-token limit before the JSON closed.\n"
+    "Put the JSON object FIRST, keep `thought` under 20 words, and write no prose outside it.\n"
+    "If the action needs long code, split it into two shorter actions instead of one huge one."
+)
+
+CORRECTION_THINKING = (
+    "EMPTY REPLY: the whole token budget went to hidden reasoning, so no action was emitted.\n"
+    "Answer with the JSON object immediately and do not think first."
+)
+
+# 提交失败后的修复预算。刻意分成两个独立额度，互不挤占：
+# - flag 错：改答案（proposal "最多两次提交"里的那一次）
+# - 重放失败：改脚本（不是改答案）
+# 分开记的理由很实际：flag 已经算对了、只是脚本跑不起来，不该把"改答案"的
+# 额度吃掉；反过来，flag 改对了但脚本还挂，也还能再修一次。
+MAX_FLAG_RETRIES = 1
+MAX_SCRIPT_REPAIRS = 1
+
+REPAIR_FLAG_TEMPLATE = (
+    "FLAG REJECTED: the submitted flag is not correct.\n"
+    "Keep working, then submit again with flag and script."
+)
+
+REPAIR_SCRIPT_TEMPLATE = (
+    "REPLAY FAILED: solve.py did not reproduce the submitted flag in a clean directory.\n"
+    "reason: {reason}\n"
+    "detail: {detail}\n"
+    "replay stdout (tail):\n{stdout}\n"
+    "hint: {hint}\n"
+    "Fix solve.py so it runs standalone against ./challenge/ and prints the flag "
+    "to stdout, then submit again with the flag and the repaired script."
+)
+
+# 每种失败给一句可操作的修法。只报 reason 不给方向，模型通常会原样重发。
+_SCRIPT_HINTS = {
+    "literal_flag": "the script embeds the flag (or an encoded form of it). "
+                    "It must derive the answer from the challenge files instead.",
+    "script_error": "the script crashed. During replay it can only see ./challenge/; "
+                    "scratch files written in earlier turns do not exist there.",
+    "timeout": "the script exceeded the replay timeout. Avoid sleeps, unbounded loops, "
+               "and brute force over large keyspaces.",
+    "no_output": "the script finished but printed nothing. It must print the flag.",
+    "hardcoded_no_material": "the script still printed the same flag after ./challenge/ "
+                             "was emptied, so the answer does not come from the files. "
+                             "It must read and process the actual challenge material.",
+}
+
+
+def _replay_stdout_tail(replay, limit: int = 800) -> str:
+    """重放输出只回传尾部。
+
+    头部通常是模型自己写的调试打印，尾部才是 traceback 或最终结果——
+    修复脚本需要的正是后者。整段塞回去会白白撑大上下文。
+    """
+    out = (replay.stdout or "").strip()
+    return out[-limit:] if out else "(empty)"
+
+
+def repair_message(replay) -> tuple[str, str] | None:
+    """按重放结论决定要不要给一次修复机会，以及该说什么。
+
+    返回 ``(kind, message)``，kind 取 ``"flag"``（改答案）或 ``"script"``（改脚本）。
+    返回 None 表示这个结论已经是终局，再烧一轮也不会有新信息。
+
+    为什么要有这个函数：原先只有 ``verdict == "wrong"`` 才重试，
+    ``unverified`` 的四种失败（脚本崩 / 超时 / 含字面量 / 没输出）直接判死。
+    但 flag 算对了、脚本跑不起来，恰恰是最该给一次机会的情形——
+    模型完全不知道自己挂在哪，因为重放的 stdout/stderr 从来没回传过。
+    """
+    if replay.verdict == "wrong":
+        if replay.reason in ("wrong_flag", "empty_flag"):
+            return "flag", REPAIR_FLAG_TEMPLATE
+        return None
+    if replay.verdict == "unverified" and replay.reason in _SCRIPT_HINTS:
+        return "script", REPAIR_SCRIPT_TEMPLATE.format(
+            reason=replay.reason,
+            detail=replay.detail or "(no detail recorded)",
+            stdout=_replay_stdout_tail(replay),
+            hint=_SCRIPT_HINTS[replay.reason],
+        )
+    # verified / reproduced 已经是终局；reproduced 是无 gold 题的最优结果。
+    return None
+
+
+def truncation_signal(comp, max_tokens: int) -> str:
+    """这一轮输出是不是被 max_tokens 截断。返回 '' 表示没截断。
+
+    为什么值得单独判一次：截断的**表象**是"没有解析到合法的 JSON 动作"，
+    和"模型不守 JSON 协议"一模一样，但两者要采取的动作完全相反——
+    协议问题该加强约束，截断该让它少写点。不分开，报告里就会把
+    "预算配小了"记成"模型能力差"，这类标签错得毫无痕迹。
+
+    判据优先用 finish_reason（服务端权威信号）；有些运行时不报，退回
+    token 计数——但只信服务端回报的 usage，估算值撞上限不算证据。
+
+    max_tokens 必须是**本轮实际生效**的那个值：hybrid 升级后跑的是 H 轨模型，
+    它的输出上限与 L 轨的 cfg.model.max_tokens 不同，拿错基准就判不出来。
+    """
+    fr = (comp.finish_reason or "").strip().lower()
+    if fr in ("length", "max_tokens"):
+        return "length"
+    if (comp.usage_source == "reported"
+            and max_tokens > 0
+            and comp.completion_tokens >= max_tokens):
+        return "tokens"
+    return ""
+
+
+def turn_max_tokens(client, cfg: RunConfig) -> int:
+    """本轮实际生效的输出上限。
+
+    为什么不能直接用 cfg.model.max_tokens：hybrid 升级后跑的是 H 轨模型，
+    它的输出上限与 L 轨不同；拿错基准，H 轨的截断就会被漏判成协议错误。
+    测试替身不一定带 spec，此时退回 L 轨配置——总比抛 AttributeError 好。
+    """
+    spec = getattr(client, "spec", None)
+    return int(getattr(spec, "max_tokens", 0) or 0) or cfg.model.max_tokens
+
+
+def correction_message(kind: str, reason: str, max_tokens: int) -> str:
+    """按失败种类选纠正语。kind 为空即普通协议错误。"""
+    if kind == "truncated":
+        return CORRECTION_TRUNCATED.format(max_tokens=max_tokens)
+    if kind == "thinking_overflow":
+        return CORRECTION_THINKING
+    return CORRECTION_TEMPLATE.format(reason=reason)
 
 
 def truncate(text: str, policy) -> tuple[str, bool]:
@@ -108,6 +249,32 @@ def truncate(text: str, policy) -> tuple[str, bool]:
     return out, True
 
 
+_READONLY_HINT = (
+    "\nhint: ./challenge/ is READ-ONLY. Copy a file out before unpacking it, e.g. "
+    "`cp challenge/x.tgz . && tar xf x.tgz`. Write every scratch file to the "
+    "current directory (./), never into ./challenge/."
+)
+
+_PERMISSION_RE = re.compile(
+    r"Permission denied|Read-only file system|Operation not permitted", re.I)
+
+
+def _readonly_hint(act: Action, res) -> str:
+    """往只读目录里写东西失败了，就把"该怎么办"直接写在报错后面。
+
+    规则里其实写了"scratch files 写到当前目录"，但模型不看规则、只看上一条
+    报错。实测（27B，NYU crypto）它会在 `tar xzf` 失败后去猜 /tmp、再
+    `find /` 扫全盘超时，白烧 3 轮。把提示挂在它一定会读到的地方最省事。
+    """
+    if res.exit_code == 0 or res.timed_out:
+        return ""
+    blob = res.combined or ""
+    if not _PERMISSION_RE.search(blob):
+        return ""
+    touched = f"{act.cmd}\n{act.code}\n{act.path}\n{blob}"
+    return _READONLY_HINT if "challenge" in touched else ""
+
+
 def format_observation(step: int, act: Action, res) -> str:
     status = "timeout" if res.timed_out else f"exit={res.exit_code}"
     body = res.combined
@@ -116,7 +283,9 @@ def format_observation(step: int, act: Action, res) -> str:
         header += f": {act.cmd.splitlines()[0][:160]}"
     elif act.action in ("file", "strings"):
         header += f": {act.path}"
-    return f"{header}\n{status}  time={res.duration_ms / 1000:.2f}s\n--- output ---\n{body}"
+    note = f"\nhint: {res.note}" if getattr(res, "note", "") else ""
+    return (f"{header}\n{status}  time={res.duration_ms / 1000:.2f}s\n"
+            f"--- output ---\n{body}{_readonly_hint(act, res)}{note}")
 
 
 _COUNTER_SUFFIX = ("_total", "_sum", "_count")
@@ -160,6 +329,29 @@ def _cache_stats(before: dict, after: dict) -> dict:
     if ptok and gtok is not None and (ptok + gtok) > 0:
         out["prefill_share"] = round(float(ptok) / (float(ptok) + float(gtok)), 4)
     return out
+
+
+def _evidence_fingerprint(text: str) -> str:
+    """工具观测的指纹，用来判断"这一轮有没有拿到新东西"。
+
+    先归一化空白再取哈希：同一份文件被 `ls` 三次不该算三条证据，
+    但同一文件在不同 offset 读出的不同内容应该算。只取前 4KB——
+    长输出尾部常常是重复的噪声，纳入指纹会掩盖真正的停滞。
+    """
+    norm = re.sub(r"\s+", " ", text or "").strip()
+    return hashlib.sha1(norm[:4000].encode("utf-8", "replace")).hexdigest()
+
+
+def hosted_spec(cfg: RunConfig) -> ModelSpec:
+    """H 轨规格。没显式配置就用 TRACK_H 的默认端点与模型名。"""
+    if cfg.hybrid.model is not None:
+        return cfg.hybrid.model
+    return make_model_spec(
+        TRACK_H["model"],
+        base_url=TRACK_H["base_url"],
+        api_key=track_h_api_key() or "EMPTY",
+        provider="deepseek",
+    )
 
 
 def run_attempt(
@@ -213,7 +405,7 @@ def run_attempt(
              chars=len(mem_digest))
     user_text = USER_TEMPLATE.format(
         name=task.name, category=task.category, brief=task.brief,
-        turns=cfg.budget.max_turns)
+        turns=cfg.budget.max_turns, workdir=workdir)
     if mem_digest:
         user_text += ("\n\n" + mem_digest
                       + "\n（上面是本机历史笔记，不是题面；仍需从附件重新验证。）")
@@ -222,7 +414,17 @@ def run_attempt(
         {"role": "user", "content": user_text + NT},
     ]
 
-    toolbox = ToolBox(sandbox, structured=cfg.ablation.structured_tools)
+    # 提交前自检的装置。闭包里绑住这道题与题库根目录，ToolBox 只负责调用。
+    dry_runner = None
+    if cfg.self_check:
+        def _dry(script: str):
+            return verify.dry_run(task, script, cfg.tasks_root,
+                                  timeout_s=cfg.replay_timeout_s, limits=cfg.limits)
+
+        dry_runner = _dry
+
+    toolbox = ToolBox(sandbox, structured=cfg.ablation.structured_tools,
+                      dry_runner=dry_runner)
     t0 = time.monotonic()
     turns = 0
     invalids = 0
@@ -243,13 +445,32 @@ def run_attempt(
     submitted = ""
     replay = None
     submit_retries = 0
+    script_repairs = 0
+    # 靠修复额度"借来"的轮次。turns 仍然是真实模型调用次数，
+    # bonus_turns 记其中有多少超出了 max_turns——两者一起才能还原预算口径。
+    bonus_turns = 0
+    # 首次提交的结论单独留一份。报告要能分开"一次过"和"修完才过"，
+    # 否则修复策略带来的增益会被算成模型能力。
+    first_submit: tuple[str, str] | None = None
+    # 原样重发检测：flag 与脚本都没变时不再给额度。
+    last_submission: tuple[str, str] | None = None
+    # ---- hybrid 升级状态 ----
+    # 只有真的触发过才构建 H 轨 client：没升级的 run 不该多一条连接。
+    hosted_client = None
+    escalations = 0
+    escalated_at = 0
+    hosted_prompt = hosted_completion = 0
+    hosted_cost = 0.0
+    escalation_blocked = False
+    evidence_seen: set[str] = set()
+    stall_streak = 0
     compactions = 0
     # 小模型常见的死循环：同一个动作反复执行到轮次耗尽。
     # 这是 harness 该管的事，不该指望 prompt 约束住，所以放在循环里。
     recent: list[str] = []
     warned: set[str] = set()
 
-    while turns < cfg.budget.max_turns:
+    while turns < cfg.budget.max_turns + bonus_turns:
         if time.monotonic() - t0 > cfg.budget.max_wall_s:
             reason = "wall_time"
             break
@@ -260,11 +481,42 @@ def run_attempt(
             reason = "completion_tokens"
             break
 
+        # ---- hybrid：连续 k 轮没有新证据就升级到 H 轨 ----
+        # 判据只用"有没有新证据"，不看轮次进度：轮次进度在长任务里天然会涨，
+        # 拿它当信号会把"正在稳步推进"误判成停滞。
+        if (cfg.hybrid.enabled and hosted_client is None and not escalation_blocked
+                and stall_streak >= cfg.hybrid.stall_turns
+                and escalations < cfg.hybrid.max_escalations
+                and hosted_prompt + hosted_completion < cfg.hybrid.max_hosted_tokens):
+            spec = hosted_spec(cfg)
+            if not spec.api_key or spec.api_key == "EMPTY":
+                # 没有 key 就永久关掉升级，别每轮都试一次
+                escalation_blocked = True
+                tr.event("escalate_skipped", turn=turns, reason="missing_api_key",
+                         model=spec.name)
+            else:
+                hosted_client = build_client(spec)
+                escalations += 1
+                escalated_at = turns
+                tr.event("escalate", turn=turns, from_model=cfg.model.name,
+                         to_model=spec.name, stall_streak=stall_streak,
+                         hosted_tokens=hosted_prompt + hosted_completion)
+
         turns += 1
-        comp = client.complete(messages)
+        active = hosted_client or client
+        # 截断判定必须跟着 active 走，不能用 cfg.model（见 turn_max_tokens）。
+        turn_max = turn_max_tokens(active, cfg)
+        comp = active.complete(messages)
         sum_prompt += comp.prompt_tokens
         sum_completion += comp.completion_tokens
-        cost += pricing.turn_cost(cfg.model, comp)
+        # L 与 H 分开记账：E4 要比的是 "verified solves vs hosted tokens and cost"，
+        # 混成一个数就再也拆不开了。
+        if hosted_client is not None and active is hosted_client:
+            hosted_prompt += comp.prompt_tokens
+            hosted_completion += comp.completion_tokens
+            hosted_cost += pricing.turn_cost(hosted_spec(cfg), comp)
+        else:
+            cost += pricing.turn_cost(cfg.model, comp)
         if comp.cache_hit_tokens is not None or comp.cache_miss_tokens is not None:
             api_seen = True
             api_hit += comp.cache_hit_tokens or 0
@@ -279,6 +531,8 @@ def run_attempt(
             turn=turns,
             prompt_tokens=comp.prompt_tokens,
             completion_tokens=comp.completion_tokens,
+            finish_reason=comp.finish_reason,
+            reasoning_tokens=comp.reasoning_tokens,
             ttft_ms=comp.ttft_ms,
             latency_ms=comp.latency_ms,
             usage_source=comp.usage_source,
@@ -293,20 +547,37 @@ def run_attempt(
             break
 
         act, err = parse_action(comp.text, toolbox.allowed)
-        if act is None and not (comp.text or "").strip() \
-                and comp.completion_tokens >= cfg.model.max_tokens * 0.9:
-            # 这一种失败长得像"模型不守规矩"，其实是预算被思维链吃光。
-            # 单独给一句话，免得报告里把它归到"协议问题"。
-            err = (f"空回复：{comp.completion_tokens} tok 用满但正文为空"
-                   f"（max_tokens={cfg.model.max_tokens} 疑似被思维链占满，"
-                   f"检查 soft_no_think={cfg.model.soft_no_think}）")
+        # 失败原因分三类，各自要给的纠正语完全不同（见 correction_message）。
+        # 只有第三类才是真的"不守协议"，前两类是预算配小了。
+        kind = ""
+        if act is None:
+            if not (comp.text or "").strip() \
+                    and comp.completion_tokens >= turn_max * 0.9:
+                kind = "thinking_overflow"
+                err = (f"空回复：{comp.completion_tokens} tok 用满但正文为空"
+                       f"（max_tokens={turn_max} 疑似被思维链占满，"
+                       f"检查 soft_no_think={cfg.model.soft_no_think}）")
+            elif truncation_signal(comp, turn_max):
+                kind = "truncated"
+                started = "{" in (comp.text or "")
+                err = (f"输出被截断：{comp.completion_tokens} tok 撞上 "
+                       f"max_tokens={turn_max}"
+                       f"（{'JSON 未闭合' if started else '还没开始写 JSON，预算全花在推理上'}）")
+            else:
+                kind = "protocol"
         if act is None:
             invalids += 1
-            tr.event("invalid_action", turn=turns, reason=err)
+            tr.event("invalid_action", turn=turns, kind=kind, reason=err)
             messages.append({"role": "assistant", "content": comp.text[:2000]})
-            messages.append({"role": "user", "content": CORRECTION_TEMPLATE.format(reason=err) + NT})
+            messages.append({"role": "user", "content": correction_message(
+                kind, err, turn_max) + NT})
+            # 协议错误不产生观测，等于这一轮没有新证据
+            if cfg.hybrid.enabled and hosted_client is None:
+                stall_streak += 1
             if invalids > 2:
-                verdict, reason = "budget", "invalid_action"
+                # 记下最后一次的 kind：截断导致的"轮次耗尽"和真的乱答
+                # 在报告里必须能分开，否则又是一条假标签。
+                verdict, reason = "budget", (kind if kind != "protocol" else "invalid_action")
                 break
             # 以前这里 turns -= 1，本意是"纠正不消耗轮次"。问题是事件里的
             # turn 会因此重号（1,2,3,4,4,5…），界面上"轮次"比 trace 里的
@@ -326,16 +597,47 @@ def run_attempt(
                 timeout_s=cfg.replay_timeout_s,
                 limits=cfg.limits,
                 keep_dir=run_dir / "replay",
+                material_free=cfg.material_free,
             )
             tr.event("replay", **asdict(replay))
-            if replay.verdict == "wrong" and submit_retries < 1:
-                # 给一次改错的机会，和 proposal 里"≤2 retries"的口径一致（这里取 1 次）
-                submit_retries += 1
-                messages.append({"role": "assistant", "content": comp.text[:2000]})
-                messages.append({"role": "user", "content":
-                                 "FLAG REJECTED: the submitted flag is not correct.\n"
-                                 "Keep working, then submit again with flag and script."})
-                continue
+            if first_submit is None:
+                first_submit = (replay.verdict, replay.reason)
+
+            # 原样重发（flag 与脚本都没改）不再给额度：同样的输入必然得到
+            # 同样的结论，多烧一轮没有信息增益。
+            current = (submitted, act.script or "")
+            same_as_last = current == last_submission
+            last_submission = current
+
+            offer = None if same_as_last else repair_message(replay)
+            if offer is not None:
+                kind, message = offer
+                left = (MAX_FLAG_RETRIES - submit_retries if kind == "flag"
+                        else MAX_SCRIPT_REPAIRS - script_repairs)
+                # 墙钟是真实资源，任何模式下都不能突破；轮次则看配置：
+                # 默认允许修复轮借轮次，否则"最后一轮才提交"的 run 拿不到
+                # proposal 承诺的那次反馈（27B 实测里 crypto-093 就是这样）。
+                has_time = time.monotonic() - t0 < cfg.budget.max_wall_s
+                can_retry = has_time and (cfg.repair_extends_budget
+                                          or turns < cfg.budget.max_turns)
+                if left > 0 and can_retry:
+                    if kind == "flag":
+                        submit_retries += 1
+                    else:
+                        script_repairs += 1
+                    if turns >= cfg.budget.max_turns:
+                        bonus_turns += 1
+                    tr.event("submit_repair", turn=turns, kind=kind,
+                             reason=replay.reason,
+                             flag_retries=submit_retries,
+                             script_repairs=script_repairs,
+                             bonus_turns=bonus_turns)
+                    messages.append({"role": "assistant", "content": comp.text[:2000]})
+                    # 末尾补 NT：这条反馈原先漏了 /no_think，Qwen3 在重试那一轮
+                    # 会把思维链重新打开，和其他 user 消息的行为不一致。
+                    messages.append({"role": "user", "content": message + NT})
+                    continue
+
             verdict = replay.verdict
             reason = replay.reason
             break
@@ -359,6 +661,17 @@ def run_attempt(
 
         messages.append({"role": "assistant", "content": comp.text[:2000]})
         messages.append({"role": "user", "content": "OBSERVATION\n" + obs + NT})
+
+        # ---- stall 检测 ----
+        # 指纹取工具原始输出，不取 format_observation 的结果：后者带
+        # "[step N]" 和耗时，每轮都不同，拿它做指纹会永远判不出停滞。
+        if cfg.hybrid.enabled and hosted_client is None:
+            fp = _evidence_fingerprint(res.combined)
+            if fp in evidence_seen:
+                stall_streak += 1
+            else:
+                evidence_seen.add(fp)
+                stall_streak = 0
 
         # ---- 死循环检测 ----
         key = "|".join([act.action, act.cmd or act.code or act.path or "",
@@ -435,12 +748,38 @@ def run_attempt(
         "ablation": cfg.ablation.name,
         "model": cfg.model.name,
         "server": server,
+        # 升级账本：E4 要比 "verified solves vs hosted tokens and cost"，
+        # 所以 H 轨的 token / 钱必须和 L 轨分开记。
+        "hybrid": {
+            "enabled": cfg.hybrid.enabled,
+            "escalations": escalations,
+            "escalated_at_turn": escalated_at,
+            "hosted_model": getattr(hosted_client, "spec", None).name
+            if hosted_client is not None else None,
+            "hosted_prompt_tokens": hosted_prompt,
+            "hosted_completion_tokens": hosted_completion,
+            "hosted_tokens": hosted_prompt + hosted_completion,
+            "hosted_cost_usd": round(hosted_cost, 6),
+            "stall_turns": cfg.hybrid.stall_turns,
+            "blocked": escalation_blocked,
+        },
+        "cost_usd_total": round(cost + hosted_cost, 6),
         "replay": asdict(replay) if replay else None,
+        # 提交修复的账：报告里据此分开"一次过"与"修完才过"，
+        # 也能量出修复策略本身贡献了多少通过率。
+        "submit_retries": submit_retries,
+        "script_repairs": script_repairs,
+        # 借来的轮次数。turns - bonus_turns 才是"预算内"的调用数；
+        # 不分开记，report 里的平均轮次就会被修复轮悄悄抬高。
+        "bonus_turns": bonus_turns,
+        "first_submit_verdict": first_submit[0] if first_submit else None,
+        "first_submit_reason": first_submit[1] if first_submit else None,
         "run_dir": str(run_dir),
     }
     summary["writeup"] = storage.artifact_path(run_dir / "writeup.md").name
     storage.seal_directory(workdir)
     storage.seal_directory(run_dir / "replay")
+    storage.seal_directory(run_dir / "replay-no-material")
     tr.close(summary)
     writeup.generate(run_dir)
     # 读记忆受 cfg.memory 控制，写记忆永远执行：批跑也能攒经验，
