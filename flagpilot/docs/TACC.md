@@ -5,6 +5,30 @@
 
 ---
 
+## 课程平台（官方 tcloud SDK）——先看这里
+
+课程 TACC 只允许用 SDK 提交、查看、下载（学生不登录服务器、不建 SSH 转发）。本文后面的 `run.slurm` /
+`serve.slurm` 流程适用于通用 Slurm 集群；**课程平台请走 `deploy/tcloud/`**，2026-11-17 已实跑（作业 29323：
+5 道 dev 题 4 道 verified）。课程平台的硬约束：分区上限 **1 小时**；模型固定为 `qwen3.8-27b`
+（Qwen3.8-27B-AWQ-INT4，混合注意力，prefix cache 按 784 token 一块对齐）；`--max-num-seqs 4`、prefix cache 常开，
+所以 E3 的"关缓存"与"8 并发"两格在课程服务上做不了。
+
+```bash
+# 全程只用课程 SDK（tcloud v0.4.1），在本机执行：不登录服务器、不 scp、不建 SSH 转发
+deploy/tcloud/submit.sh doctor                         # CPU 自检：SDK 引导、课程 Python、泄漏检查
+deploy/tcloud/submit.sh serve                          # qwen3.8-27b，2×3090，分区上限 1 小时
+tcloud cat slurm_log/qwen-public-serve-<job>.log       # 等 "Application startup complete"，抄 SERVICE_BASE_URL
+FP_LIMIT=5 deploy/tcloud/submit.sh batch http://<node>:8000/v1
+tcloud download flagpilot-runs/tacc-smoke.md ./        # 报告
+tcloud download -r flagpilot-runs/tacc-smoke ./        # 轨迹 → python3 -m flagpilot web --replay ./tacc-smoke
+tcloud cancel -j <serve job>                            # 释放 GPU
+# 或一条命令：deploy/tcloud/pipeline.sh <本地输出目录>（显存 / 8000 端口被占的节点自动排除重交，结束必取消服务）
+```
+
+踩过的坑都已在脚本里处理：课程运行时（PRoot）没有 `python3` → 客户端垫一层；PRoot 解析不了节点名 →
+宿主机上换成 IP；`tcloud cat` 输出带 `\r` → `submit.sh` 校验地址；部分节点有 Slurm 管不到的进程占着显存或
+8000 端口 → 服务作业开服前体检，用 `FP_EXCLUDE=节点` 换节点。GPU 秒记在服务作业上，客户端批次不计。
+
 ## 0. 提交前必须问清的四件事
 
 任何一条没确认，后面都可能白跑：

@@ -445,9 +445,9 @@ The agent loop and the web server are one process, so "backend on TACC, frontend
 serve on a compute node, forward the port, and point a local browser at it.
 
 ```bash
-# 1) on the cluster: start the serving job and read its endpoint from the log
-tcloud submit qwen-public-serve
-tcloud logs <job-id> | grep SERVICE_BASE_URL      # → http://<node-ip>:8000
+# 1) start the course serving job through the SDK and read its endpoint from the job log
+deploy/tcloud/submit.sh serve                    # prints the job id
+tcloud cat slurm_log/qwen-public-serve-<job-id>.log | grep SERVICE_BASE_URL   # → http://<node>:8000/v1
 
 # 2) on your laptop: forward the port (no shell is opened)
 export TACC_HOST=gw.example.edu TACC_PORT=30041 TACC_KEY=~/.ssh/id_ed25519
@@ -476,17 +476,15 @@ scripts/tunnel.sh down
 This is the path that produces the evaluation data, and it never leaves the cluster.
 
 ```bash
-# upload: packs the repo, refuses to send solution directories or plaintext gold, then runs doctor
-./deploy/upload.sh <user>@<tacc-host> '~/flagpilot'
-
-# on the cluster
-tcloud submit qwen-public-serve      # vLLM; the log prints SERVICE_BASE_URL
-tcloud submit qwen-public-client     # runs FlagPilot; job.sh copies runs/ to a persistent path
-                                     # $TACC_USERDIR/flagpilot-runs/$SLURM_JOB_ID/
-
-# back on your laptop
-scp -P <port> -r <user>@<gateway>:<userdir>/flagpilot-runs/<jobid> ./runs-tacc
-python3 -m flagpilot web --replay ./runs-tacc
+# everything runs from your laptop through the course SDK: no login, no scp, no port forwarding
+deploy/tcloud/submit.sh doctor                         # CPU self-check: SDK bootstrap, course Python, leak guard
+deploy/tcloud/submit.sh serve                          # qwen3.8-27b on 2x3090 (partition limit: 1 hour)
+tcloud cat slurm_log/qwen-public-serve-<job>.log       # wait for "Application startup complete"
+FP_LIMIT=5 deploy/tcloud/submit.sh batch http://<node>:8000/v1
+tcloud download flagpilot-runs/tacc-smoke.md ./        # report
+tcloud download -r flagpilot-runs/tacc-smoke ./        # traces, then: python3 -m flagpilot web --replay ./tacc-smoke
+tcloud cancel -j <serve job>                            # free the GPUs
+# or all of it in one command: deploy/tcloud/pipeline.sh <local-output-dir>
 ```
 
 The client job reads the model endpoint from `server-url.txt`. Persisting `runs/` is not optional:
