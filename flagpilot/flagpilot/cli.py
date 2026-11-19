@@ -420,12 +420,23 @@ def cmd_batch(args) -> int:
 
 # ---------------------------------------------------------------- report
 
+def _load_batch(path: Path) -> list[dict]:
+    """读 runs.jsonl。run_dir 指向别处的绝对路径（例如从 TACC 下载回来）时，改指批次目录下的
+    同名子目录——否则本机出报告时失败归因与整批缓存命中率都读不到 trace。"""
+    rows = storage.read_records(path)
+    for r in rows:
+        d = r.get("run_dir")
+        if d and not Path(d).exists() and (path.parent / Path(d).name).exists():
+            r["run_dir"] = str(path.parent / Path(d).name)
+    return rows
+
+
 def cmd_report(args) -> int:
     path = config.RUNS_ROOT / args.batch / "runs.jsonl"
     if not path.exists():
         _p(f"找不到 {path}")
         return 1
-    results = storage.read_records(path)
+    results = _load_batch(path)
     s = metrics.summarize(results, gpu=gpu.load_ledger(path.parent))
     if args.json:
         _p(json.dumps(s, ensure_ascii=False, indent=2))
@@ -451,7 +462,7 @@ def cmd_compare(args) -> int:
         if not p.exists():
             _p(f"[warn] 跳过 {n}：找不到 {p}")
             continue
-        rs = storage.read_records(p)
+        rs = _load_batch(p)
         batches[n] = metrics.summarize(rs, with_tags=False, gpu=gpu.load_ledger(p.parent))
     if not batches:
         return 1
@@ -476,7 +487,7 @@ def cmd_pair(args) -> int:
         if not p.exists():
             _p(f"找不到 {p}")
             return 1
-        loaded[name] = storage.read_records(p)
+        loaded[name] = _load_batch(p)
     res = metrics.paired(loaded[args.a], loaded[args.b], key=args.key)
     text = metrics.render_paired(res, args.a, args.b)
     _p(text)
