@@ -561,7 +561,7 @@ prints one line per check.
    of roughly 84–100%. Differences below about 15 percentage points on 20 tasks are not resolvable,
    which is why the paired test is reported alongside.
 7. **Mock is not a model.** Quickstart numbers (`3/3 verified`) measure the harness. They must not be
-   compared with model results anywhere in the report.
+   compared with model results anywhere.
 8. **Model scale.** The course platform serves a 27B AWQ model; the reproducible configuration in §3
    uses an 8B model on a single consumer GPU. Absolute rates differ between the two. What we claim
    transfers is the direction of the ablation effect, not its magnitude.
@@ -589,7 +589,7 @@ prints one line per check.
 | `?run=` opens nothing | The id must be 12 hex characters | Use the URL printed at startup; do not construct one |
 | Tunnel is up but `/v1/models` is empty | The serving job expired (1-hour partition limit) | Resubmit the serving job; the tunnel recovers if the node IP is unchanged |
 | Encrypted run fails on `staging.rmdir()` | Host shim intercepts `rmdir` | Set `FLAGPILOT_RUNS` to a path outside the intercepted tree |
-| Model output looks cut off | `--max-tokens` too small | The report labels these as truncation rather than protocol failures; raise `--max-tokens` and rerun |
+| Model output looks cut off | `--max-tokens` too small | Attribution labels these as truncation rather than protocol failures; raise `--max-tokens` and rerun |
 
 ---
 
