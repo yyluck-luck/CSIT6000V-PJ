@@ -5,7 +5,7 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 8
-#SBATCH -t 02:00:00
+#SBATCH -t 01:00:00
 #SBATCH --gres=gpu:2
 #SBATCH -o logs/serve-%j.out
 #SBATCH -e logs/serve-%j.err
