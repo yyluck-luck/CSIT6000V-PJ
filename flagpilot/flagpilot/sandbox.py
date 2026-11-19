@@ -88,7 +88,11 @@ def probe_capabilities(force: bool = False) -> Caps:
 
     caps = Caps()
     py = shutil.which("python3") or shutil.which("python")
-    caps.python = py or "python3"
+    if not py:
+        # PATH 里找不到时退回当前解释器：平台常用 `python -m` 的绝对路径启动，
+        # 此时 PATH 不含解释器目录，which 会落空，沙箱里 solve.py 就调不到 python3。
+        py = sys.executable or "python3"
+    caps.python = py
 
     try:
         import resource  # noqa: F401
@@ -242,8 +246,17 @@ class Sandbox:
 
     def _exec(self, argv: list[str], display: str, timeout: float | None = None) -> ExecResult:
         timeout = timeout if timeout is not None else self.limits.action_timeout_s
+        # 沙箱里 `python3` 必须可解析：模型写的 solve.py 常用 `python3 x.py`
+        # 或 `subprocess.run("python3 ...", shell=True)`。宿主若是 conda / venv，
+        # 解释器可能只以绝对路径存在（main.py 用 sys.executable 启动时尤其如此），
+        # 此时 PATH 里没有它的目录，重放就会报 `/bin/sh: python3: not found`。
+        # 把解释器所在目录提到 PATH 最前，保证沙箱用的就是 agent 用的那个。
+        base_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+        py_dir = os.path.dirname(str(self.caps.python))
+        if py_dir and py_dir not in base_path.split(os.pathsep):
+            base_path = py_dir + os.pathsep + base_path
         env = {
-            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "PATH": base_path,
             "HOME": str(self.workdir),
             "TMPDIR": str(self.workdir / ".tmp"),
             "LANG": "C.UTF-8",
