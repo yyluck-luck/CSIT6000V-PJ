@@ -10,8 +10,8 @@ web interface for task submission, live progress, and result review, and records
 replayable trace.
 
 Artifact for **CSIT6000V Advanced AI Computing and Systems**, HKUST CSE. The course specification is
-in [`course_project.pdf`](course_project.pdf). Group contributions are listed in the submitted PDF,
-not here.
+in [`course_project.pdf`](course_project.pdf), and the proposal this artifact implements is in
+[`proposal.pdf`](proposal.pdf). Group contributions are listed in the submitted PDF, not here.
 
 ---
 
@@ -19,6 +19,8 @@ not here.
 
 | Path | Contents |
 |---|---|
+| `proposal.pdf` | The project proposal this artifact implements: goals, experiments E1–E4, and the cut order |
+| `course_project.pdf` | The course specification |
 | `flagpilot/flagpilot/` | Core package: agent loop, tools, sandbox, replay verifier, metrics, storage |
 | `flagpilot/app/` | Web interface (zero-dependency HTTP server + single-page frontend) |
 | `flagpilot/demo-tasks/` | **Three synthetic tasks bundled so the quickstart runs offline** |
