@@ -32,7 +32,7 @@ from pathlib import Path
 from . import verify
 from .client import build_client
 from .config import RunConfig
-from .tasks import Task, stage_assets
+from .tasks import Task
 
 # 宽松一点：不假设前缀一定是 picoCTF，任何 xxx{...} 都先当候选，再交给哈希判
 _FLAG_RE = re.compile(r"[A-Za-z0-9_]{2,24}\{[^}\n]{1,160}\}")

@@ -42,6 +42,7 @@ class TestWebAPI(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
         config.RUNS_ROOT = cls._runs
         config.TASKS_ROOT = cls._tasks
         shutil.rmtree(cls.tmp, ignore_errors=True)
@@ -197,6 +198,7 @@ class TestWebAPI(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 self.post("/api/settings", {"model": "  "})
             self.assertEqual(ctx.exception.code, 400)
+            ctx.exception.close()
         finally:
             S.SETTINGS["model"] = old
 
@@ -204,6 +206,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/run", {"task": self.task_name(), "ablate": "B9"})
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     def test_probe_endpoint(self):
         d = self.post("/api/probe", {"task": self.task_name(), "mode": "brief"})
@@ -218,6 +221,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.get("/api/chat/history?id=../../../../etc")
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     def test_post_requires_json_content_type(self):
         """跨站表单/sendBeacon 发不了 application/json，这条挡掉大半 CSRF。"""
@@ -228,6 +232,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(ctx.exception.code, 415)
+        ctx.exception.close()
 
     def test_post_rejects_cross_origin(self):
         req = urllib.request.Request(
@@ -238,6 +243,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(ctx.exception.code, 403)
+        ctx.exception.close()
 
     # ---------- 自建题目 ----------
 
@@ -271,6 +277,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/custom/delete", {"task": self.task_name()})
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     # ---------- 答疑 ----------
 
@@ -304,6 +311,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/chat", {"message": "  "})
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     def test_qwen3_disables_thinking_in_web_path(self):
         """web 与 CLI 必须用同一个构造函数，否则思维链会把每轮预算吃光。"""

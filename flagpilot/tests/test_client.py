@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import threading
 import unittest
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -69,6 +72,7 @@ class TestDowngrade(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
 
     def setUp(self):
         REQUESTS.clear()
@@ -113,6 +117,7 @@ class TestPayloadFields(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
 
     def setUp(self):
         REQUESTS.clear()
@@ -172,6 +177,7 @@ class TestReasoningFallback(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
 
     def test_action_recovered_from_reasoning(self):
         comp = self.client.complete([{"role": "user", "content": "hi"}])
@@ -180,6 +186,29 @@ class TestReasoningFallback(unittest.TestCase):
         self.assertIn('"action":"shell"', comp.text.replace(" ", ""))
         self.assertIn("reasoning", comp.note)
         self.assertTrue(comp.reasoning, "思维链原文要留档，便于事后诊断")
+
+
+class TestErrorResponseClosed(unittest.TestCase):
+    """被拒的响应必须关掉：HTTPError 自己持有响应体（3.12 起是临时文件包装），
+    不关会泄漏句柄，长批次里每次降级重试都漏一个。"""
+
+    def test_downgrade_path_closes_both_rejections(self):
+        closed = []
+
+        class Rejected(urllib.error.HTTPError):
+            def close(self):
+                closed.append(self.code)
+                super().close()
+
+        def urlopen(req, timeout=None):
+            raise Rejected(req.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"error":"bad"}'))
+
+        client = ChatClient(ModelSpec(name="stub", base_url="http://127.0.0.1:9/v1",
+                                      enable_thinking=False))
+        with mock.patch("urllib.request.urlopen", urlopen):
+            comp = client.complete([{"role": "user", "content": "hi"}])
+        self.assertIn("HTTP 400", comp.error)
+        self.assertEqual(closed, [400, 400], "降级前后两次 400 都得关掉")
 
 
 if __name__ == "__main__":

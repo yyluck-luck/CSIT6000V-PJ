@@ -95,6 +95,7 @@ class TestWriteupWeb(unittest.TestCase):
             with self.subTest(rid=rid), self.assertRaises(urllib.error.HTTPError) as ctx:
                 urllib.request.urlopen(self.base + "/api/writeup?id=" + rid, timeout=5)
             self.assertEqual(ctx.exception.code, status)
+            ctx.exception.close()
 
     def test_missing_key_returns_clear_error_without_ciphertext_download(self):
         rid, _ = self.complete()
@@ -105,6 +106,7 @@ class TestWriteupWeb(unittest.TestCase):
                     urllib.request.urlopen(self.base + route + rid, timeout=5)
                 self.assertEqual(ctx.exception.code, 409)
                 self.assertIn("ENCRYPTION_KEY_FILE", ctx.exception.read().decode())
+                ctx.exception.close()
 
     def test_incomplete_run_has_no_writeup(self):
         run = self.root / "runs/web" / ("b" * 12) / "sample-s0"
@@ -112,3 +114,4 @@ class TestWriteupWeb(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(self.base + "/api/writeup?id=" + "b" * 12, timeout=5)
         self.assertEqual(ctx.exception.code, 409)
+        ctx.exception.close()

@@ -173,6 +173,9 @@ class ChatClient:
                 detail = e.read().decode("utf-8", "replace")[:500]
             except Exception:
                 pass
+            finally:
+                # HTTPError 自己持有响应体（3.12 起是临时文件包装），不关就漏一个句柄。
+                e.close()
             if e.code == 400 and not self._no_template_kwargs and self.spec.provider != "deepseek":
                 # 大概率是 chat_template_kwargs 不被接受：降级后重试一次
                 self._no_template_kwargs = True
