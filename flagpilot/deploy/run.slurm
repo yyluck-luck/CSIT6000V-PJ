@@ -5,12 +5,18 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 8
-#SBATCH -t 02:00:00
+# 课程 TACC 的 tacc 分区上限是 1 小时（课程材料写的 2 小时是错的，实测提交 2h 会被
+# PartitionTimeLimit 拒掉）。这里按 1 小时写；换成别的集群请按实际 TIMELIMIT 改。
+#SBATCH -t 01:00:00
 #SBATCH --gres=gpu:2
 #SBATCH -o logs/run-%j.out
 #SBATCH -e logs/run-%j.err
 #
 # 一体式：同一个作业里先起 vLLM，再用 localhost 跑评测，跑完自动退出。
+#
+# 适用范围：**通用 Slurm 集群**——即你有权 `module load vllm` 或自带 conda 环境、
+# 用 `sbatch` 直接提交。课程 TACC 平台不适用：那里没有 vllm 模块，提交要走
+# `tcloud submit` + `tuxiv.conf`（见 docs/TACC.md）。本文件保留为可移植模板。
 #
 # 为什么默认推荐这个而不是 serve/client 分开：
 #   两个作业要靠队列调度对齐，"服务好了但客户端还在排队"是最常见的浪费。
@@ -198,4 +204,14 @@ else
   echo
   echo "[run] 汇总"
   python3 -m flagpilot report --batch "${BATCH}" --md "runs/report-${SLURM_JOB_ID}.md" || true
+fi
+
+# --- 结果归档（可选）---
+# 有些集群的提交目录在 scratch 上、会被定期清理，作业结束几天后 runs/ 就没了。
+# 设 FP_ARCHIVE_DIR 指向持久盘，把整批产物拷一份出来（含 trace、replay、writeup）。
+if [[ -n "${FP_ARCHIVE_DIR:-}" && -d runs ]]; then
+  ARCH="${FP_ARCHIVE_DIR}/${SLURM_JOB_ID:-local}"
+  mkdir -p "$ARCH" && cp -a runs/. "$ARCH/" \
+    && echo "[run] 产物已归档到 ${ARCH}（$(find "$ARCH" -type f | wc -l | tr -d ' ') 个文件）" \
+    || echo "[run] 归档失败，检查 FP_ARCHIVE_DIR=${FP_ARCHIVE_DIR}" >&2
 fi
