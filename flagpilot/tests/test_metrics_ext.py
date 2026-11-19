@@ -256,5 +256,64 @@ class TestMarkdownExport(unittest.TestCase):
         self.assertIn("并发", md)         # 并发格为什么没有命中率
 
 
+class TestFailureAttributionCounts(unittest.TestCase):
+    """失败归因只数失败的 attempt。
+
+    现场（TACC 作业 29323，5 题）：两道 verified 的题中途碰到 exiftool / xxd 缺失，
+    换个办法照样解出；唯一的失败是答错。旧汇总把那两个"环境缺工具"也记成失败原因：
+    文本报告写"1 条失败，环境缺工具 2（200%）"，Markdown 表又写 67%，两处还互相矛盾。
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="fp-failcount-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _run(self, run_id, verdict, missing_tool=None):
+        d = self.root / run_id
+        d.mkdir()
+        lines = []
+        if missing_tool:
+            lines.append(json.dumps({"type": "tool", "turn": 1, "action": "shell",
+                                     "cmd": f"{missing_tool} challenge/x",
+                                     "stderr_head": f"/bin/sh: 1: {missing_tool}: not found",
+                                     "timed_out": False}))
+        (d / "trace.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        reason = "match" if verdict == "verified" else "wrong_flag"
+        return rec(run_id, verdict, run_dir=str(d), replay={"reason": reason})
+
+    def tacc_summary(self):
+        return metrics.summarize([
+            self._run("forensics-008-s0", "verified", missing_tool="exiftool"),
+            self._run("forensics-003-s0", "verified", missing_tool="xxd"),
+            self._run("general-019-s0", "wrong"),
+        ])
+
+    def test_text_counts_only_failed_attempts(self):
+        txt = metrics.render(self.tacc_summary())
+        section = txt[txt.index("失败归因"):]
+        self.assertIn("1 条失败", section)
+        self.assertRegex(section, r"答案错误\s+1\s+\(100%\)")
+        self.assertNotIn("200%", section)
+        self.assertNotRegex(section, r"环境缺工具\s+\d+\s+\(")
+        # 成功途中碰到的缺工具不是失败原因，但环境缺口得留在报告里
+        self.assertIn("不计入失败", section)
+        self.assertIn("环境缺工具×2", section)
+
+    def test_markdown_agrees_with_text(self):
+        md = metrics.to_markdown(self.tacc_summary())
+        self.assertIn("| 答案错误 | 1 | 100% |", md)
+        self.assertNotIn("| 环境缺工具 |", md)
+
+    def test_failed_attempt_keeps_all_its_tags(self):
+        md = metrics.to_markdown(metrics.summarize([
+            self._run("a-s0", "wrong", missing_tool="tshark"),
+            self._run("b-s0", "verified"),
+        ]))
+        self.assertIn("| 答案错误 | 1 | 100% |", md)
+        self.assertIn("| 环境缺工具 | 1 | 100% |", md)
+
+
 if __name__ == "__main__":
     unittest.main()

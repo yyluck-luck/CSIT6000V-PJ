@@ -296,13 +296,14 @@ def to_markdown(summary: dict, title: str = "") -> str:
     if summary.get("failure_tags"):
         from . import tagger
 
-        fails = {k: v for k, v in summary["failure_tags"].items()
-                 if k not in ("ok", "reproduced")}
-        total = sum(fails.values()) or 1
+        # 与 tagger.render 同一口径：只数失败的 attempt，分母是失败条数（不是标签数）。
+        n_fail, fails = tagger.failure_counts(summary["failure_tags"],
+                                              summary.get("tag_rows") or [])
         if fails:
             lines += ["", "| 失败标签 | 计数 | 占失败比 |", "|---|---|---|"]
             for k, v in sorted(fails.items(), key=lambda kv: -kv[1]):
-                lines.append(f"| {tagger.LABELS.get(k, k)} | {v} | {v / total:.0%} |")
+                lines.append(f"| {tagger.LABELS.get(k, k)} | {v} | {v / n_fail:.0%} |")
+            lines += ["", f"共 {n_fail} 条失败；同一条可命中多个标签，占比之和可超过 100%。"]
     return "\n".join(lines) + "\n"
 
 
