@@ -47,6 +47,43 @@ echo
 
 [[ "$KEEP" == "0" ]] && rm -rf runs/verify runs/verify-*
 
+# 自检用**合成题库**：不依赖外部题库，也不假设"题库里某道题 mock 恰好能解"。
+# 合成题把 flag 明文放在附件里，mock 的策略（ls → cat → 正则找 flag）必然走得通，
+# 所以自检在任何机器上都能复现——包括助教刚 clone 下来、还没有真实题库的时候。
+SELFTEST_TASKS="$(mktemp -d "${TMPDIR:-/tmp}/fp-verify-tasks-XXXXXX")"
+trap 'rm -rf "$SELFTEST_TASKS"' EXIT
+"$PY" - "$SELFTEST_TASKS" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+(root / "index").mkdir(parents=True)
+rows = []
+for i, flag in enumerate(
+    ["picoCTF{selftest_synthetic_0001}", "picoCTF{selftest_synthetic_0002}"], start=1
+):
+    name = f"selftest-{i:03d}"
+    d = root / name
+    d.mkdir()
+    (d / "data.txt").write_text(f"note = the answer is below\n{flag}\n", encoding="utf-8")
+    rows.append({
+        "task_id": 9900 + i, "name": name, "category": "Selftest",
+        "title": f"synthetic {name}", "query": "Read data.txt and report the flag.",
+        "gold_sha256": hashlib.sha256(flag.encode()).hexdigest(),
+        "assets": ["data.txt"], "assets_dir": name,
+        "suggested_tools": ["shell"], "scope": "core",
+    })
+(root / "index" / "tasks.jsonl").write_text(
+    "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8"
+)
+PY
+export FLAGPILOT_TASKS="$SELFTEST_TASKS"
+T1="selftest-001"
+T2="selftest-002"
+TWO="$T1,$T2"
+echo "自检题目: ${TWO} (synthetic, no external task set needed)"
+echo
+
 # ---------------------------------------------------------------- 1. 单测
 OUT="$("$PY" -m unittest discover -s tests -t . 2>&1)"
 RC=$?
@@ -59,12 +96,12 @@ else
 fi
 
 # ---------------------------------------------------------------- 2. 单题全链路
-"$PY" -m flagpilot run --task general-004 --model mock --batch "$BATCH" >/dev/null 2>&1
+"$PY" -m flagpilot run --task "$T1" --model mock --batch "$BATCH" >/dev/null 2>&1
 if [[ -f "runs/$BATCH/runs.jsonl" ]]; then
   V="$(json_get "runs/$BATCH/runs.jsonl" "rows[-1]['verdict']")"
   T="$(json_get "runs/$BATCH/runs.jsonl" "rows[-1]['turns']")"
   if [[ "$V" == "verified" ]]; then
-    record "单题全链路（提交→重放）" PASS "general-004 verified / ${T} 轮"
+    record "单题全链路（提交→重放）" PASS "$T1 verified / ${T} 轮"
   else
     record "单题全链路（提交→重放）" FAIL "期望 verified，实际 $V"
   fi
@@ -76,7 +113,7 @@ fi
 ABL_OK=0
 ABL_DETAIL=""
 for b in B0 B1 B2 B3; do
-  "$PY" -m flagpilot batch --batch "$BATCH-$b" --tasks general-004,crypto-005 \
+  "$PY" -m flagpilot batch --batch "$BATCH-$b" --tasks "$TWO" \
       --model mock --ablate "$b" --turns 6 --workers 1 >/dev/null 2>&1
   F="runs/$BATCH-$b/runs.jsonl"
   if [[ -f "$F" ]]; then

@@ -71,6 +71,20 @@ class TestWebAPI(unittest.TestCase):
             "files": [{"name": "note.txt", "data_b64": base64.b64encode(content).decode()}],
         })
 
+    def task_name(self) -> str:
+        """当前题库里第一道带 gold 的题。
+
+        不写死题名：换成内置 demo-tasks 或任何自备题库，这套接口测试仍然成立。
+        """
+        if getattr(self, "_task", None):
+            return self._task
+        d = json.loads(self.get("/api/tasks"))
+        for t in d["tasks"]:
+            if t.get("has_gold"):
+                self._task = t["name"]
+                return self._task
+        self.skipTest("current task set has no task with gold")
+
     def stream_done(self, run_id, timeout=40):
         with urllib.request.urlopen(self.base + f"/api/stream?id={run_id}", timeout=timeout) as s:
             t0 = time.time()
@@ -103,7 +117,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn(d["ablation"], ("B0", "B1", "B2", "B3"))
 
     def test_run_respects_ablation(self):
-        r = self.post("/api/run", {"task": "general-004", "ablate": "B0"})
+        r = self.post("/api/run", {"task": self.task_name(), "ablate": "B0"})
         self.assertEqual(r["ablation"], "B0")
         done = self.stream_done(r["run_id"])
         self.assertIsNotNone(done, "没等到 done 事件")
@@ -122,7 +136,7 @@ class TestWebAPI(unittest.TestCase):
         现场来源：服务重启过一次，页面就永远停在"运行中…"、右侧全是破折号，
         而 runs/web 里的 trace 其实已经完整落盘了。
         """
-        r = self.post("/api/run", {"task": "general-004", "ablate": "B3"})
+        r = self.post("/api/run", {"task": self.task_name(), "ablate": "B3"})
         rid = r["run_id"]
 
         # 完全不消费 SSE，模拟页面关掉 / 连接断掉
@@ -151,7 +165,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_result_survives_restart_by_reading_trace(self):
         """进程重启后 STATE 没了，`?run=` 仍应从 trace.jsonl 把结果读回来。"""
-        r = self.post("/api/run", {"task": "general-004", "ablate": "B3"})
+        r = self.post("/api/run", {"task": self.task_name(), "ablate": "B3"})
         rid = r["run_id"]
         self.assertIsNotNone(self.stream_done(rid))
 
@@ -160,7 +174,7 @@ class TestWebAPI(unittest.TestCase):
         d = json.loads(self.get(f"/api/result?id={rid}"))
         self.assertTrue(d.get("summary"), "盘上有 trace 却读不回来")
         self.assertIn("model", [e.get("type") for e in d["events"]])
-        self.assertIn("general-004-s0", d["summary"].get("run_dir", ""))
+        self.assertIn(f"{self.task_name()}-s0", d["summary"].get("run_dir", ""))
 
     def test_models_endpoint(self):
         d = json.loads(self.get("/api/models"))
@@ -181,11 +195,11 @@ class TestWebAPI(unittest.TestCase):
 
     def test_unknown_ablation_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.post("/api/run", {"task": "general-004", "ablate": "B9"})
+            self.post("/api/run", {"task": self.task_name(), "ablate": "B9"})
         self.assertEqual(ctx.exception.code, 400)
 
     def test_probe_endpoint(self):
-        d = self.post("/api/probe", {"task": "general-004", "mode": "brief"})
+        d = self.post("/api/probe", {"task": self.task_name(), "mode": "brief"})
         self.assertEqual(d["mode"], "brief")
         self.assertFalse(d["hit"])      # mock 没有记忆
         self.assertTrue(d["refused"])   # 必须如实记成 UNKNOWN
@@ -202,7 +216,7 @@ class TestWebAPI(unittest.TestCase):
         """跨站表单/sendBeacon 发不了 application/json，这条挡掉大半 CSRF。"""
         req = urllib.request.Request(
             self.base + "/api/run",
-            data=json.dumps({"task": "general-004"}).encode(),
+            data=json.dumps({"task": self.task_name()}).encode(),
             headers={"Content-Type": "text/plain"})
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req, timeout=10)
@@ -248,7 +262,7 @@ class TestWebAPI(unittest.TestCase):
 
     def test_delete_only_custom(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
-            self.post("/api/custom/delete", {"task": "general-004"})
+            self.post("/api/custom/delete", {"task": self.task_name()})
         self.assertEqual(ctx.exception.code, 400)
 
     # ---------- 答疑 ----------

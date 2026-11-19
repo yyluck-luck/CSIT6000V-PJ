@@ -1,0 +1,4 @@
+# demo-001 export
+host=demo-node-01
+picoCTF{demo_pipeline_ok}
+checksum=8f2a19
