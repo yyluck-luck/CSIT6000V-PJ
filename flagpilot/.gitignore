@@ -25,3 +25,6 @@ logs/
 # 密钥（Track H 的 DeepSeek key 等）只放本地，绝不进仓库
 .env
 .env.*
+
+# Local storage encryption keys
+*.fernet.key

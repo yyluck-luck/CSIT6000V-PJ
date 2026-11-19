@@ -21,7 +21,7 @@ from pathlib import Path
 from statistics import median
 from typing import Callable
 
-from . import context, pricing, verify
+from . import context, pricing, verify, storage, writeup
 from .client import build_client
 from .config import Ablation, RunConfig
 from .memory import MemoryStore
@@ -169,6 +169,8 @@ def run_attempt(
     seed: int = 0,
     hook: Callable[[dict], None] | None = None,
 ) -> dict:
+    if storage.enabled():
+        storage._cipher()
     t_enter = time.monotonic()          # 计时起点：函数一进来就开始算总账
     run_id = f"{task.name}-s{seed}"
     run_dir = Path(out_dir) / run_id
@@ -436,7 +438,11 @@ def run_attempt(
         "replay": asdict(replay) if replay else None,
         "run_dir": str(run_dir),
     }
+    summary["writeup"] = storage.artifact_path(run_dir / "writeup.md").name
+    storage.seal_directory(workdir)
+    storage.seal_directory(run_dir / "replay")
     tr.close(summary)
+    writeup.generate(run_dir)
     # 读记忆受 cfg.memory 控制，写记忆永远执行：批跑也能攒经验，
     # 但不会回头影响自己这一档的结果。
     # mock 模型除外——那是单测/dry-run，把它写进记忆会让真解题时

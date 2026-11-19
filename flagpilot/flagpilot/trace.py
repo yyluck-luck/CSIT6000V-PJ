@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from typing import Callable
+
+from . import storage
 
 EventHook = Callable[[dict], None]
 
@@ -18,13 +19,15 @@ class Trace:
     def __init__(self, path: Path, meta: dict, hook: EventHook | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = self.path.open("w", encoding="utf-8")
+        storage._check_existing_mode(self.path)
+        storage.atomic_write(self.path, b"")
+        self._fh = self.path.open("a", encoding="utf-8")
         self._hook = hook
         self._t0 = time.monotonic()
         self._write({"type": "meta", "ts": time.time(), **meta})
 
     def _write(self, obj: dict) -> None:
-        self._fh.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+        self._fh.write(storage.encode_record(obj) + "\n")
         self._fh.flush()
         if self._hook:
             try:
@@ -46,16 +49,7 @@ class Trace:
 
 
 def read_trace(path: Path) -> list[dict]:
-    out = []
-    with Path(path).open(encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-    return out
+    return storage.read_records(path)
 
 
 def read_jsonl(path: Path) -> list[dict]:

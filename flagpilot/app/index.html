@@ -351,6 +351,8 @@
       <h2>结论</h2>
       <div id="verdict"><p class="hint">等待运行。</p></div>
 
+      <a id="writeupDownload" class="ghost mini" hidden download>Download writeup</a>
+
       <h2>能力对照</h2>
       <div id="cmpBase"><p class="hint">点「测基座（不给工具）」，看同一道题在无工具时能不能答出来。</p></div>
 
@@ -1022,6 +1024,7 @@ const median = a => {
 };
 
 function startClock(){
+  $('#writeupDownload').hidden = true;
   clearMetrics();
   clockT0 = Date.now(); clockOn = true;
   $('#mState').textContent = '运行中 · 实时';
@@ -1155,6 +1158,9 @@ function onEvent(ev){
 
 function showDone(ev){
   stopClock();
+  const reportLink = $('#writeupDownload');
+  reportLink.hidden = !ev.web_run_id;
+  if (ev.web_run_id) reportLink.href = '/api/writeup?id=' + encodeURIComponent(ev.web_run_id);
   const [label, cls] = V[ev.verdict] || [ev.verdict, ''];
   setStatus(ev.verdict, cls === 'ok' ? '' : 'bad');
   // 主数字＝端到端（和用户秒表同口径）；agent 循环退到下一行做拆解。

@@ -35,7 +35,8 @@ json_get() {  # $1=file $2=python 表达式（r 为记录）
   "$PY" - "$1" "$2" <<'PY' 2>/dev/null
 import json, sys
 path, expr = sys.argv[1], sys.argv[2]
-rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+from flagpilot.trace import read_jsonl
+rows = read_jsonl(path)
 print(eval(expr, {"json": json, "rows": rows}))
 PY
 }

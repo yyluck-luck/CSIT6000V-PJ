@@ -1,0 +1,2 @@
+# Optional dependency for authenticated encrypted storage.
+cryptography>=41.0.0

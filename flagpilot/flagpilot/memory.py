@@ -25,7 +25,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config
+from . import config, storage
 
 _LOCK = threading.Lock()
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -73,8 +73,9 @@ class MemoryStore:
             p = self.task_file(task_name)
             p.parent.mkdir(parents=True, exist_ok=True)
             with _LOCK:
-                with p.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                storage.append_record(p, rec)
+        except storage.StorageError:
+            raise
         except Exception:
             return None
         return rec
@@ -93,7 +94,7 @@ class MemoryStore:
                     if not line:
                         continue
                     try:
-                        out.append(json.loads(line))
+                        out.append(storage.decode_record(line))
                     except json.JSONDecodeError:
                         continue      # 半行（进程被杀）跳过，不让整个记忆失效
         except OSError:

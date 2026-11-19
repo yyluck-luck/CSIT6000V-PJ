@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parent
@@ -133,7 +134,7 @@ class ModelSpec:
     # 服务商。决定"关思维链"用哪个参数：vLLM/Ollama 认 chat_template_kwargs，
     # DeepSeek 只认 {"thinking": {"type": ...}}——发错了要么 400，要么被静默忽略，
     # 后者更糟：思维链照开，temperature 失效，还按输出 token 计费。
-    provider: str = "openai"          # openai | deepseek
+    provider: str = "openai"          # openai | deepseek | openai-compatible
     # 价目表名（见 pricing.PRICE_TABLES）。给了就按"命中/未命中/输出 + 高峰"计价，
     # 覆盖上面两个平价字段。
     price_table: str = ""
@@ -155,6 +156,8 @@ def make_model_spec(name: str, base_url: str = "", thinking: bool = False, **kw)
     """
     lower = str(name).lower()
     spec = ModelSpec(name=name, base_url=base_url or "http://127.0.0.1:8000/v1", **kw)
+    if urlparse(spec.base_url).hostname == "opencode.ai":
+        spec.provider = "openai-compatible"
     spec.enable_thinking = bool(thinking)
     # Ollama 常忽略 chat_template_kwargs（会 400 后降级），所以再压一道软开关。
     spec.soft_no_think = (not thinking) and "qwen3" in lower

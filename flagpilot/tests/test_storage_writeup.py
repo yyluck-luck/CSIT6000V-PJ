@@ -1,0 +1,210 @@
+"""Encryption and writeup tests using synthetic data and no model API."""
+import importlib.util
+import hashlib
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from flagpilot import storage, writeup, cli
+from flagpilot.agent import run_attempt
+from flagpilot.config import RunConfig
+from flagpilot.runner import BatchRunner
+from flagpilot.tasks import Task
+from flagpilot.trace import Trace, read_jsonl
+
+FLAG = "picoCTF{storage_test_0123456789}"
+
+
+@unittest.skipUnless(importlib.util.find_spec("cryptography"), "Install requirements-encryption.txt")
+class TestStorageAndWriteup(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        key = self.root / "storage.fernet.key"
+        storage.generate_key(key)
+        self.env = patch.dict(os.environ, {"FLAGPILOT_ENCRYPTION_KEY_FILE": str(key)})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.temp.cleanup()
+
+    def test_record_encrypts_every_field_and_round_trips(self):
+        row = {"flag": FLAG, "text": "Observation: " + FLAG, "replay": {"stdout": FLAG}}
+        line = storage.encode_record(row)
+        self.assertNotIn(FLAG, line)
+        self.assertEqual(storage.decode_record(line), row)
+        self.assertNotEqual(storage.encode_record(row), line)
+
+    def test_missing_key_and_wrong_key_fail_closed(self):
+        line = storage.encode_record({"flag": FLAG})
+        with patch.dict(os.environ, {"FLAGPILOT_ENCRYPTION_KEY_FILE": ""}):
+            with self.assertRaises(storage.StorageError): storage.decode_record(line)
+        other = self.root / "other.fernet.key"
+        storage.generate_key(other)
+        with patch.dict(os.environ, {"FLAGPILOT_ENCRYPTION_KEY_FILE": str(other)}):
+            with self.assertRaises(storage.StorageError): storage.decode_record(line)
+        malformed = json.loads(line)
+        malformed["token"] = "invalid"
+        with self.assertRaises(storage.StorageError): storage.decode_record(json.dumps(malformed))
+
+    def test_legacy_records_remain_readable(self):
+        self.assertEqual(storage.decode_record(json.dumps({"flag": FLAG})), {"flag": FLAG})
+        with patch.dict(os.environ, {"FLAGPILOT_ENCRYPTION_KEY_FILE": ""}):
+            self.assertEqual(json.loads(storage.encode_record({"flag": FLAG})), {"flag": FLAG})
+
+    def test_trace_hooks_are_live_but_disk_is_encrypted(self):
+        path = self.root / "trace.jsonl"
+        events = []
+        tr = Trace(path, {"task": "synthetic"}, events.append)
+        tr.event("submit", flag=FLAG, script="print(1)")
+        tr.close({"verdict": "unverified", "flag": FLAG})
+        self.assertEqual(events[1]["flag"], FLAG)
+        self.assertNotIn(FLAG, path.read_text())
+        self.assertEqual(read_jsonl(path)[1]["flag"], FLAG)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_artifact_encryption_and_integrity(self):
+        path = self.root / "writeup.md"
+        path.write_text(FLAG)
+        target = storage.write_artifact(path, FLAG.encode())
+        self.assertEqual(target.name, "writeup.md.enc")
+        self.assertFalse(path.exists())
+        self.assertNotIn(FLAG.encode(), target.read_bytes())
+        self.assertEqual(storage.read_artifact(path), FLAG.encode())
+        target.write_bytes(storage.MAGIC + b"invalid")
+        with self.assertRaises(storage.StorageError): storage.read_artifact(path)
+
+    def test_batch_resume_and_cli_upsert_read_encrypted_results(self):
+        cfg = RunConfig()
+        batch = self.root / "batch"
+        row = {"run_id": "synthetic-s0", "verdict": "verified", "flag": FLAG}
+        cli._upsert_result(batch, row)
+        runner = BatchRunner(cfg, batch)
+        self.assertIn("synthetic-s0", runner._done)
+        self.assertEqual(runner.load_results(), [row])
+        cli._upsert_result(batch, {**row, "verdict": "unverified"})
+        self.assertEqual(len(runner.load_results()), 1)
+        self.assertNotIn(FLAG, (batch / "runs.jsonl").read_text())
+
+    def test_completed_mock_attempt_protects_logs_and_workspace(self):
+        source = self.root / "tasks" / "sample"
+        source.mkdir(parents=True)
+        (source / "note.txt").write_text("Flag: " + FLAG + "\n")
+        task = Task(1, "synthetic", "Synthetic", "Read note.txt", "", hashlib.sha256(FLAG.encode()).hexdigest(),
+                    ["note.txt"], "tasks/sample", [], "core")
+        cfg = RunConfig(tasks_root=self.root)
+        cfg.budget.max_turns = 5
+        cfg.limits.max_procs = 0  # This test checks storage, not the per-user process limit.
+        result = run_attempt(task, cfg, self.root / "output")
+        self.assertEqual(result["verdict"], "verified")
+        run = Path(result["run_dir"])
+        self.assertTrue((run / "writeup.md.enc").exists())
+        self.assertIn(FLAG, storage.read_artifact(run / "writeup.md").decode())
+        for p in run.rglob("*"):
+            if p.is_file(): self.assertNotIn(FLAG.encode(), p.read_bytes(), str(p))
+
+    def test_history_migration_preserves_records_and_protects_workspaces(self):
+        root = self.root / "runs"
+        run = root / "test" / "sample-s0"
+        (run / "replay").mkdir(parents=True)
+        (run / "trace.jsonl").write_text(json.dumps({"type": "summary", "flag": FLAG}) + "\n")
+        (run / "replay" / "solve.py").write_text(f'print("{FLAG}")')
+        (run / "writeup.md").write_text(FLAG)
+        storage.protect_history(root)
+        storage.protect_history(root)
+        self.assertEqual(read_jsonl(run / "trace.jsonl")[0]["flag"], FLAG)
+        self.assertFalse((run / "replay" / "solve.py").exists())
+        self.assertEqual(storage.read_artifact(run / "replay" / "solve.py"), f'print("{FLAG}")'.encode())
+        self.assertFalse((run / "writeup.md").exists())
+
+    def test_plaintext_cannot_be_appended_to_encrypted_history(self):
+        path = self.root / "trace.jsonl"
+        storage.append_record(path, {"flag": FLAG})
+        before = path.read_bytes()
+        with patch.dict(os.environ, {"FLAGPILOT_ENCRYPTION_KEY_FILE": ""}):
+            with self.assertRaises(storage.StorageError): storage.append_record(path, {"flag": FLAG})
+        self.assertEqual(path.read_bytes(), before)
+        other = self.root / "wrong-key"
+        storage.generate_key(other)
+        with patch.dict(os.environ, {"FLAGPILOT_ENCRYPTION_KEY_FILE": str(other)}):
+            with self.assertRaises(storage.StorageError): storage.append_record(path, {"flag": FLAG})
+            with self.assertRaises(storage.StorageError): Trace(path, {"task": "replacement"})
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_enc_suffix_does_not_bypass_workspace_encryption(self):
+        work = self.root / "work"
+        work.mkdir()
+        (work / "answer.enc").write_text(FLAG)
+        storage.seal_directory(work)
+        self.assertFalse((work / "answer.enc").exists())
+        self.assertEqual(storage.read_artifact(work / "answer.enc"), FLAG.encode())
+
+    def test_colliding_workspace_names_preserve_both_contents(self):
+        work = self.root / "collision"
+        work.mkdir()
+        (work / "answer").write_text("first " + FLAG)
+        (work / "answer.enc").write_text("second " + FLAG)
+        storage.seal_directory(work)
+        self.assertEqual(storage.read_artifact(work / "answer"), ("first " + FLAG).encode())
+        self.assertEqual(storage.read_artifact(work / "answer.enc"), ("second " + FLAG).encode())
+
+    def test_encrypted_results_support_report_compare_and_pair(self):
+        import contextlib
+        import io
+        from flagpilot import config
+        row = {"run_id": "sample-s0", "task": "sample", "seed": 0, "category": "Synthetic",
+               "verdict": "verified", "flag": FLAG, "turns": 1, "wall_s": 1,
+               "total_tokens": 10, "cost_usd": 0, "ablation": "B3", "run_dir": ""}
+        for name in ("a", "b"):
+            storage.write_records(self.root / name / "runs.jsonl", [row])
+        with patch.object(config, "RUNS_ROOT", self.root):
+            for args in (["report", "--batch", "a"], ["compare", "--batches", "a,b"],
+                         ["pair", "--a", "a", "--b", "b"]):
+                parsed = cli.build_parser().parse_args(args)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(parsed.func(parsed), 0)
+                self.assertTrue(output.getvalue())
+
+    def test_key_generation_does_not_overwrite(self):
+        path = self.root / "new.key"
+        storage.generate_key(path)
+        first = path.read_bytes()
+        with self.assertRaises(FileExistsError): storage.generate_key(path)
+        self.assertEqual(path.read_bytes(), first)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+
+class TestWriteupRendering(unittest.TestCase):
+    def events(self, verdict):
+        return [
+            {"type": "meta", "task": "sample", "run_id": "sample-s0", "model": {"name": "mock"}},
+            {"type": "start", "brief": "Use the attachment."},
+            {"type": "model", "turn": 1, "text": '{"thought":"inspect", "action":"shell"}'},
+            {"type": "tool", "action": "shell", "exit_code": 0, "obs_head": FLAG},
+            {"type": "submit", "flag": FLAG, "script": 'print("``` malicious fence")'},
+            {"type": "summary", "verdict": verdict, "reason": "example", "replay": {
+                "verdict": verdict, "gold_checked": verdict != "reproduced", "stdout": FLAG}},
+        ]
+
+    def test_preserves_all_outcomes_and_evidence(self):
+        for verdict in ["verified", "unverified", "wrong", "budget", "error", "reproduced"]:
+            with self.subTest(verdict=verdict):
+                text = writeup.render(self.events(verdict))
+                self.assertIn("Verdict: " + verdict, text)
+                self.assertIn("self-report", text)
+                self.assertIn(FLAG, text)
+                self.assertIn('````python\nprint("``` malicious fence")', text)
+                if verdict == "reproduced": self.assertIn("Gold checked: False", text)
+
+    def test_requires_finished_run(self):
+        with self.assertRaises(ValueError): writeup.render([{"type": "meta"}])
+
+    def test_no_submission_is_reported_honestly(self):
+        text = writeup.render([{"type": "summary", "verdict": "budget", "reason": "max_turns"}])
+        self.assertIn("No flag submitted.", text)
+        self.assertIn("Verdict: not run", text)

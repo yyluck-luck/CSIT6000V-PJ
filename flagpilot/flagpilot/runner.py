@@ -8,14 +8,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import gpu
+from . import gpu, storage
 from .agent import run_attempt
 from .config import RunConfig
 from .tasks import Task
@@ -35,20 +34,13 @@ class BatchRunner:
     def _load_done(self) -> None:
         if not self.results_path.exists():
             return
-        for line in self.results_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                r = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        for r in storage.read_records(self.results_path):
             if r.get("run_id") and r.get("verdict"):
                 self._done.add(r["run_id"])
 
     def _append(self, rec: dict) -> None:
         with self._lock:
-            with self.results_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            storage.append_record(self.results_path, rec)
 
     def run(self, tasks: list[Task], resume: bool = True, hook=None) -> list[dict]:
         jobs = [(t, s) for s in range(self.cfg.seeds) for t in tasks]
@@ -130,11 +122,4 @@ class BatchRunner:
     def load_results(self) -> list[dict]:
         if not self.results_path.exists():
             return []
-        out = []
-        for line in self.results_path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        return out
+        return storage.read_records(self.results_path)

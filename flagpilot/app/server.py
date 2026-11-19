@@ -29,7 +29,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from flagpilot import config, custom, probe, tagger
+from flagpilot import config, custom, probe, tagger, storage, writeup
 from flagpilot.agent import run_attempt
 from flagpilot.chat import ChatSession, read_log
 from flagpilot.config import (ABLATIONS, Budget, Policy, RunConfig,
@@ -61,7 +61,11 @@ def list_models() -> list[str]:
     """
     base = (SETTINGS["base_url"] or "http://127.0.0.1:8000/v1").rstrip("/")
     try:
-        with urllib.request.urlopen(base + "/models", timeout=5) as r:
+        request = urllib.request.Request(base + "/models", headers={
+            "Authorization": "Bearer " + os.environ.get("FLAGPILOT_API_KEY", "EMPTY"),
+            "User-Agent": "FlagPilot/0.1.0",
+        })
+        with urllib.request.urlopen(request, timeout=5) as r:
             data = json.loads(r.read().decode())
         ids = [str(m.get("id")) for m in (data.get("data") or []) if m.get("id")]
         if ids:
@@ -99,6 +103,7 @@ def _make_cfg(task_batch: str, ablate: str | None = None) -> RunConfig:
         # 必须和 CLI 走同一个构造函数：之前这里直接 new ModelSpec，
         # 漏掉 soft_no_think，Qwen3 的思维链把每轮预算吃光，表现为"空回复"。
         model=make_model_spec(SETTINGS["model"], base,
+                              api_key=os.environ.get("FLAGPILOT_API_KEY", "EMPTY"),
                               metrics_url=SETTINGS.get("metrics_url") or ""),
         budget=Budget(max_turns=20),
         policy=policy,
@@ -139,7 +144,7 @@ def _load_run_from_disk(rid: str) -> dict | None:
         done = next((e for e in reversed(evs) if e.get("type") == "done"), None)
         summary = next((e for e in reversed(evs) if e.get("type") == "summary"), None)
         if done or summary:
-            return {"q": queue.Queue(), "summary": done or summary,
+            return {"q": queue.Queue(), "summary": {**(done or summary), "web_run_id": rid},
                     "events": evs, "kind": "disk"}
     return None
 
@@ -180,6 +185,7 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
             summary["failure"] = {"primary": "unknown", "tags": [], "evidence": {}}
         # 端到端：从浏览器点下去（POST 到达）到 done 发出。和 wall_s 的差额
         # 就是"沙箱准备 + 归因 + 落盘"这些看不到的开销，界面分开显示。
+        summary["web_run_id"] = run_id
         summary["tag_s"] = round(time.time() - t_tag, 2)
         summary["e2e_s"] = round(time.time() - STATE[run_id].get("t0", t_tag), 2)
         # 先发 done 再置 summary：读端以 events 为准，看到 done 就收尾，
@@ -260,9 +266,17 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        try:
+            self._get()
+        except storage.StorageError as exc:
+            self._json(409, {"error": str(exc)})
+
+    def _get(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             return self._html()
+        if path == "/api/writeup":
+            return self._writeup()
         if path == "/api/tasks":
             tasks = [{"name": t.name, "category": t.category, "scope": t.scope,
                       "title": t.title[:90], "custom": False, "has_gold": t.has_gold}
@@ -316,6 +330,35 @@ class Handler(BaseHTTPRequestHandler):
                                         "digest": store.digest(task)})
             return self._json(200, store.stats())
         self._json(404, {"error": "not found"})
+
+    def _writeup(self):
+        rid = self._qid()
+        if not _SID_RE.fullmatch(rid or ""):
+            return self._json(400, {"error": "Invalid run ID"})
+        root = (config.RUNS_ROOT / "web").resolve()
+        base = (root / rid).resolve()
+        if not base.is_relative_to(root):
+            return self._json(404, {"error": "Run not found"})
+        for trace in sorted(base.glob("*/trace.jsonl")):
+            if not trace.resolve().is_relative_to(root):
+                continue
+            path = trace.parent / "writeup.md"
+            if not path.exists() and not path.with_name(path.name + ".enc").exists():
+                try:
+                    writeup.generate(trace.parent)
+                except ValueError as exc:
+                    return self._json(409, {"error": str(exc)})
+            data = storage.read_artifact(path)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="flagpilot-{rid}.md"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        self._json(404, {"error": "Run not found"})
 
     def do_POST(self):
         global RUNNING
@@ -597,7 +640,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
           base_url: str = "", track: str = "L", metrics_url: str = "") -> None:
-    SETTINGS.update({"model": model, "base_url": base_url or "", "track": track,
+    SETTINGS.update({"model": model,
+                     "base_url": base_url or os.environ.get("FLAGPILOT_BASE_URL", ""),
+                     "track": track,
                      "host": host,
                      # TACC 的 env.sh 已经导出了 FP_METRICS_URL；没有显式参数时用它，
                      # 这样 vLLM 上的 prefix cache 在网页里也能看到真实数字。

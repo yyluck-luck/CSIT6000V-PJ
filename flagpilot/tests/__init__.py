@@ -21,3 +21,10 @@ _TMP_ROOT.mkdir(parents=True, exist_ok=True)
 tempfile.tempdir = str(_TMP_ROOT)
 os.environ.setdefault("TMPDIR", str(_TMP_ROOT))
 os.environ.setdefault("FLAGPILOT_MEMORY", str(_TMP_ROOT / "memory"))
+
+# Tests use explicit dummy credentials and isolated encryption keys. Never inherit
+# a developer's live model configuration or production storage key.
+for _name in ("FLAGPILOT_ENCRYPTION_KEY_FILE", "FLAGPILOT_MODEL",
+              "FLAGPILOT_API_KEY", "DEEPSEEK_API_KEY", "DSV41_API_KEY",
+              "FLAGPILOT_BASE_URL", "FLAGPILOT_H_BASE_URL"):
+    os.environ.pop(_name, None)
