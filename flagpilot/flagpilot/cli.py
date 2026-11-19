@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, config, gpu, metrics, splits, storage, writeup
-from .config import (ABLATIONS, TRACK_H, Budget, Policy, RunConfig, SandboxLimits,
+from .config import (ABLATIONS, TRACK_H, Budget, Hybrid, Policy, RunConfig, SandboxLimits,
                      get_ablation, make_model_spec, track_h_api_key)
 from .runner import BatchRunner
 from .tasks import load_index, select
@@ -108,6 +108,20 @@ def cmd_doctor(args) -> int:
     _p("")
     _p(f"网络隔离         {caps.net_isolation}" + ("  ← 不可作为强隔离证据" if caps.net_isolation != "netns" else ""))
     _p(f"资源上限         {'可用' if caps.rlimit else '不可用'}")
+    # proposal 要的是 "one container per attempt"。这里如实报，别让报告
+    # 写成"有容器隔离"而实际是进程级。
+    _p(f"隔离等级         {caps.isolation}"
+       + ("" if caps.isolation == "container" else "  ← 非容器，报告里必须如实说明"))
+    _p(f"容器             {caps.container}"
+       + (f"  ({caps.container_image})" if caps.container_image else ""))
+    # toolbox 承诺的四样：Python（上面已报）、SMT、binutils/反汇编、调试器
+    from .tools import disasm_binary, z3_available
+    z3_ok = z3_available()
+    disasm = disasm_binary()
+    gdb = shutil.which("gdb")
+    _p(f"SMT (z3)         {'可用' if z3_ok else '不可用  ← smt 动作会明确报错并建议改用 python'}")
+    _p(f"反汇编           {disasm or '不可用  ← disasm 动作会明确报错并建议改用 shell'}")
+    _p(f"调试器           {gdb or '未找到  ← 只能靠 shell 调其它调试器'}")
     for note in caps.notes:
         _p(f"  · {note}")
 
@@ -228,6 +242,114 @@ def cmd_run(args) -> int:
     _p("")
     _p(json.dumps(summary, ensure_ascii=False, indent=2))
     _p(f"\ntrace: {summary['run_dir']}/trace.jsonl")
+    return 0
+
+
+# ---------------------------------------------------------------- show
+
+def cmd_show(args) -> int:
+    """把一次已完成的 run 复盘成时间线。
+
+    为什么需要它：交付给助教的是一堆 `runs/`，如果只能靠 web 看，就得先起
+    服务、再猜 run_id。而 `trace.jsonl` 本身是自解释的——这个命令不依赖服务、
+    不依赖模型、不依赖网络，`--run-dir` 指过去就能把全过程读出来。
+
+    `--full` 才打印 observation 全文与脚本全文；默认只给摘要，
+    因为一次 run 的原文动辄上万字，全打出来没人看。
+    """
+    from .trace import read_jsonl
+
+    run_dir = Path(args.run_dir).expanduser()
+    trace = run_dir / "trace.jsonl"
+    if not trace.exists():
+        _p(f"没有找到 {trace}")
+        return 1
+    rows = read_jsonl(trace)
+    if not rows:
+        _p(f"{trace} 为空或无法解密")
+        return 1
+
+    meta = next((r for r in rows if r.get("type") == "meta"), {})
+    model = meta.get("model") or {}
+    budget = meta.get("budget") or {}
+    caps = meta.get("caps") or {}
+    out: list[str] = [
+        f"# {meta.get('task', '?')} · {meta.get('run_id', '?')}",
+        f"model={model.get('name')}  ablation={(meta.get('ablation') or {}).get('name')}  "
+        f"max_turns={budget.get('max_turns')}  max_tokens={model.get('max_tokens')}",
+        f"isolation={caps.get('isolation')}  network={caps.get('net_isolation')}",
+        "",
+    ]
+
+    for ev in rows:
+        t = ev.get("type")
+        if t == "meta":
+            continue
+        if t == "summary":
+            continue
+        if t == "model":
+            fr = ev.get("finish_reason") or "?"
+            out.append("")
+            out.append(f"[{ev.get('turn'):>2}] model  "
+                       f"{ev.get('prompt_tokens')}+{ev.get('completion_tokens')} tok  "
+                       f"ttft={ev.get('ttft_ms')}ms  finish={fr}")
+            if args.full and ev.get("text"):
+                out.extend("       " + ln for ln in str(ev["text"]).splitlines())
+        elif t == "tool":
+            mark = "!" if ev.get("timed_out") else " "
+            out.append(f"     {mark} {ev.get('action')}  exit={ev.get('exit_code')}  "
+                       f"{ev.get('duration_ms')}ms  obs={ev.get('sent_chars')}c"
+                       + ("  [截断]" if ev.get("truncated") else ""))
+            if args.full and ev.get("obs_head"):
+                out.extend("       " + ln for ln in str(ev["obs_head"]).splitlines()[:40])
+        elif t == "submit":
+            out.append(f"     → submit  flag={ev.get('flag')}")
+            if args.full and ev.get("script"):
+                out.append("       script:")
+                out.extend("       | " + ln for ln in str(ev["script"]).splitlines())
+        elif t == "replay":
+            out.append(f"     ⇄ replay  {ev.get('verdict')} / {ev.get('reason')}"
+                       f"  — {ev.get('detail', '')}")
+            if args.full and ev.get("stdout"):
+                out.append(f"       stdout: {str(ev['stdout']).strip()[:400]}")
+        elif t == "invalid_action":
+            out.append(f"     ✗ invalid  kind={ev.get('kind')}  {ev.get('reason')}")
+        elif t == "submit_repair":
+            out.append(f"     ↻ repair  kind={ev.get('kind')}  reason={ev.get('reason')}"
+                       f"  (flag×{ev.get('flag_retries')}, script×{ev.get('script_repairs')})")
+        elif t == "escalate":
+            out.append(f"     ↑ escalate  {ev.get('from_model')} → {ev.get('to_model')}")
+        elif t == "memory" and ev.get("injected"):
+            out.append(f"     · memory  hits={ev.get('hits')}  {ev.get('chars')}c")
+        elif args.full:
+            # 其余事件（start / server_metrics / probe …）只在 --full 下露出来
+            keys = {k: v for k, v in ev.items()
+                    if k not in ("type", "ts", "t_ms")}
+            out.append(f"     · {t}  {json.dumps(keys, ensure_ascii=False)[:300]}")
+
+    summary = next((r for r in reversed(rows) if r.get("type") == "summary"), {})
+    if summary:
+        out += [
+            "",
+            "## 结论",
+            f"verdict={summary.get('verdict')}  reason={summary.get('reason')}  "
+            f"turns={summary.get('turns')}  wall={summary.get('wall_s', 0):.1f}s",
+            f"首次提交={summary.get('first_submit_verdict')}/"
+            f"{summary.get('first_submit_reason')}  "
+            f"flag重试={summary.get('submit_retries') or 0}  "
+            f"脚本修复={summary.get('script_repairs') or 0}  "
+            f"借轮次={summary.get('bonus_turns') or 0}",
+        ]
+        rep = summary.get("replay") or {}
+        if rep:
+            out.append(f"重放={rep.get('verdict')}/{rep.get('reason')}  {rep.get('detail', '')}")
+
+    text = "\n".join(out)
+    if args.out:
+        Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
+        _p(f"已写入 {args.out}")
+    else:
+        _p(text)
     return 0
 
 
@@ -421,7 +543,8 @@ def cmd_web(args) -> int:
 
     serve(host=args.host, port=args.port, model=args.model,
           base_url=args.base_url, track=args.track,
-          metrics_url=getattr(args, "metrics_url", "") or "")
+          metrics_url=getattr(args, "metrics_url", "") or "",
+          replay_dir=getattr(args, "replay", "") or "")
     return 0
 
 
@@ -481,10 +604,45 @@ def _build_cfg(args) -> RunConfig:
         policy=policy,
         limits=SandboxLimits(action_timeout_s=args.action_timeout),
         ablation=abl,
+        hybrid=Hybrid(
+            enabled=bool(getattr(args, "hybrid", False)),
+            stall_turns=int(getattr(args, "stall_turns", 3)),
+            max_escalations=int(getattr(args, "max_escalations", 1)),
+            max_hosted_tokens=int(getattr(args, "max_hosted_tokens", 20_000)),
+        ),
         replay_timeout_s=args.replay_timeout,
         seeds=getattr(args, "seeds", 1),
         memory=bool(getattr(args, "memory", False)),
+        self_check=not getattr(args, "no_self_check", False),
+        material_free=not getattr(args, "no_material_check", False),
+        repair_extends_budget=not getattr(args, "repair_within_turns", False),
     )
+
+
+def cmd_dataset(args) -> int:
+    """拉取上游数据集并转换成本项目题库格式。
+
+    产物不含明文 flag（只留 sha256），也不随仓库分发——对应 proposal 的
+    "Data is fetched at run time, not redistributed"。
+    """
+    from . import datasets
+
+    cache = Path(args.cache).expanduser() if args.cache else datasets.default_cache()
+    _p(f"[dataset] 上游：{datasets.REPO_URL}")
+    _p(f"[dataset] 缓存：{cache}")
+    try:
+        repo = datasets.fetch(cache, force=args.refresh)
+    except Exception as e:
+        _p(f"[dataset] 拉取失败：{type(e).__name__}: {e}")
+        _p("[dataset] 需要本机能访问 GitHub；也可以先手动 clone，再用 --cache 指过去")
+        return 1
+    out = (Path(args.out).expanduser() if args.out
+           else config.PROJECT_ROOT / "datasets" / f"nyu-{args.split}")
+    stats = datasets.convert(repo, args.split, out, include_compose=args.include_compose)
+    _p(f"[dataset] 已转换 {stats['tasks']} 题，排除 {stats['excluded']} 条（见 EXCLUDED.md）")
+    _p(f"[dataset] 题库：{stats['root']}")
+    _p(f"[dataset] 下一步：FLAGPILOT_TASKS={stats['root']} python3 -m flagpilot list")
+    return 0
 
 
 def cmd_writeup(args) -> int:
@@ -520,6 +678,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     kg = sub.add_parser("storage-keygen", help="Create a local storage encryption key")
     kg.add_argument("--out", required=True)
+
+    ds = sub.add_parser("dataset", help="下载并转换公开数据集（NYU CTF Bench，运行时拉取不入库）")
+    ds.add_argument("--name", default="nyu", choices=["nyu"])
+    ds.add_argument("--split", default="dev", choices=["dev", "test"])
+    ds.add_argument("--out", default="", help="输出题库目录（默认 <项目>/datasets/nyu-<split>）")
+    ds.add_argument("--cache", default="", help="上游仓库缓存目录（默认 ~/.cache/flagpilot/nyu-ctf-bench）")
+    ds.add_argument("--refresh", action="store_true", help="已有缓存时先 git pull")
+    ds.add_argument("--include-compose", action="store_true",
+                    help="连需要 docker compose 的题也收（离线 replay 跑不了，默认排除）")
+    ds.set_defaults(func=cmd_dataset)
     kg.set_defaults(func=cmd_storage_keygen)
 
     d = sub.add_parser("doctor", help="环境自检")
@@ -558,6 +726,23 @@ def build_parser() -> argparse.ArgumentParser:
                        help="把同题历史结论注入 prompt（批跑默认关，避免污染消融对照）")
         p.add_argument("--no-compact", action="store_true",
                        help="关闭上下文压缩（长 run 的 prompt 会一直线性增长）")
+        # ---- hybrid（proposal 的 optional escalation） ----
+        p.add_argument("--hybrid", action="store_true",
+                       help="启用 L→H 自动升级：连续 k 轮没有新证据就切到 H 轨")
+        p.add_argument("--stall-turns", type=int, default=3,
+                       help="连续多少轮没有新证据算 stall（默认 3）")
+        p.add_argument("--max-escalations", type=int, default=1,
+                       help="一次 attempt 内最多升级几次（默认 1）")
+        p.add_argument("--max-hosted-tokens", type=int, default=20_000,
+                       help="H 轨累计 token 上限，超了就不再升级/继续用 H")
+        # ---- 判据与预算口径 ----
+        p.add_argument("--no-self-check", action="store_true",
+                       help="关掉提交前自检（run_script 动作）。复现旧行为时才需要")
+        p.add_argument("--no-material-check", action="store_true",
+                       help="关掉材料缺失重放。它会为每次成功重放多跑一遍脚本")
+        p.add_argument("--repair-within-turns", action="store_true",
+                       help="修复轮也占轮次预算（默认不占，以便兑现 proposal 的"
+                            "'被拒给一次反馈'）")
 
     r = sub.add_parser("run", help="跑一道题")
     add_common(r)
@@ -623,7 +808,15 @@ def build_parser() -> argparse.ArgumentParser:
     w.add_argument("--metrics-url", default="",
                    help="vLLM 的 /metrics；给了界面才能显示 prefix cache 命中率")
     w.add_argument("--track", default="L")
+    w.add_argument("--replay", default="",
+                   help="挂载一个目录下已完成的 run（只读回放），不需要模型与集群")
     w.set_defaults(func=cmd_web)
+
+    sh = sub.add_parser("show", help="把一次 run 的 trace 复盘成时间线（离线，不需要模型）")
+    sh.add_argument("--run-dir", required=True, help="包含 trace.jsonl 的目录")
+    sh.add_argument("--full", action="store_true", help="连 observation 与脚本全文一起打印")
+    sh.add_argument("--out", help="写到文件而不是 stdout")
+    sh.set_defaults(func=cmd_show)
     return ap
 
 

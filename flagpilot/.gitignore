@@ -4,6 +4,8 @@ runs/
 
 # 题库（体积大且含答案哈希；按 docs/TASKS.md 自行放置）
 tasks/
+# 运行时拉取的公开数据集（GPL-2.0，按 proposal 不分发）
+datasets/
 
 # Python
 __pycache__/

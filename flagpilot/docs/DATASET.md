@@ -232,3 +232,38 @@ crypto-005    → https://play.picoctf.org/practice/challenge/51
   代码：自有；InterCode 数据组织：MIT 需署名；题目内容：picoCTF 授权不明确
   → 内部使用没问题，公开再分发附件有风险，所以不进公开仓库
 ```
+
+---
+
+## 六、第二种来源：NYU CTF Bench（运行时拉取，不入库）
+
+picoCTF 那套题库没有 RE 题，而 proposal 的研究对象是 crypto + RE。NYU CTF Bench
+补上了这一块，代价是数据必须**运行时拉取**（proposal 原文：*Data is fetched at run
+time, not redistributed*），因此 `datasets/` 已进 `.gitignore`。
+
+```bash
+# 拉取 + 转换（首次会 clone 约 3.7 GB 到 ~/.cache/flagpilot/nyu-ctf-bench）
+python3 -m flagpilot dataset --split dev
+python3 -m flagpilot dataset --split test
+
+# 用转换后的题库
+FLAGPILOT_TASKS=$PWD/datasets/nyu-dev python3 -m flagpilot list
+```
+
+筛选口径对齐 proposal：只取 `crypto` 与 `rev`，且只保留离线可跑的题
+（`challenge.json` 里 `compose: false`）。需要 docker 起服务的题会被排除并逐条
+记进 `EXCLUDED.md`，对应 proposal 的 *report every exclusion*。
+
+| split | 上游 crypto+RE | 离线可跑（实际转换） | 排除 |
+|---|---|---|---|
+| dev | 21 | **16**（Crypto 7 / RE 9） | 5 |
+| test | 103 | **46**（Crypto 15 / RE 31） | 57 |
+
+转换产物的三条硬约束：
+
+1. **明文 flag 绝不落盘**：只写 `gold_sha256`，`challenge.json` 不复制——
+   `stage_assets` 只跳过 `task.json` 和 `solution*`，挡不住它。
+2. **只拷 `files` 声明的附件**：题目目录里的 `Dockerfile`、`node_modules`、
+   `test_solver` 一律不带，避免把解法带进沙箱。
+3. **可追溯**：`SOURCE.json` 记录上游 commit、拉取时间与授权（GPL-2.0），
+   `EXCLUDED.md` 记录每一条排除理由。

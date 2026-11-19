@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import queue
 import re
@@ -638,8 +639,42 @@ class Handler(BaseHTTPRequestHandler):
                 break
 
 
+def _mount_replay(root: str) -> list[tuple[str, str, str]]:
+    """把目录下已完成的 run 挂进 STATE，返回 [(id, 名字, 结论)]。
+
+    只读回放：这些条目没有可写的 q，也不会被 _worker 碰到。前端走
+    `/api/result?id=` 时与实时 run 完全同一条路径（events + summary 都在），
+    所以界面不需要区分"真跑"和"回放"。
+
+    存在的理由：给助教/评审复现时，不该要求他们先有集群访问、先起 vLLM。
+    把 runs/ 拷过来、一条命令挂上去，就能在浏览器里点开每一次真实运行。
+    """
+    base = Path(root).expanduser()
+    if not base.exists():
+        print(f"⚠ 回放目录不存在：{base}", flush=True)
+        return []
+    dirs = [base] if (base / "trace.jsonl").exists() else \
+        sorted(p.parent for p in base.glob("*/trace.jsonl"))
+    mounted: list[tuple[str, str, str]] = []
+    for d in dirs:
+        evs = read_jsonl(d / "trace.jsonl")
+        if not evs:
+            continue
+        summary = next((e for e in reversed(evs) if e.get("type") == "summary"), None)
+        if not summary:
+            # 没跑完的 attempt 没有 summary，挂上去只会显示"进行中"，跳过
+            continue
+        # id 必须是 12 位十六进制（与 _SID_RE 一致），否则前端的参数校验会拒掉
+        rid = hashlib.sha1(str(d.resolve()).encode()).hexdigest()[:12]
+        STATE[rid] = {"q": queue.Queue(), "summary": summary,
+                      "events": evs, "kind": "replay"}
+        mounted.append((rid, d.name, f"{summary.get('verdict')}/{summary.get('reason')}"))
+    return mounted
+
+
 def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
-          base_url: str = "", track: str = "L", metrics_url: str = "") -> None:
+          base_url: str = "", track: str = "L", metrics_url: str = "",
+          replay_dir: str = "") -> None:
     SETTINGS.update({"model": model,
                      "base_url": base_url or os.environ.get("FLAGPILOT_BASE_URL", ""),
                      "track": track,
@@ -656,6 +691,11 @@ def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
         print(f"⚠ 监听 {host} 且无鉴权：仅限可信内网，勿暴露到公网", flush=True)
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"FlagPilot demo → http://{host}:{port}   model={model}", flush=True)
+    if replay_dir:
+        mounted = _mount_replay(replay_dir)
+        print(f"回放模式：挂载 {len(mounted)} 个已完成的 run（只读，不需要模型）", flush=True)
+        for rid, name, verdict in mounted:
+            print(f"  {name:<30} http://{host}:{port}/?run={rid}   {verdict}", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

@@ -197,6 +197,23 @@ def track_h_api_key(environ=None) -> str:
 
 
 @dataclass
+class Hybrid:
+    """Track L → H 的自动升级（proposal 的 optional hybrid mode）。
+
+    触发条件是 stall：连续 k 轮没有新证据。"证据"取工具观测的指纹——
+    同一份输出重复出现不算新证据，这正好对应 proposal 的 "no new evidence
+    for k turns"。升级后仍受 token 预算约束，免得 H 轨把成本吃穿。
+    """
+
+    enabled: bool = False
+    stall_turns: int = 3
+    max_escalations: int = 1
+    max_hosted_tokens: int = 20_000
+    # 升级目标的模型规格。None = 用 TRACK_H 的默认端点与模型名。
+    model: "ModelSpec | None" = None
+
+
+@dataclass
 class RunConfig:
     """一次批跑的完整配置。会随 trace 一起落盘，保证可复现。"""
 
@@ -207,8 +224,18 @@ class RunConfig:
     policy: Policy = field(default_factory=Policy)
     limits: SandboxLimits = field(default_factory=SandboxLimits)
     ablation: Ablation = field(default_factory=Ablation)
+    hybrid: Hybrid = field(default_factory=Hybrid)
     replay_timeout_s: float = 300.0
     seeds: int = 1
+    # 提交前自检：给模型一个 run_script 动作，在干净目录里先跑一遍候选脚本。
+    # 关掉它才能复现"没有自检"的旧行为，所以必须进指纹。
+    self_check: bool = True
+    # 材料缺失重放：把 challenge/ 清空再跑一次，抓"答案不是从材料推出来的"。
+    # 每成功重放一次就多跑一次脚本，是最贵的一道判据，可单独关。
+    material_free: bool = True
+    # 提交被拒触发的修复轮是否占用轮次预算。True = 不占（更贴 proposal
+    # "被拒会给一次反馈"的承诺），代价是实际模型调用数可能超过 max_turns。
+    repair_extends_budget: bool = True
     # 是否在 prompt 里注入"这道题过去的尝试结论"。
     # 批跑（E1）默认关：B0 的记录会污染 B1 的对照，四档就不再是只差一个变量。
     # 交互式 web 由 server 打开——那里要的正是"别每次都从零开始"。
@@ -230,9 +257,22 @@ class RunConfig:
             "budget": self.budget.__dict__,
             "policy": self.policy.__dict__,
             "ablation": self.ablation.__dict__,
+            # 升级策略必须进指纹：它改变的是模型能力上限，
+            # 不记下来的话 hybrid 批次和纯 L 批次会被当成同一配置。
+            "hybrid": {
+                "enabled": self.hybrid.enabled,
+                "stall_turns": self.hybrid.stall_turns,
+                "max_escalations": self.hybrid.max_escalations,
+                "max_hosted_tokens": self.hybrid.max_hosted_tokens,
+                "model": self.hybrid.model.name if self.hybrid.model else None,
+            },
             "limits": {k: v for k, v in self.limits.__dict__.items()},
             "replay_timeout_s": self.replay_timeout_s,
             "seeds": self.seeds,
             "memory": self.memory,
+            # 这三项改变判据强度与预算口径，不记进指纹就没法解释两次跑为什么不一样
+            "self_check": self.self_check,
+            "material_free": self.material_free,
+            "repair_extends_budget": self.repair_extends_budget,
             "version": __import__("flagpilot").__version__,
         }
