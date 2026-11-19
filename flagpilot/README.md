@@ -140,7 +140,7 @@ flagpilot/
 │   ├── client.slurm        分离式：只跑客户端
 │   └── upload.sh           打包上传（强制排除答案表）
 ├── scripts/                本地启停、自检、划分生成、H 轨一命令
-├── tests/                  179 条单元测试
+├── tests/                  210 unit and integration tests
 └── docs/                   设计、题库、TACC、实现状态
 ```
 
@@ -164,6 +164,8 @@ runs/test_runs.jsonl                    test 守卫账本（每个最终配置�
 
 ### 已实现并验证
 
+Progress updated: 2026-11-19.
+
 - ReAct agent 循环 + 四道预算 + 重复动作守卫
 - 六种动作：`shell` / `python` / `file` / `strings` / `decode` / `submit`
 - 进程级沙箱：只读附件、`rlimit`、超时杀进程组、输出截断、能力探测
@@ -177,8 +179,10 @@ runs/test_runs.jsonl                    test 守卫账本（每个最终配置�
 - 延迟分位：端到端与 verified 解题时间的 p50 / p95
 - 配对检验（精确 McNemar）、E3 对比的 Δ 与 5 个点的质量护栏
 - dev / test 划分 + "test 每个最终配置只跑一次"的守卫
-- H 轨一命令（DeepSeek 预设 + 官方价目逐轮计价，对桩服务器测试）
-- 179 条单元测试、11 项自检
+- H track: DeepSeek Flash API configured for CLI and Web; a real `crypto-005` run reached replay verification (correct flag, `unverified` script).
+- English solution writeups generated from traces, with Web download and CLI regeneration.
+- Optional Fernet encryption for saved records, writeups, and completed attempt files; history migration is available. See [setup](docs/WRITEUPS_AND_STORAGE.md).
+- 210 unit and integration tests; 71 focused feature checks passed. The self-check script covers 11 checks.
 
 ### 未实现 / 未验证
 
@@ -189,13 +193,10 @@ runs/test_runs.jsonl                    test 守卫账本（每个最终配置�
 | E2 人工复核 | ❌ 未做 | 归因 ≥30 例的人工抽检 |
 | E3 效率实验 | 🟡 部分 | 网格、p95、8 并发、GPU 秒都已接好（`FP_E3=1`，见 docs/TACC.md 第 7 节）；**数据未跑** |
 | E4 升级策略 | ❌ 未实现 | proposal 允许最先砍，当前没有 stall 检测与升级预算 |
-| Writeup generation | Implemented | Completed runs generate an English evidence-based report; Web download and CLI regeneration are available. |
 | Hybrid 双轨编排 | 🟡 部分 | H 轨已一命令化（`scripts/track_h.sh`），但没有 L→H 自动升级链路 |
-| H 轨真实调用 | ❌ 未跑 | 只对桩服务器测过；需要 `DSV41_API_KEY` 先跑一题，核对成本与账单 |
 | dev / test 划分 | 🟡 待冻结 | 生成器与守卫已就绪；`splits.json` 仍是 `proposed`，团队确认后改 `frozen` |
 | Benchmark 对齐 | ❌ 不一致 | proposal 写 NYU CTF Bench / InterCode / Cybench，当前题库是 picoCTF 53 题（无 RE） |
 | 容器级隔离 | ❌ 未做 | 只有进程级；macOS 上网络隔离是 `proxy-only`，实测可被裸 socket 绕过 |
-| Encrypted flag storage | Implemented (opt-in) | Authenticated encryption for records, writeups, and completed attempt files; [setup](docs/WRITEUPS_AND_STORAGE.md). |
 
 > 这些不是"做不完"，而是**当前版本的边界**。写报告、做答辩时按这张表讲，比含糊其辞更安全。
 
