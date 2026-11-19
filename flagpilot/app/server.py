@@ -39,7 +39,14 @@ from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
+from app import httpcache, runs_index
+
 STATIC = Path(__file__).resolve().parent / "index.html"
+_STATIC = httpcache.StaticFile(STATIC)
+_MODELS = httpcache.TTLCache(30.0)     # /api/models：30 s 内复用，换模型 / 端点即失效
+# SSE 空闲多久发一次心跳。模型一轮可能想很久；经 SSH 隧道或代理时，
+# 长时间没有字节的连接会被掐断，前端只能等 150 s 看门狗再补救。
+SSE_PING_S = 15.0
 
 STATE: dict[str, dict] = {}
 CHATS: dict[str, ChatSession] = {}
@@ -150,10 +157,17 @@ def _load_run_from_disk(rid: str) -> dict | None:
     return None
 
 
+def _wake(cond: threading.Condition) -> None:
+    """summary 落定后再叫醒一次：读端可能正等在"没有新事件"上。"""
+    with cond:
+        cond.notify_all()
+
+
 def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
     global RUNNING
     q: queue.Queue = STATE[run_id]["q"]
     events: list = STATE[run_id]["events"]
+    cond: threading.Condition = STATE[run_id].setdefault("cond", threading.Condition())
 
     def hook(ev: dict) -> None:
         """把事件追加进历史。
@@ -161,9 +175,11 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
         历史是唯一数据源：SSE 流按游标读它，所以"断开重连""刷新页面""多个窗口
         同时看"都能拿到完整步骤，且不会重复。队列只留给答疑（那边没有历史）。
         """
-        events.append(ev)
-        if len(events) > 4000:      # 单次运行不可能这么多，兜底防内存涨
-            del events[:1000]
+        with cond:
+            events.append(ev)
+            if len(events) > 4000:      # 单次运行不可能这么多，兜底防内存涨
+                del events[:1000]
+            cond.notify_all()
 
     try:
         task = resolve_task(task_name)
@@ -193,11 +209,13 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
         # 反过来的话读端可能先看到 summary、补发一条兜底 done，造成重复。
         hook({"type": "done", **summary})
         STATE[run_id]["summary"] = summary
+        _wake(cond)
     except Exception as e:
         hook({"type": "error", "message": f"{type(e).__name__}: {e}",
               "trace": traceback.format_exc()[-1500:]})
         STATE[run_id]["summary"] = {"verdict": "error",
                                     "reason": f"{type(e).__name__}: {e}"}
+        _wake(cond)
     finally:
         q.put(None)
         with LOCK:
@@ -248,8 +266,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, code: int, obj) -> None:
         body = json.dumps(obj, ensure_ascii=False).encode()
+        body, gz = httpcache.maybe_gzip(body, self.headers.get("Accept-Encoding"))
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -258,10 +280,24 @@ class Handler(BaseHTTPRequestHandler):
         if not STATIC.exists():
             self._json(500, {"error": "index.html 缺失"})
             return
-        body = STATIC.read_bytes()
+        page = _STATIC.load()
+        # no-cache = 每次都向服务端确认；没改动只回 304，不重传 80KB。
+        if self.headers.get("If-None-Match") == page.etag:
+            self.send_response(304)
+            self.send_header("ETag", page.etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        gz = httpcache.accepts_gzip(self.headers.get("Accept-Encoding"))
+        body = page.gz if gz else page.raw
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("ETag", page.etag)
+        self.send_header("Vary", "Accept-Encoding")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -293,9 +329,14 @@ class Handler(BaseHTTPRequestHandler):
                 "ablations": [{"name": k, "desc": v.desc} for k, v in ABLATIONS.items()],
             })
         if path == "/api/models":
-            return self._json(200, {"models": list_models(), "current": SETTINGS["model"]})
+            key = (SETTINGS.get("base_url"), SETTINGS.get("model"),
+                   httpcache.secret_tag(os.environ.get("FLAGPILOT_API_KEY", "")))
+            return self._json(200, {"models": _MODELS.get(key, list_models),
+                                    "current": SETTINGS["model"]})
         if path == "/api/stream":
             return self._stream()
+        if path == "/api/runs":
+            return self._runs()
         if path == "/api/result":
             rid = self._qid()
             st = STATE.get(rid)
@@ -407,6 +448,7 @@ class Handler(BaseHTTPRequestHandler):
             RUNNING += 1
             STATE[rid] = {"q": queue.Queue(), "summary": None, "task": task,
                           "events": [],          # 供断线重连回放
+                          "cond": threading.Condition(),   # 新事件到达即唤醒 SSE
                           "t0": time.time(),     # 端到端计时起点（收到 POST 那一刻）
                           "ablate": ablate or SETTINGS["ablation"]}
         try:
@@ -427,6 +469,7 @@ class Handler(BaseHTTPRequestHandler):
         with LOCK:
             SETTINGS["model"] = model
             CHATS.clear()
+        _MODELS.clear()
         return self._json(200, {"model": model,
                                 "note": "新运行与新会话生效；已开始的运行不受影响"})
 
@@ -576,6 +619,16 @@ class Handler(BaseHTTPRequestHandler):
                 return kv[3:]
         return ""
 
+    def _runs(self) -> None:
+        """历史页：内存里的运行（在跑的、--replay 挂载的）优先，其余从 runs/web 读摘要。"""
+        with LOCK:
+            mem = {rid: st for rid, st in STATE.items()
+                   if "events" in st and st.get("kind") != "chat"}
+        items = [runs_index.item_from_state(rid, st) for rid, st in mem.items()]
+        items += [x for x in runs_index.list_runs(config.RUNS_ROOT) if x["id"] not in mem]
+        items.sort(key=lambda x: x.get("ts") or 0, reverse=True)
+        self._json(200, {"runs": items[:300]})
+
     def _stream(self) -> None:
         rid = self._qid()
         st = STATE.get(rid)
@@ -604,6 +657,7 @@ class Handler(BaseHTTPRequestHandler):
         # ---- 求解：按历史列表游标读，重连/刷新都不会丢也不会重复 ----
         if "events" in st:
             i = 0
+            cond = st.get("cond")
             deadline = time.monotonic() + 1800
             while time.monotonic() < deadline:
                 evs = st["events"]
@@ -618,7 +672,20 @@ class Handler(BaseHTTPRequestHandler):
                     # 兜底：worker 异常结束时 summary 有值但 done 没进列表
                     send({"type": "done", **st["summary"]})
                     return
-                time.sleep(0.15)
+                if cond is None:
+                    time.sleep(0.15)
+                    continue
+                # 以前固定睡 150 ms 再看，每个事件平均晚 75 ms 才推出去。
+                # 现在在锁里复查再等：写端 append 后 notify，读端立即醒，不会漏唤醒。
+                with cond:
+                    idle = i >= len(st["events"]) and not st.get("summary")
+                    woke = cond.wait(timeout=SSE_PING_S) if idle else True
+                if not woke and i >= len(st["events"]):
+                    try:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
             return
 
         # ---- 答疑：没有历史可回放，仍然走队列 ----
