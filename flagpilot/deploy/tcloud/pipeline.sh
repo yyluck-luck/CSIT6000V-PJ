@@ -9,7 +9,7 @@ set -uo pipefail
 SUB=${SUB:-"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/submit.sh"}
 TC=${TCLOUD_BIN:-tcloud}
 POLL=${POLL:-60}
-OUT=${1:?输出目录}
+OUT=${1:?usage: pipeline.sh OUTPUT_DIR [EXCLUDE_NODES]}
 EXCL=${2:-}
 mkdir -p "$OUT"
 
@@ -20,7 +20,7 @@ jobid() { sed -n 's/^Submitted batch job \([0-9][0-9]*\).*/\1/p' | tail -1; }
 
 SJ=""
 cleanup() {
-  if [[ -n "$SJ" ]]; then log "取消服务作业 $SJ"; tc cancel -j "$SJ"; fi
+  if [[ -n "$SJ" ]]; then log "cancel serve job $SJ"; tc cancel -j "$SJ"; fi
 }
 trap cleanup EXIT
 trap 'exit 143' TERM INT
@@ -33,16 +33,17 @@ for attempt in 1 2 3 4 5 6; do
   SERVE_T0=$(date +%s)        # 偏早的估计：服务作业不会早于提交时刻开跑，所以算出的截止时刻只会偏保守
   out=$(FP_EXCLUDE="$EXCL" bash "$SUB" serve 2>&1 | clean)
   SJ=$(printf '%s\n' "$out" | jobid)
-  if [[ -z "$SJ" ]]; then log "服务提交失败："; printf '%s\n' "$out" | tail -5; exit 1; fi
-  log "服务作业 $SJ 已提交（第 $attempt 次，exclude=${EXCL:-无}）"
+  if [[ -z "$SJ" ]]; then log "serve submission failed:"; printf '%s\n' "$out" | tail -5; exit 1; fi
+  log "serve job $SJ submitted (attempt $attempt, exclude=${EXCL:-none})"
   deadline=$(( $(date +%s) + 45*60 ))
   while (( $(date +%s) < deadline )); do
     sleep "$POLL"
     L=$(tc cat "slurm_log/qwen-public-serve-$SJ.log")
+    printf '%s\n' "$L" > "$OUT/serve-live.log"
     node=$(printf '%s\n' "$L" | sed -n 's#^SERVICE_BASE_URL=http://\([^:]*\):.*#\1#p' | head -1)
     if grep -aq 'PRECHECK_FAIL' <<<"$L"; then
       node=$(grep -a 'PRECHECK_FAIL' <<<"$L" | sed -n 's/.*node=\([^:]*\):.*/\1/p' | head -1)
-      log "体检未过：$(grep -a 'PRECHECK_FAIL' <<<"$L" | head -1)"
+      log "precheck failed: $(grep -a 'PRECHECK_FAIL' <<<"$L" | head -1 | sed 's/.*PRECHECK_FAIL //')"
       grep -a '^PRECHECK ' <<<"$L" | sed 's/^/    /'
       EXCL="${EXCL:+$EXCL,}$node"; SJ=""; continue 2
     fi
@@ -51,7 +52,7 @@ for attempt in 1 2 3 4 5 6; do
       break 2
     fi
     if grep -aq -e 'Traceback (most recent call last)' -e 'srun: error' -e 'CANCELLED' <<<"$L"; then
-      log "服务作业 $SJ 失败："
+      log "serve job $SJ failed:"
       grep -a -e 'Error:' -e 'error:' <<<"$L" | grep -av 'frame #' | tail -4 | sed 's/^/    /'
       if [[ -n "$node" ]] && grep -aq -e 'Free memory on device' -e 'Address already in use' <<<"$L"; then
         EXCL="${EXCL:+$EXCL,}$node"; SJ=""; continue 2
@@ -59,20 +60,20 @@ for attempt in 1 2 3 4 5 6; do
       SJ=""; exit 1
     fi
     st=$(grep -a -o -e 'torch.compile took [0-9.]* s' -e 'GPU KV cache size: [0-9,]* tokens' -e 'init engine.*took [0-9.]* s' <<<"$L" | tail -1)
-    log "等服务 $SJ${node:+ @$node}${st:+（$st）}"
+    log "waiting for serve $SJ${node:+ @$node}${st:+ ($st)}"
   done
-  log "服务 $SJ 45 分钟内没就绪"; exit 1
+  log "serve $SJ not ready within 45 min"; exit 1
 done
-[[ -n "$URL" ]] || { log "6 次都没起来，放弃（exclude=$EXCL）"; exit 1; }
-log "服务就绪：$URL（作业 $SJ，节点 $NODE）"
+[[ -n "$URL" ]] || { log "no server after 6 attempts, giving up (exclude=$EXCL)"; exit 1; }
+log "serve ready: $URL (job $SJ, node $NODE)"
 
 # ---------- 2. 批次 ----------
 # 服务作业时限 1 小时；客户端在服务停之前 4 分钟收手（见 client/job.sh 的时间账）
 out=$(FP_LIMIT="${FP_LIMIT:-5}" FP_EXCLUDE="$NODE" FP_BATCH="$BATCH" FP_ABLATIONS="$ABL" \
       FP_DEADLINE_EPOCH=$(( SERVE_T0 + 3600 - 240 )) bash "$SUB" batch "$URL" 2>&1 | clean)
 CJ=$(printf '%s\n' "$out" | jobid)
-if [[ -z "$CJ" ]]; then log "批次提交失败："; printf '%s\n' "$out" | tail -5; exit 1; fi
-log "客户端作业 $CJ 已提交：$(grep -a 'run.env' <<<"$out" | head -1)"
+if [[ -z "$CJ" ]]; then log "batch submission failed:"; printf '%s\n' "$out" | tail -5; exit 1; fi
+log "client job $CJ submitted"
 ok=""
 deadline=$(( $(date +%s) + 55*60 ))
 while (( $(date +%s) < deadline )); do
@@ -80,9 +81,11 @@ while (( $(date +%s) < deadline )); do
   C=$(tc cat "slurm_log/flagpilot-client-$CJ.log")
   if grep -aq '^\[fp\] done:' <<<"$C"; then ok=1; break; fi
   if grep -aq -e 'srun: error' -e 'CANCELLED' <<<"$C"; then ok=0; break; fi
-  log "等批次 $CJ：$(grep -a -v '^\s*$' <<<"$C" | tail -1 | cut -c1-140)"
+  printf '%s\n' "$C" > "$OUT/client-live.log"
+  log "waiting for batch $CJ: $(grep -a -E '^\[[0-9]+/[0-9]+\]|^\[fp\] tier' <<<"$C" | tail -1 | cut -c1-140)"
 done
-log "批次结束（ok=${ok:-超时}），客户端日志尾部："
+printf '%s\n' "$C" > "$OUT/client-live.log"
+log "batch finished (ok=${ok:-timeout}); client log tail:"
 printf '%s\n' "$C" | tail -25 | sed 's/^/    /'
 
 # ---------- 3. 取回 ----------
@@ -91,12 +94,12 @@ tc cat "slurm_log/qwen-public-serve-$SJ.log" > "$OUT/serve-$SJ.log"
 NAMES="$BATCH"
 if [[ -n "$ABL" ]]; then NAMES=""; for ab in ${ABL//,/ }; do NAMES="$NAMES $BATCH-$ab"; done; fi
 for n in $NAMES; do
-  if grep -aq -e "tier-done $n " -e "^\[fp\] done:" <<<"$C" && ! grep -aq "跳过 ${n##*-}：" <<<"$C"; then
+  if grep -aq -e "tier-done $n " -e "^\[fp\] done:" <<<"$C" && ! grep -aq "skip ${n##*-}:" <<<"$C"; then
     tc download "flagpilot-runs/$n.md" "$OUT/" | tail -1
     tc download -r "flagpilot-runs/$n" "$OUT/" | tail -1
   else
-    log "没有 $n 的结果（被跳过或没跑完）"
+    log "no results for $n (skipped or unfinished)"
   fi
 done
-log "本地：$(ls "$OUT" | tr '\n' ' ')"
+log "local: $(ls "$OUT" | tr '\n' ' ')"
 [[ "$ok" == "1" ]]

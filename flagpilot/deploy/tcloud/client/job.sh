@@ -58,18 +58,18 @@ except Exception as e:
     out = "失败: %s" % e
 print("[fp] sandbox python3:", p, "->", out)
 '
-echo "[fp] shims: xxd=$(command -v xxd || echo 缺) exiftool=$(command -v exiftool || echo 缺)"
+echo "[fp] shims: xxd=$(command -v xxd || echo missing) exiftool=$(command -v exiftool || echo missing)"
 # 按沙箱的方式（干净环境 + 只给 FLAGPILOT_SANDBOX_PYTHONPATH）确认随包的库真能 import
 env -i PATH="$PATH" PYTHONPATH="${FLAGPILOT_SANDBOX_PYTHONPATH:-}" python3 -c \
   'import Crypto, gmpy2; print("[fp] vendored: pycryptodome", Crypto.__version__, "gmpy2", gmpy2.version())' \
-  || echo "[fp] vendored: 不可用（用到 pycryptodome/gmpy2 的题会如实报缺库）"
+  || echo "[fp] vendored: unavailable (tasks needing pycryptodome/gmpy2 will report the missing library)"
 echo "[fp] doctor"
 fp doctor || true          # 自检结果进日志；不在这里拦作业，判定看下面的批次
 
 [[ "${FP_MODE}" == "doctor" ]] && exit 0
 
 BASE="$(cat server-url.txt)"
-case "$BASE" in *NODE*|'') echo "[fp] server-url.txt 未设置成本次服务地址" >&2; exit 1;; esac
+case "$BASE" in *NODE*|'') echo "[fp] server-url.txt does not hold this service address" >&2; exit 1;; esac
 # PRoot 只绑了宿主机的 /etc/resolv.conf，没绑 /etc/hosts：节点名（10-0-3-11）进了 PRoot 就解析不了
 # （作业 29314：Temporary failure in name resolution）。在宿主机上先换成 IP。
 # 宿主机 hosts 也不全（作业 29319：10-0-1-10 上 getent 解析不了 10-0-4-11），再按本集群的命名规则
@@ -82,7 +82,7 @@ fi
 if [[ -n "$SVC_IP" ]]; then
   BASE=${BASE/"$SVC_HOST"/"$SVC_IP"}
 fi
-echo "[fp] service=${BASE}（${SVC_HOST}）"
+echo "[fp] service=${BASE} (${SVC_HOST})"
 # 先确认服务就绪，连不上立刻失败，别空跑一批 error。
 qwen-python -c '
 import json, sys, urllib.request
@@ -105,7 +105,7 @@ run_batch() {   # $1 = 批次名  $2 = 额外参数（--ablate Bx）
   # shellcheck disable=SC2086
   fp batch --batch "$1" --track L --model qwen3.8-27b \
     --base-url "${BASE}" --metrics-url "${BASE%/v1}/metrics" --scope core ${FP_ARGS} $2 \
-    || echo "[fp] batch $1 非零退出"
+    || echo "[fp] batch $1 exited non-zero"
   fp report --batch "$1" --md "${FLAGPILOT_RUNS}/$1.md" || true
   LAST=$(( $(date +%s) - s ))
   echo "[fp] tier-done $1 ${LAST}s"
@@ -118,10 +118,10 @@ else
     need=240
     if (( LAST > 0 )); then need=$(( LAST * 13 / 10 + 60 )); fi
     if (( left < need )); then
-      echo "[fp] 跳过 ${ab}：只剩 ${left}s，估计要 ${need}s（续跑：FP_ABLATIONS=${ab} 再交一次，已完成的 attempt 会跳过）"
+      echo "[fp] skip ${ab}: ${left}s left, needs ~${need}s (resume with FP_ABLATIONS=${ab}; finished attempts are skipped)"
       continue
     fi
-    echo "[fp] tier ${ab} → ${FP_BATCH}-${ab}（剩 ${left}s）"
+    echo "[fp] tier ${ab} -> ${FP_BATCH}-${ab} (${left}s left)"
     run_batch "${FP_BATCH}-${ab}" "--ablate ${ab}"
   done
 fi
