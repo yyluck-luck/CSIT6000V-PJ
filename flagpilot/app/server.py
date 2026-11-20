@@ -33,8 +33,8 @@ from pathlib import Path
 from flagpilot import config, custom, probe, tagger, storage, writeup
 from flagpilot.agent import run_attempt
 from flagpilot.chat import ChatSession, read_log
-from flagpilot.config import (ABLATIONS, Budget, Policy, RunConfig,
-                              SandboxLimits, get_ablation, make_model_spec)
+from flagpilot.config import (ABLATIONS, GEMINI, Budget, Policy, RunConfig,
+                              SandboxLimits, gemini_api_key, get_ablation, is_gemini, make_model_spec)
 from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
@@ -64,22 +64,44 @@ MAX_STATE_ENTRIES = 80           # STATE 只增不减会吃内存，完成后按
 RUNNING = 0
 
 
+def _base_url() -> str:
+    """当前端点。gemini-* 模型没给端点时走 Google 的 OpenAI 兼容端点（与 make_model_spec 同一条规则）。"""
+    if SETTINGS["base_url"]:
+        return SETTINGS["base_url"]
+    return GEMINI["base_url"] if str(SETTINGS["model"]).lower().startswith("gemini") else "http://127.0.0.1:8000/v1"
+
+
+def _api_key() -> str:
+    """服务端用的密钥：FLAGPILOT_API_KEY；对 Gemini 端点没设时用 GEMINI_API_KEY（环境变量或根目录 .env）。"""
+    key = os.environ.get("FLAGPILOT_API_KEY", "")
+    if (not key or key == "EMPTY") and is_gemini(_base_url()):
+        key = gemini_api_key()
+    return key or "EMPTY"
+
+
+# Gemini 的模型表里有语音、图片、音乐、转写模型，答疑和解题用不上
+_NOT_CHAT = ("tts", "image", "embedding", "transcribe", "lyria", "banana", "imagen", "veo", "aqa")
+
+
 def list_models() -> list[str]:
     """向 OpenAI 兼容端点要模型列表（Ollama 的 /v1/models 支持）。
 
     取不到就只回当前模型——界面不该因为列不出模型就崩。
     """
-    base = (SETTINGS["base_url"] or "http://127.0.0.1:8000/v1").rstrip("/")
+    base = _base_url().rstrip("/")
     try:
         request = urllib.request.Request(base + "/models", headers={
-            "Authorization": "Bearer " + os.environ.get("FLAGPILOT_API_KEY", "EMPTY"),
+            "Authorization": "Bearer " + _api_key(),
             "User-Agent": "FlagPilot/0.1.0",
         })
         with urllib.request.urlopen(request, timeout=5) as r:
             data = json.loads(r.read().decode())
         ids = [str(m.get("id")) for m in (data.get("data") or []) if m.get("id")]
+        if is_gemini(base):          # Google 给的是 "models/gemini-…"；只留能对话的
+            ids = [i.removeprefix("models/") for i in ids]
+            ids = [i for i in ids if not any(k in i for k in _NOT_CHAT)]
         if ids:
-            return sorted(set(ids))
+            return sorted(set(ids) | {SETTINGS["model"]})
     except Exception:
         pass
     return [SETTINGS["model"]]
@@ -100,7 +122,7 @@ def resolve_task(name: str) -> Task | None:
 
 
 def _make_cfg(task_batch: str, ablate: str | None = None) -> RunConfig:
-    base = SETTINGS["base_url"] or "http://127.0.0.1:8000/v1"
+    base = _base_url()
     abl = get_ablation(ablate or SETTINGS["ablation"])
     policy = Policy()
     if not abl.truncate:
@@ -113,7 +135,7 @@ def _make_cfg(task_batch: str, ablate: str | None = None) -> RunConfig:
         # 必须和 CLI 走同一个构造函数：之前这里直接 new ModelSpec，
         # 漏掉 soft_no_think，Qwen3 的思维链把每轮预算吃光，表现为"空回复"。
         model=make_model_spec(SETTINGS["model"], base,
-                              api_key=os.environ.get("FLAGPILOT_API_KEY", "EMPTY"),
+                              api_key=_api_key(),
                               metrics_url=SETTINGS.get("metrics_url") or ""),
         budget=Budget(max_turns=20),
         policy=policy,
@@ -348,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
             })
         if path == "/api/models":
             key = (SETTINGS.get("base_url"), SETTINGS.get("model"),
-                   httpcache.secret_tag(os.environ.get("FLAGPILOT_API_KEY", "")))
+                   httpcache.secret_tag(_api_key()))
             return self._json(200, {"models": _MODELS.get(key, list_models),
                                     "current": SETTINGS["model"]})
         if path == "/api/stream":

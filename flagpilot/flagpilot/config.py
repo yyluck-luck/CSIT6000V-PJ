@@ -161,9 +161,16 @@ def make_model_spec(name: str, base_url: str = "", thinking: bool = False, **kw)
     所有入口必须走这里，默认值才不会再漂。
     """
     lower = str(name).lower()
-    spec = ModelSpec(name=name, base_url=base_url or "http://127.0.0.1:8000/v1", **kw)
+    # gemini-* 没给端点时默认走 Google 的 OpenAI 兼容端点
+    default = GEMINI["base_url"] if lower.startswith("gemini") else "http://127.0.0.1:8000/v1"
+    spec = ModelSpec(name=name, base_url=base_url or default, **kw)
     if urlparse(spec.base_url).hostname == "opencode.ai":
         spec.provider = "openai-compatible"
+    if is_gemini(spec.base_url):
+        # 只发标准字段：chat_template_kwargs 不认；reasoning_effort="none" 在 flash-lite 上直接 400
+        spec.provider = "gemini"
+        if not (spec.api_key or "").strip() or spec.api_key == "EMPTY":
+            spec.api_key = gemini_api_key() or spec.api_key
     spec.enable_thinking = bool(thinking)
     # Ollama 常忽略 chat_template_kwargs（会 400 后降级），所以再压一道软开关。
     spec.soft_no_think = (not thinking) and "qwen3" in lower
@@ -191,6 +198,41 @@ TRACK_H = {
     # 刻意不读 FLAGPILOT_API_KEY——deploy/env.sh 把它设成 vLLM 用的 "EMPTY"。
     "key_env": ("DSV41_API_KEY", "DEEPSEEK_API_KEY"),
 }
+
+
+# Gemini API（Google AI Studio）的 OpenAI 兼容端点。会员订阅不含 API；密钥在 AI Studio 免费创建，放根目录 .env。
+GEMINI = {
+    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "model": "gemini-flash-lite-latest",       # 2026-11-20 免费层里高峰时仍可用的那一档
+    "key_env": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+}
+
+
+def is_gemini(base_url: str) -> bool:
+    return urlparse(base_url or "").hostname == "generativelanguage.googleapis.com"
+
+
+def gemini_api_key(environ=None, dotenv: Path | None = None) -> str:
+    """Gemini 密钥：先看环境变量，再看仓库根目录的 .env（只读这两个名字，不打印、不进指纹）。"""
+    env = os.environ if environ is None else environ
+    for k in GEMINI["key_env"]:
+        v = (env.get(k) or "").strip()
+        if v:
+            return v
+    if dotenv is None and env.get("FLAGPILOT_NO_DOTENV"):      # 测试里不碰真实密钥
+        return ""
+    path = dotenv if dotenv is not None else PROJECT_ROOT.parent / ".env"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for k in GEMINI["key_env"]:
+        for line in lines:
+            if line.startswith(k + "="):
+                v = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if v:
+                    return v
+    return ""
 
 
 def track_h_api_key(environ=None) -> str:

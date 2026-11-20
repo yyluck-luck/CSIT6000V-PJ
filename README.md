@@ -537,6 +537,27 @@ cd flagpilot && python3 -m flagpilot web --replay runs/tacc   # then click "Qwen
   Slurm's reason for any queue: the account's two-job limit, or no free GPUs.
 - Restarting the web server reconnects to a serving job that is still running.
 
+#### 4E. Gemini API instead of TACC (fast replies, free tier)
+
+A Gemini app subscription does not include API access. Create a key in Google AI Studio (the free
+tier is enough) and put it in the repository-root `.env`, which the root `.gitignore` keeps out of git:
+
+```bash
+echo 'GEMINI_API_KEY=<your key>' >> .env
+cd flagpilot && python3 -m flagpilot web --model gemini-flash-lite-latest --replay runs/tacc
+```
+
+- A `gemini-*` model name defaults to Google's OpenAI-compatible endpoint. The key is read from
+  `GEMINI_API_KEY` / `GOOGLE_API_KEY` or the root `.env`. It is never logged or written into a run's
+  fingerprint.
+- Only standard chat fields are sent. Flash-lite rejects `reasoning_effort: "none"` with a 400.
+- The free tier gets overloaded at times. A 429 or 503, or a stream that ends before any text, is
+  retried twice with the server's suggested delay, and the model event records `retries`.
+- Measured on 2026-11-20 during a busy period: one call took 9-12 s, and demo-001 was verified in
+  5 turns (170 s).
+- When Qwen on TACC is not connected, Ask and Solve's **Run** both use Gemini. TACC remains the path
+  for the evaluation runs.
+
 **Known platform constraints.** The course partition caps a job at 1 hour, and serving a 27B model
 takes 5–17 minutes to become ready (5 on 2026-11-20, 17 in an earlier run), leaving 43–55 minutes of
 work per job; long evaluations
@@ -561,13 +582,13 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 368 tests
+python3 -m unittest discover -s tests -t . -q     # 374 tests
 bash scripts/verify.sh                            # 13 feature checks (the last one drives the web UI)
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 368 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all 374 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check.
 

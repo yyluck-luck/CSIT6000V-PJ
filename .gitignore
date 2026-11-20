@@ -1,0 +1,3 @@
+# secrets stay on the laptop (API keys for DeepSeek, Gemini, ...)
+.env
+.env.*

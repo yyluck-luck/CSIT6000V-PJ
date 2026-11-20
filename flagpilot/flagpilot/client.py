@@ -36,6 +36,21 @@ _CTX_INPUT = re.compile(r"prompt contains (\d+) input tokens|request has (\d+) i
                         r"(\d+) (?:tokens )?in the messages|(\d+) tokens from the input|"
                         r"messages resulted in (\d+) tokens", re.I)
 MIN_FIT_TOKENS = 256        # 比这还小就不值得再要一轮了：上下文已经满了
+# 托管 API 的限流 / 过载（Gemini 免费层高峰时常见 429 / 503）：按服务端给的等待时间重试，最多两次
+BUSY_CODES = (429, 503)
+BUSY_RETRIES = 2
+BUSY_WAIT_CAP_S = 20.0
+
+
+def busy_wait_s(detail: str, retry_after: str | None, attempt: int) -> float:
+    """429 / 503 该等多久：Retry-After 头 > Google 错误体里的 retryDelay > 2、5 秒退避。上限 20 秒。"""
+    for raw in (retry_after or "", (re.search(r'"retryDelay"\s*:\s*"([\d.]+)s"', detail or "") or [None, ""])[1]):
+        try:
+            if raw:
+                return min(BUSY_WAIT_CAP_S, max(0.5, float(raw)))
+        except ValueError:
+            pass
+    return min(BUSY_WAIT_CAP_S, (2.0, 5.0)[min(attempt, 1)])
 MAX_FIT_RETRIES = 2
 
 
@@ -70,6 +85,8 @@ class Completion:
     # 这次请求实际发出的 max_tokens。上下文放不下时客户端会把它调小再试，
     # 截断判定要按这个值，而不是配置里的值。0 = 未知（mock 等）。
     max_tokens: int = 0
+    # 托管 API 忙（429 / 503 / 出字前断流）时重试了几次；trace 里据此看得出"慢在排队"还是"慢在生成"
+    retries: int = 0
     # Ollama 等运行时会单独返回思维链，正文可能为空。留档用于诊断。
     reasoning: str = ""
     # 服务端回报的前缀缓存命中 / 未命中 prompt token（DeepSeek：prompt_cache_hit_tokens /
@@ -114,7 +131,7 @@ class ChatClient:
         self._url = spec.base_url.rstrip("/") + "/chat/completions"
         # 有些运行时（Ollama / llama.cpp / 老版本 vLLM）不认识 chat_template_kwargs，
         # 会直接 400。第一次撞上就永久降级，避免每次请求都白撞一遍。
-        self._no_template_kwargs = spec.provider == "openai-compatible"
+        self._no_template_kwargs = spec.provider in ("openai-compatible", "gemini")
 
     # ---------- 主路径 ----------
 
@@ -125,6 +142,7 @@ class ChatClient:
         on_delta: Callable[[str], None] | None = None,
         *,
         _fit_retries: int = 0,
+        _busy_retries: int = 0,
     ) -> Completion:
         """发一轮请求。
 
@@ -169,6 +187,7 @@ class ChatClient:
         ttft = 0
         usage = {}
         finish = ""
+        stream_err: dict = {}
         try:
             with urllib.request.urlopen(req, timeout=self.spec.request_timeout_s) as resp:
                 for raw in resp:
@@ -184,6 +203,8 @@ class ChatClient:
                         continue
                     if obj.get("usage"):
                         usage = obj["usage"]
+                    if isinstance(obj.get("error"), dict):        # 有的服务把错误塞在流里，别当成空回复
+                        stream_err = obj["error"]
                     for ch in obj.get("choices") or []:
                         d = ch.get("delta") or {}
                         delta = d.get("content") or ""
@@ -213,6 +234,13 @@ class ChatClient:
             finally:
                 # HTTPError 自己持有响应体（3.12 起是临时文件包装），不关就漏一个句柄。
                 e.close()
+            if e.code in BUSY_CODES and _busy_retries < BUSY_RETRIES:
+                time.sleep(busy_wait_s(detail, e.headers.get("Retry-After") if e.headers else None, _busy_retries))
+                retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
+                                      _busy_retries=_busy_retries + 1)
+                retry.note = (retry.note + " " if retry.note else "") + f"服务端忙（HTTP {e.code}），重试后成功"
+                retry.retries += 1
+                return retry
             fit = fit_after_overflow(detail, payload["max_tokens"]) if e.code == 400 else None
             if fit is not None:
                 # 输入 + max_tokens 超过上下文：和 chat_template_kwargs 无关，绝不能走下面的降级
@@ -237,6 +265,20 @@ class ChatClient:
             return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
                               error=f"{type(e).__name__}: {e}")
 
+        # 托管 API 过载时会回 200 却在出字之前结束流（Gemini 免费层 2026-11-20 实测：只来一个没有正文的块），
+        # 或在流里给一个 error。和 429 / 503 一样算"忙"：退避后重试，不把一轮记成"空回复 → 无效动作"。
+        empty = not chunks and not thinks and not finish
+        if (empty or int(stream_err.get("code") or 0) in BUSY_CODES) and self.spec.provider in ("gemini", "openai-compatible", "deepseek") \
+                and _busy_retries < BUSY_RETRIES:
+            time.sleep(busy_wait_s(json.dumps(stream_err), None, _busy_retries))
+            retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
+                                  _busy_retries=_busy_retries + 1)
+            retry.note = (retry.note + " " if retry.note else "") + "流提前结束（无正文），重试后成功"
+            retry.retries += 1
+            return retry
+        if stream_err and not chunks:
+            return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000), max_tokens=payload["max_tokens"],
+                              error=f"stream error {stream_err.get('code', '')}: {str(stream_err.get('message', ''))[:300]}")
         text = "".join(chunks)
         reasoning = "".join(thinks)
         note = ""

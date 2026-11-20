@@ -561,6 +561,7 @@ def run_attempt(
             error=comp.error,
             text=comp.text[:4000],
             **({"max_tokens": sent_max} if sent_max != turn_max else {}),
+            **({"retries": comp.retries} if getattr(comp, "retries", 0) else {}),
         )
         turn_max = sent_max
 

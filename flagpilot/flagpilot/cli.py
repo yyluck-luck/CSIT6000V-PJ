@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, config, gpu, metrics, splits, storage, writeup
-from .config import (ABLATIONS, TRACK_H, Budget, Hybrid, ModelSpec, Policy, RunConfig, SandboxLimits,
+from .config import (ABLATIONS, GEMINI, TRACK_H, Budget, Hybrid, ModelSpec, Policy, RunConfig, SandboxLimits,
                      get_ablation, make_model_spec, track_h_api_key)
 from .runner import BatchRunner
 from .tasks import load_index, select
@@ -597,8 +597,10 @@ def _resolve_endpoint(args) -> tuple[str, str, str]:
                 + " 或 ".join(TRACK_H["key_env"]) + "，或用 --api-key 传入")
         return model, base, key or "EMPTY"
     model = args.model or os.environ.get("FLAGPILOT_MODEL") or "mock"
+    # gemini-* 没指定端点时走 Google 的 OpenAI 兼容端点，密钥在 make_model_spec 里从 GEMINI_API_KEY / .env 补上
+    default = GEMINI["base_url"] if str(model).lower().startswith("gemini") else "http://127.0.0.1:8000/v1"
     base = args.base_url or os.environ.get("FLAGPILOT_BASE_URL") \
-        or os.environ.get("SERVICE_BASE_URL") or "http://127.0.0.1:8000/v1"
+        or os.environ.get("SERVICE_BASE_URL") or default
     return model, base, args.api_key or os.environ.get("FLAGPILOT_API_KEY", "EMPTY")
 
 

@@ -31,7 +31,7 @@ python3 -m flagpilot show --run-dir /path/to/runs/<batch>/<task>-s0   # 终端�
 
 ```bash
 bash scripts/verify.sh                                       # 12 项自检，不花 GPU
-python3 -m unittest discover -s tests -t . -q                # 368 条单元/集成测试
+python3 -m unittest discover -s tests -t . -q                # 374 条单元/集成测试
 ```
 
 `verify.sh` 会**自己造一套合成题库**（临时目录，跑完删掉），所以它不依赖外部题库，
