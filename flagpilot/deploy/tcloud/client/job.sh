@@ -33,7 +33,14 @@ for n in python3 python; do
   printf '#!/bin/sh\nexec %s "$@"\n' "$QWEN_PROJECT_ROOT/vllm-env/bin/python" > "$FP_BIN/$n"
   chmod 755 "$FP_BIN/$n"
 done
-export PATH="$FP_BIN:$PATH"
+export PATH="$FP_BIN:$TACC_WORKDIR/bin:$PATH"
+# submit.sh 随包带来的：bin/ 里的 xxd / exiftool 替身（纯 Python），vendor/py 里的 pycryptodome / gmpy2。
+# 沙箱的环境是白名单，库路径只经 FLAGPILOT_SANDBOX_PYTHONPATH 进去（动作与重放同一条路）；
+# PYTHONPATH 给本进程，让 doctor 的"缺工具"检查如实反映沙箱能用到什么。
+if [[ -d "$TACC_WORKDIR/vendor/py" ]]; then
+  export FLAGPILOT_SANDBOX_PYTHONPATH="$TACC_WORKDIR/vendor/py"
+  export PYTHONPATH="$TACC_WORKDIR/vendor/py${PYTHONPATH:+:$PYTHONPATH}"
+fi
 
 fp() { qwen-python -u run_flagpilot.py "$@"; }
 
@@ -51,6 +58,11 @@ except Exception as e:
     out = "失败: %s" % e
 print("[fp] sandbox python3:", p, "->", out)
 '
+echo "[fp] shims: xxd=$(command -v xxd || echo 缺) exiftool=$(command -v exiftool || echo 缺)"
+# 按沙箱的方式（干净环境 + 只给 FLAGPILOT_SANDBOX_PYTHONPATH）确认随包的库真能 import
+env -i PATH="$PATH" PYTHONPATH="${FLAGPILOT_SANDBOX_PYTHONPATH:-}" python3 -c \
+  'import Crypto, gmpy2; print("[fp] vendored: pycryptodome", Crypto.__version__, "gmpy2", gmpy2.version())' \
+  || echo "[fp] vendored: 不可用（用到 pycryptodome/gmpy2 的题会如实报缺库）"
 echo "[fp] doctor"
 fp doctor || true          # 自检结果进日志；不在这里拦作业，判定看下面的批次
 
@@ -79,8 +91,38 @@ ids = [m["id"] for m in json.load(op.open(sys.argv[1].rstrip("/") + "/models", t
 print("[fp] models:", ids)
 ' "$BASE"
 
-# shellcheck disable=SC2086
-fp batch --batch "${FP_BATCH}" --track L --model qwen3.8-27b \
-  --base-url "${BASE}" --metrics-url "${BASE%/v1}/metrics" --scope core ${FP_ARGS}
-fp report --batch "${FP_BATCH}" --md "${FLAGPILOT_RUNS}/${FP_BATCH}.md"
+# 时间账：客户端自己的时限（FP_CLIENT_SECONDS，留 2 分钟收尾）与服务作业的结束时刻取较早者。
+# 服务一停，后面的 attempt 全会变成连接错误、污染结果——所以宁可整档跳过，留给下次续跑。
+T0=$(date +%s)
+END=$(( T0 + ${FP_CLIENT_SECONDS:-2700} - 120 ))
+if [[ "${FP_DEADLINE_EPOCH:-0}" =~ ^[0-9]+$ ]] && (( FP_DEADLINE_EPOCH > 0 && FP_DEADLINE_EPOCH < END )); then
+  END=$FP_DEADLINE_EPOCH
+fi
+LAST=0
+run_batch() {   # $1 = 批次名  $2 = 额外参数（--ablate Bx）
+  local s
+  s=$(date +%s)
+  # shellcheck disable=SC2086
+  fp batch --batch "$1" --track L --model qwen3.8-27b \
+    --base-url "${BASE}" --metrics-url "${BASE%/v1}/metrics" --scope core ${FP_ARGS} $2 \
+    || echo "[fp] batch $1 非零退出"
+  fp report --batch "$1" --md "${FLAGPILOT_RUNS}/$1.md" || true
+  LAST=$(( $(date +%s) - s ))
+  echo "[fp] tier-done $1 ${LAST}s"
+}
+if [[ -z "${FP_ABLATIONS:-}" ]]; then
+  run_batch "${FP_BATCH}" ""
+else
+  for ab in ${FP_ABLATIONS//,/ }; do
+    left=$(( END - $(date +%s) ))
+    need=240
+    if (( LAST > 0 )); then need=$(( LAST * 13 / 10 + 60 )); fi
+    if (( left < need )); then
+      echo "[fp] 跳过 ${ab}：只剩 ${left}s，估计要 ${need}s（续跑：FP_ABLATIONS=${ab} 再交一次，已完成的 attempt 会跳过）"
+      continue
+    fi
+    echo "[fp] tier ${ab} → ${FP_BATCH}-${ab}（剩 ${left}s）"
+    run_batch "${FP_BATCH}-${ab}" "--ablate ${ab}"
+  done
+fi
 echo "[fp] done: ${FLAGPILOT_RUNS}/${FP_BATCH}"

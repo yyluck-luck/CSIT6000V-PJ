@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""xxd 的纯 Python 替身（课程运行时的 PRoot rootfs 没有 xxd；作业 29323 里模型第一反应就是 xxd）。
+
+覆盖 CTF 里常用的子集，输出格式与 vim 的 xxd 逐字节一致（tests/test_tacc_shims.py 对拍 /usr/bin/xxd）：
+  xxd [-c cols] [-g bytes] [-l len] [-s [+]seek] [-u] [-p|-ps|-plain] [-i] [-b] [-r] [infile|-] [outfile]
+不支持的选项直接报错退出 2，而不是悄悄给出不同的输出。
+"""
+import sys
+
+
+def die(msg):
+    sys.stderr.write("xxd: %s\n" % msg)
+    sys.exit(2)
+
+
+def num(v):
+    try:
+        return int(v, 0)
+    except ValueError:
+        die("invalid number: %s" % v)
+
+
+def main(argv):
+    cols = None
+    group = None
+    length = None
+    seek = 0
+    upper = plain = include = binary = reverse = False
+    files = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-c", "-cols", "-g", "-groupsize", "-l", "-len", "-s", "-seek"):
+            if i + 1 >= len(argv):
+                die("option %s needs a value" % a)
+            v = argv[i + 1]
+            i += 2
+            if a in ("-c", "-cols"):
+                cols = num(v)
+            elif a in ("-g", "-groupsize"):
+                group = num(v)
+            elif a in ("-l", "-len"):
+                length = num(v)
+            else:
+                seek = num(v.lstrip("+"))
+            continue
+        if len(a) > 2 and a[:2] in ("-c", "-g", "-l", "-s") and a[2:].lstrip("+").lstrip("-")[:1].isdigit():
+            v = a[2:]
+            if a[1] == "c":
+                cols = num(v)
+            elif a[1] == "g":
+                group = num(v)
+            elif a[1] == "l":
+                length = num(v)
+            else:
+                seek = num(v.lstrip("+"))
+        elif a in ("-u", "-uppercase"):
+            upper = True
+        elif a in ("-p", "-ps", "-postscript", "-plain"):
+            plain = True
+        elif a in ("-i", "-include"):
+            include = True
+        elif a in ("-b", "-bits"):
+            binary = True
+        elif a in ("-r", "-revert"):
+            reverse = True
+        elif a in ("-rp", "-pr"):
+            reverse = plain = True
+        elif a == "-":
+            files.append(a)
+        elif a.startswith("-") and len(a) > 1:
+            die("unsupported option %s (FlagPilot xxd shim)" % a)
+        else:
+            files.append(a)
+        i += 1
+
+    src = files[0] if files else "-"
+    dst = files[1] if len(files) > 1 else None
+    data = sys.stdin.buffer.read() if src == "-" else open(src, "rb").read()
+    out = open(dst, "wb") if dst else sys.stdout.buffer
+
+    if reverse:
+        out.write(revert(data, plain))
+        return 0
+
+    if seek:
+        data = data[seek:] if seek > 0 else data[seek:]
+    if length is not None:
+        data = data[:max(0, length)]
+    hexfmt = "%02X" if upper else "%02x"
+
+    if plain:
+        c = cols or 30
+        h = "".join(hexfmt % b for b in data)
+        for k in range(0, len(h), c * 2):
+            out.write((h[k:k + c * 2] + "\n").encode())
+        return 0
+
+    if include:
+        c = cols or 12
+        name = "".join(ch if ch.isalnum() else "_" for ch in src) if src != "-" else None
+        if name and name[0].isdigit():
+            name = "__" + name
+        lines = []
+        if name:
+            lines.append("unsigned char %s[] = {" % name)
+        for k in range(0, len(data), c):
+            chunk = data[k:k + c]
+            lines.append("  " + ", ".join(("0x" + hexfmt) % b for b in chunk) + ("," if k + c < len(data) else ""))
+        if name:
+            lines.append("};")
+            lines.append("unsigned int %s_len = %d;" % (name, len(data)))
+        out.write(("\n".join(lines) + "\n").encode())
+        return 0
+
+    if binary:
+        c = cols or 6
+        g = 1 if group is None else group
+        cell = 8
+    else:
+        c = cols or 16
+        g = 2 if group is None else group
+        cell = 2
+    if g <= 0:
+        g = c
+    nb = c * cell + (c - 1) // g if g else c * cell
+    off0 = seek if seek > 0 else 0
+    for k in range(0, len(data), c):
+        chunk = data[k:k + c]
+        parts = []
+        for j, b in enumerate(chunk):
+            if j and j % g == 0:
+                parts.append(" ")
+            parts.append(format(b, "08b") if binary else hexfmt % b)
+        hexpart = "".join(parts)
+        asc = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
+        line = "%08x: %s  %s\n" % (off0 + k, hexpart.ljust(nb), asc)
+        out.write(line.encode("latin-1"))
+    return 0
+
+
+def revert(data, plain):
+    text = data.decode("latin-1")
+    hexchars = "0123456789abcdefABCDEF"
+    if plain:
+        h = "".join(ch for ch in text if ch in hexchars)
+        return bytes.fromhex(h[: len(h) // 2 * 2])
+    buf = bytearray()
+    for line in text.splitlines():
+        if ":" not in line:
+            continue
+        addr, rest = line.split(":", 1)
+        try:
+            pos = int(addr.strip(), 16)
+        except ValueError:
+            continue
+        # 十六进制区在两个空格之前；ASCII 区里也可能出现十六进制字符，必须截掉
+        hexarea = rest.split("  ")[0] if "  " in rest else rest
+        h = "".join(ch for ch in hexarea if ch in hexchars)
+        chunk = bytes.fromhex(h[: len(h) // 2 * 2])
+        if len(buf) < pos:
+            buf.extend(b"\x00" * (pos - len(buf)))
+        buf[pos:pos + len(chunk)] = chunk
+    return bytes(buf)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except BrokenPipeError:
+        sys.exit(0)
+    except OSError as e:
+        sys.stderr.write("xxd: %s\n" % e)
+        sys.exit(2)

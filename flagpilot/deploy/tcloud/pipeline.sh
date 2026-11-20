@@ -3,7 +3,8 @@
 #   起服务（体检失败 / 显存或端口被占 → 排除该节点重交）→ 就绪即交批次（避开服务节点）
 #   → 等批次结束 → 拉日志和结果 → 无论成败都取消服务作业。
 # 用法：deploy/tcloud/pipeline.sh <本地输出目录> [初始排除节点,逗号分隔]
-# 可调：SUB（submit.sh 路径）TCLOUD_BIN  POLL（轮询秒数，默认 60）FP_LIMIT（默认 5）
+# 可调：SUB（submit.sh 路径）TCLOUD_BIN  POLL（轮询秒数，默认 60）FP_LIMIT（默认 5；0=不限）
+#       FP_BATCH（默认 tacc-smoke）FP_ABLATIONS（如 B0,B1,B2,B3：一个服务作业里依次跑多档，省掉每档 5–12 分钟开服）
 set -uo pipefail
 SUB=${SUB:-"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/submit.sh"}
 TC=${TCLOUD_BIN:-tcloud}
@@ -25,8 +26,11 @@ trap cleanup EXIT
 trap 'exit 143' TERM INT
 
 # ---------- 1. 服务 ----------
-URL=""; NODE=""
+BATCH=${FP_BATCH:-tacc-smoke}
+ABL=${FP_ABLATIONS:-}
+URL=""; NODE=""; SERVE_T0=0
 for attempt in 1 2 3 4 5 6; do
+  SERVE_T0=$(date +%s)        # 偏早的估计：服务作业不会早于提交时刻开跑，所以算出的截止时刻只会偏保守
   out=$(FP_EXCLUDE="$EXCL" bash "$SUB" serve 2>&1 | clean)
   SJ=$(printf '%s\n' "$out" | jobid)
   if [[ -z "$SJ" ]]; then log "服务提交失败："; printf '%s\n' "$out" | tail -5; exit 1; fi
@@ -63,7 +67,9 @@ done
 log "服务就绪：$URL（作业 $SJ，节点 $NODE）"
 
 # ---------- 2. 批次 ----------
-out=$(FP_LIMIT="${FP_LIMIT:-5}" FP_EXCLUDE="$NODE" bash "$SUB" batch "$URL" 2>&1 | clean)
+# 服务作业时限 1 小时；客户端在服务停之前 4 分钟收手（见 client/job.sh 的时间账）
+out=$(FP_LIMIT="${FP_LIMIT:-5}" FP_EXCLUDE="$NODE" FP_BATCH="$BATCH" FP_ABLATIONS="$ABL" \
+      FP_DEADLINE_EPOCH=$(( SERVE_T0 + 3600 - 240 )) bash "$SUB" batch "$URL" 2>&1 | clean)
 CJ=$(printf '%s\n' "$out" | jobid)
 if [[ -z "$CJ" ]]; then log "批次提交失败："; printf '%s\n' "$out" | tail -5; exit 1; fi
 log "客户端作业 $CJ 已提交：$(grep -a 'run.env' <<<"$out" | head -1)"
@@ -82,7 +88,15 @@ printf '%s\n' "$C" | tail -25 | sed 's/^/    /'
 # ---------- 3. 取回 ----------
 tc cat "slurm_log/flagpilot-client-$CJ.log" > "$OUT/client-$CJ.log"
 tc cat "slurm_log/qwen-public-serve-$SJ.log" > "$OUT/serve-$SJ.log"
-tc download flagpilot-runs/tacc-smoke.md "$OUT/" | tail -2
-tc download -r flagpilot-runs/tacc-smoke "$OUT/" | tail -2
+NAMES="$BATCH"
+if [[ -n "$ABL" ]]; then NAMES=""; for ab in ${ABL//,/ }; do NAMES="$NAMES $BATCH-$ab"; done; fi
+for n in $NAMES; do
+  if grep -aq -e "tier-done $n " -e "^\[fp\] done:" <<<"$C" && ! grep -aq "跳过 ${n##*-}：" <<<"$C"; then
+    tc download "flagpilot-runs/$n.md" "$OUT/" | tail -1
+    tc download -r "flagpilot-runs/$n" "$OUT/" | tail -1
+  else
+    log "没有 $n 的结果（被跳过或没跑完）"
+  fi
+done
 log "本地：$(ls "$OUT" | tr '\n' ' ')"
 [[ "$ok" == "1" ]]

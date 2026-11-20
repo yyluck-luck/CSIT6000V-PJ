@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+"""exiftool 的纯 Python 替身（课程运行时没有 exiftool；doctor 报它影响 5 道取证题）。
+
+只读、只覆盖 CTF 取证里真正会藏东西的地方，输出沿用 exiftool 的 "Tag Name : value" 版式：
+  JPEG  EXIF（IFD0 / ExifIFD / GPS，含 XP* 与 UserComment）、COM 注释、XMP、尺寸
+  PNG   tEXt / zTXt / iTXt 文本块、eXIf、IHDR
+  GIF   注释扩展块；  PDF  Info 字典与 XMP；  其它  文件名 / 大小 / 类型
+认得的标签按 exiftool 的名字打印，认不得但是文本的 EXIF 标签打印成 "Exif 0xNNNN"（别漏线索）。
+选项：-s/-S 短名，-j JSON，-b -TAG 原样输出单个值，-TAG 过滤；其余只读选项忽略，写操作报错。
+第一行明确标注这是替身，模型读到不会误以为是完整 exiftool。
+"""
+import json
+import os
+import re
+import struct
+import sys
+import zlib
+
+VERSION = "FlagPilot shim 1.0 (subset: EXIF/XMP/PNG/GIF/PDF text tags)"
+
+TIFF_TAGS = {
+    0x010E: "Image Description", 0x010F: "Make", 0x0110: "Camera Model Name", 0x0112: "Orientation",
+    0x011A: "X Resolution", 0x011B: "Y Resolution", 0x0128: "Resolution Unit", 0x0131: "Software",
+    0x0132: "Modify Date", 0x013B: "Artist", 0x8298: "Copyright", 0x9C9B: "XP Title", 0x9C9C: "XP Comment",
+    0x9C9D: "XP Author", 0x9C9E: "XP Keywords", 0x9C9F: "XP Subject", 0x9000: "Exif Version",
+    0x9003: "Date/Time Original", 0x9004: "Create Date", 0x9286: "User Comment", 0xA002: "Exif Image Width",
+    0xA003: "Exif Image Height", 0xA420: "Image Unique ID", 0xA430: "Owner Name", 0xA431: "Serial Number",
+    0xA434: "Lens Model", 0x0100: "Image Width", 0x0101: "Image Height",
+}
+GPS_TAGS = {0x0001: "GPS Latitude Ref", 0x0002: "GPS Latitude", 0x0003: "GPS Longitude Ref",
+            0x0004: "GPS Longitude", 0x0005: "GPS Altitude Ref", 0x0006: "GPS Altitude",
+            0x001B: "GPS Processing Method", 0x001D: "GPS Date Stamp"}
+SKIP = {0x8769, 0x8825, 0xA005, 0x927C, 0x0201, 0x0202, 0x0111, 0x0117}   # 指针 / MakerNote / 缩略图偏移
+TYPE_SIZE = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8}
+
+
+def human_size(n):
+    if n < 1000:
+        return "%d bytes" % n
+    for unit in ("kB", "MB", "GB"):
+        n /= 1000.0
+        if n < 1000:
+            return ("%.1f %s" % (n, unit)) if n < 100 else ("%d %s" % (n, unit))
+    return "%.1f TB" % (n / 1000.0)
+
+
+def text(b):
+    b = b.rstrip(b"\x00")
+    try:
+        return b.decode("utf-8")
+    except UnicodeDecodeError:
+        return b.decode("latin-1")
+
+
+class Tiff:
+    def __init__(self, data, out):
+        self.d, self.out = data, out
+        self.e = "<" if data[:2] == b"II" else ">"
+
+    def u16(self, o):
+        return struct.unpack_from(self.e + "H", self.d, o)[0]
+
+    def u32(self, o):
+        return struct.unpack_from(self.e + "I", self.d, o)[0]
+
+    def parse(self):
+        if len(self.d) < 8 or self.d[:2] not in (b"II", b"MM"):
+            return
+        self.ifd(self.u32(4), TIFF_TAGS, set())
+
+    def value(self, typ, cnt, off_field):
+        size = TYPE_SIZE.get(typ, 1) * cnt
+        off = off_field if size <= 4 else self.u32(off_field)
+        raw = self.d[off:off + size]
+        if typ in (2, 7, 1, 6):
+            return raw
+        fmt = {3: "H", 4: "I", 8: "h", 9: "i", 11: "f", 12: "d"}.get(typ)
+        if fmt:
+            return list(struct.unpack_from(self.e + fmt * cnt, raw)) if len(raw) >= size else []
+        if typ in (5, 10):
+            f = "I" if typ == 5 else "i"
+            vals = struct.unpack_from(self.e + f * (2 * cnt), raw) if len(raw) >= size else []
+            return [(vals[k], vals[k + 1]) for k in range(0, len(vals), 2)]
+        return raw
+
+    def ifd(self, off, names, seen):
+        if off in seen or off <= 0 or off + 2 > len(self.d):
+            return
+        seen.add(off)
+        n = self.u16(off)
+        for k in range(min(n, 512)):
+            e = off + 2 + 12 * k
+            if e + 12 > len(self.d):
+                break
+            tag, typ, cnt = self.u16(e), self.u16(e + 2), self.u32(e + 4)
+            if tag == 0x8769:
+                self.ifd(self.u32(e + 8), TIFF_TAGS, seen)
+                continue
+            if tag == 0x8825:
+                self.ifd(self.u32(e + 8), GPS_TAGS, seen)
+                continue
+            if tag in SKIP or cnt > 1 << 20:
+                continue
+            try:
+                v = self.value(typ, cnt, e + 8)
+            except (struct.error, IndexError):
+                continue
+            name = names.get(tag)
+            self.emit(tag, name, typ, v, names is GPS_TAGS)
+        nxt = off + 2 + 12 * n
+        if nxt + 4 <= len(self.d) and names is TIFF_TAGS and len(seen) < 8:
+            self.ifd(self.u32(nxt), TIFF_TAGS, seen)
+
+    def emit(self, tag, name, typ, v, gps):
+        if name is None:
+            if typ in (2, 7) and isinstance(v, bytes) and v.strip(b"\x00"):
+                s = text(v)
+                if sum(c.isprintable() for c in s) >= max(1, int(len(s) * 0.8)):
+                    self.out.append(("Exif 0x%04x" % tag, s))
+            return
+        if name.startswith("XP ") and isinstance(v, bytes):
+            self.out.append((name, v.decode("utf-16-le", "replace").rstrip("\x00")))
+        elif name == "User Comment" and isinstance(v, bytes):
+            head, body = v[:8], v[8:]
+            s = body.decode("utf-16", "replace") if head.startswith(b"UNICODE") else text(body)
+            self.out.append((name, s.strip("\x00 ")))
+        elif name == "Exif Version" and isinstance(v, bytes):
+            self.out.append((name, text(v)))
+        elif isinstance(v, bytes):
+            self.out.append((name, text(v)))
+        elif gps and name in ("GPS Latitude", "GPS Longitude") and len(v) == 3:
+            d, m, s = [(a / b if b else 0.0) for a, b in v]
+            self.out.append((name, "%d deg %d' %.2f\"" % (d, m, s)))
+        elif v and isinstance(v[0], tuple):
+            a, b = v[0]
+            self.out.append((name, ("%g" % (a / b)) if b else "inf"))
+        elif v:
+            self.out.append((name, " ".join(str(x) for x in v)))
+
+
+def xmp(blob, out):
+    s = text(blob)
+    for k, val in re.findall(r'\b(?:[A-Za-z]+):([A-Za-z]+)="([^"]*)"', s):
+        if k not in ("about", "xmptk", "parseType", "resource", "lang"):
+            out.append((spaced(k), val))
+    for k, val in re.findall(r"<(?:[A-Za-z]+):([A-Za-z]+)>([^<]+)</", s):
+        out.append((spaced(k), val.strip()))
+    for k, _kind, body in re.findall(r"<(?:[A-Za-z]+):([A-Za-z]+)>\s*<rdf:(Alt|Seq|Bag)>(.*?)</rdf:\2>", s, re.S):
+        items = [x.strip() for x in re.findall(r"<rdf:li[^>]*>([^<]*)</rdf:li>", body)]
+        if items:
+            out.append((spaced(k), ", ".join(items)))
+
+
+def spaced(k):
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", k[:1].upper() + k[1:])
+
+
+def jpeg(d, out):
+    i = 2
+    while i + 4 <= len(d):
+        if d[i] != 0xFF:
+            i += 1
+            continue
+        m = d[i + 1]
+        if m in (0xD8, 0x01) or 0xD0 <= m <= 0xD7:
+            i += 2
+            continue
+        if m == 0xD9 or m == 0xDA:
+            break
+        ln = struct.unpack_from(">H", d, i + 2)[0]
+        seg = d[i + 4:i + 2 + ln]
+        if m == 0xE1 and seg[:6] == b"Exif\x00\x00":
+            Tiff(seg[6:], out).parse()
+        elif m == 0xE1 and seg.startswith(b"http://ns.adobe.com/xap/1.0/"):
+            xmp(seg.split(b"\x00", 1)[-1], out)
+        elif m == 0xFE:
+            out.append(("Comment", text(seg)))
+        elif m == 0xE0 and seg[:5] == b"JFIF\x00" and len(seg) >= 7:
+            out.append(("JFIF Version", "%d.%02d" % (seg[5], seg[6])))
+        elif m in (0xC0, 0xC1, 0xC2) and len(seg) >= 6:
+            h, w = struct.unpack_from(">HH", seg, 1)
+            out.append(("Image Width", str(w)))
+            out.append(("Image Height", str(h)))
+            out.append(("Bits Per Sample", str(seg[0])))
+            out.append(("Color Components", str(seg[5])))
+        i += 2 + ln
+    tail = d.rfind(b"\xff\xd9")
+    if 0 <= tail < len(d) - 2:
+        out.append(("Trailer", "%d bytes after JPEG end marker" % (len(d) - tail - 2)))
+
+
+def png(d, out):
+    i = 8
+    while i + 8 <= len(d):
+        ln, typ = struct.unpack_from(">I4s", d, i)
+        body = d[i + 8:i + 8 + ln]
+        if typ == b"IHDR" and len(body) >= 13:
+            w, h, bd, ct = struct.unpack_from(">IIBB", body)
+            out += [("Image Width", str(w)), ("Image Height", str(h)), ("Bit Depth", str(bd)),
+                    ("Color Type", {0: "Grayscale", 2: "RGB", 3: "Palette", 4: "Grayscale with Alpha",
+                                    6: "RGB with Alpha"}.get(ct, str(ct)))]
+        elif typ == b"tEXt" and b"\x00" in body:
+            k, v = body.split(b"\x00", 1)
+            out.append((spaced(text(k)), text(v)))
+        elif typ == b"zTXt" and b"\x00" in body:
+            k, v = body.split(b"\x00", 1)
+            try:
+                out.append((spaced(text(k)), text(zlib.decompress(v[1:]))))
+            except zlib.error:
+                out.append((spaced(text(k)), "(zTXt decompress failed)"))
+        elif typ == b"iTXt" and b"\x00" in body:
+            k, rest = body.split(b"\x00", 1)
+            comp = rest[:1] == b"\x01"
+            parts = rest[2:].split(b"\x00", 2)
+            v = parts[2] if len(parts) == 3 else b""
+            try:
+                v = zlib.decompress(v) if comp else v
+            except zlib.error:
+                pass
+            if text(k) == "XML:com.adobe.xmp":
+                xmp(v, out)
+            else:
+                out.append((spaced(text(k)), text(v)))
+        elif typ == b"eXIf":
+            Tiff(body, out).parse()
+        elif typ == b"IEND":
+            if i + 12 < len(d):
+                out.append(("Trailer", "%d bytes after IEND" % (len(d) - i - 12)))
+            break
+        i += 12 + ln
+
+
+def gif(d, out):
+    if len(d) >= 10:
+        w, h = struct.unpack_from("<HH", d, 6)
+        out += [("Image Width", str(w)), ("Image Height", str(h))]
+    for m in re.finditer(rb"\x21\xfe", d):
+        j, buf = m.end(), b""
+        while j < len(d) and d[j]:
+            buf += d[j + 1:j + 1 + d[j]]
+            j += 1 + d[j]
+        if buf:
+            out.append(("Comment", text(buf)))
+
+
+def pdf(d, out):
+    m = re.match(rb"%PDF-(\d\.\d)", d)
+    if m:
+        out.append(("PDF Version", m.group(1).decode()))
+    for key in (b"Title", b"Author", b"Subject", b"Keywords", b"Creator", b"Producer", b"CreationDate", b"ModDate"):
+        for mm in re.finditer(rb"/" + key + rb"\s*(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>)", d):
+            raw = mm.group(1)
+            if raw[:1] == b"(":
+                v = re.sub(rb"\\(.)", rb"\1", raw[1:-1])
+                v = v.decode("utf-16") if v[:2] in (b"\xfe\xff", b"\xff\xfe") else text(v)
+            else:
+                hx = re.sub(rb"\s", b"", raw[1:-1])
+                b = bytes.fromhex(hx.decode()[: len(hx) // 2 * 2])
+                v = b.decode("utf-16") if b[:2] in (b"\xfe\xff", b"\xff\xfe") else text(b)
+            name = {b"CreationDate": "Create Date", b"ModDate": "Modify Date"}.get(key, key.decode())
+            out.append((name, v))
+    for mm in re.finditer(rb"<x:xmpmeta.*?</x:xmpmeta>", d, re.S):
+        xmp(mm.group(0), out)
+
+
+MAGIC = [(b"\xff\xd8\xff", "JPEG", "image/jpeg", jpeg), (b"\x89PNG\r\n\x1a\n", "PNG", "image/png", png),
+         (b"GIF8", "GIF", "image/gif", gif), (b"%PDF", "PDF", "application/pdf", pdf),
+         (b"PK\x03\x04", "ZIP", "application/zip", None), (b"\x7fELF", "ELF", "application/x-executable", None)]
+
+
+def describe(path):
+    d = open(path, "rb").read()
+    out = [("ExifTool Version Number", VERSION), ("File Name", os.path.basename(path)),
+           ("Directory", os.path.dirname(path) or "."), ("File Size", human_size(len(d)))]
+    for sig, ftype, mime, fn in MAGIC:
+        if d.startswith(sig):
+            out += [("File Type", ftype), ("File Type Extension", ftype.lower().replace("jpeg", "jpg")),
+                    ("MIME Type", mime)]
+            if fn:
+                try:
+                    fn(d, out)
+                except (struct.error, IndexError, ValueError):
+                    out.append(("Warning", "%s structure is truncated or malformed" % ftype))
+            break
+    else:
+        out.append(("Error", "Unknown file type (FlagPilot shim reads JPEG/PNG/GIF/PDF metadata only)"))
+    return out
+
+
+def main(argv):
+    short = 0                       # exiftool：-s 短名（仍对齐），-s -s 不对齐，-s -s -s 只要值
+    js = binary = False
+    want, files = [], []
+    for a in argv:
+        if a in ("-s", "-S"):
+            short += 1
+        elif a in ("-s2", "-s3"):
+            short = int(a[2])
+        elif a in ("-j", "-json"):
+            js = True
+        elif a == "-b":
+            binary = True
+        elif a in ("-ver", "-version"):
+            print(VERSION)
+            return 0
+        elif a.startswith("-") and "=" in a:
+            sys.stderr.write("exiftool shim: write operations are not supported\n")
+            return 2
+        elif a.startswith("-") and re.fullmatch(r"-[A-Za-z][A-Za-z0-9:]*", a) and len(a) > 2 \
+                and a[1:].lower() not in ("all", "a", "u", "g", "g1", "e", "n", "x", "ee", "q", "m", "r", "api", "charset"):
+            want.append(a[1:].split(":")[-1].lower())
+        elif a.startswith("-"):
+            continue
+        else:
+            files.append(a)
+    if not files:
+        sys.stderr.write("Syntax: exiftool [OPTIONS] FILE\n")
+        return 2
+    rc, blobs = 0, []
+    for k, f in enumerate(files):
+        if not os.path.isfile(f):
+            sys.stderr.write("Error: File not found - %s\n" % f)
+            rc = 1
+            continue
+        tags = describe(f)
+        if want:
+            tags = [(n, v) for n, v in tags if n.replace(" ", "").replace("/", "").lower() in want]
+        if binary:
+            for _, v in tags:
+                sys.stdout.write(v)
+            continue
+        if js:
+            blobs.append({"SourceFile": f, **{n.replace(" ", "").replace("/", ""): v for n, v in tags}})
+            continue
+        if len(files) > 1:
+            print("======== %s" % f)
+        for n, v in tags:
+            label = n.replace(" ", "").replace("/", "") if short else n
+            if short >= 3:
+                print(v)
+            elif short == 2:
+                print("%s: %s" % (label, v))
+            else:
+                print("%-32s: %s" % (label, v))
+    if js:
+        print(json.dumps(blobs, ensure_ascii=False, indent=2))
+    elif len(files) > 1 and not binary:
+        print("%8d image files read" % (len(files) - rc))
+    return rc
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except BrokenPipeError:
+        sys.exit(0)

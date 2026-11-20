@@ -9,6 +9,10 @@
 #   FP_BATCH（默认 tacc-smoke）  FP_SPLIT（默认 dev）  FP_LIMIT  FP_TASKS（逗号分隔题名）
 #   FP_WORKERS（默认 4，不能超过服务端 --max-num-seqs 4）  FP_TURNS（20）  FP_SEEDS（1）
 #   FP_TIME（客户端时长，默认 00:45:00，不能超过分区上限 1h）  FP_DRY_RUN=1（只暂存不提交）
+#   FP_ABLATIONS=B0,B1,B2,B3（同一个服务上依次跑多档，批次名 <FP_BATCH>-<档>；空=单批、默认档）
+#   FP_ORDER（lpt|fifo，默认 lpt：预计最慢的题先跑）  FP_LIMIT=0 表示不限题数
+#   FP_DEADLINE_EPOCH（服务作业的结束时刻；pipeline.sh 自动给，客户端据此决定下一档还来不来得及）
+#   FP_VENDOR=0（不随包带 pycryptodome / gmpy2；默认带，见下）
 # 任一模式都可加 FP_EXCLUDE=节点[,节点]：课程 serve.sh 写死 8000 端口，某节点的 8000 被占时
 # 服务会 "Address already in use" 秒退（作业 29239），用它换节点。
 # 结果留在 TACC 的 USERDIR/flagpilot-runs/<batch>/，取回：
@@ -32,6 +36,37 @@ case "$MODE" in
     ;;
   doctor|batch)
     cp "$HERE"/client/tuxiv.conf "$HERE"/client/job.sh "$HERE"/client/run_flagpilot.py "$STAGE"/
+    # 课程运行时（PRoot Ubuntu 22 rootfs）没有 xxd / exiftool：带上纯 Python 替身（tests/test_tacc_shims.py）
+    mkdir -p "$STAGE/bin"
+    cp "$HERE"/client/bin/xxd "$HERE"/client/bin/exiftool "$STAGE/bin/"
+    chmod 755 "$STAGE"/bin/*
+    # pycryptodome / gmpy2：课程 Python 3.12 没装、计算节点也不一定能上网。在本机下好 manylinux
+    # wheel（缓存复用），解进 vendor/py，作业里经 FLAGPILOT_SANDBOX_PYTHONPATH 交给沙箱（动作与重放一致）。
+    if [[ "${FP_VENDOR:-1}" == "1" ]]; then
+      WH="${FP_WHEEL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/flagpilot/wheels-cp312-manylinux}"
+      mkdir -p "$WH"
+      if ! ls "$WH"/pycryptodome-*.whl "$WH"/gmpy2-*.whl >/dev/null 2>&1; then
+        python3 -m pip download --quiet --disable-pip-version-check --only-binary=:all: \
+          --platform manylinux2014_x86_64 --platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64 \
+          --python-version 3.12 --implementation cp --abi cp312 --abi abi3 --abi none \
+          pycryptodome gmpy2 -d "$WH" >/dev/null 2>&1 \
+          || echo "[tcloud] ⚠ 没下到 pycryptodome/gmpy2 的 wheel，照常提交（用到它们的题会如实报缺库）" >&2
+      fi
+      python3 - "$WH" "$STAGE/vendor/py" <<'PY'
+import pathlib, sys, zipfile
+src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+whls = sorted(src.glob("pycryptodome-*.whl")) + sorted(src.glob("gmpy2-*.whl"))
+if whls:
+    dst.mkdir(parents=True, exist_ok=True)
+for w in whls:
+    with zipfile.ZipFile(w) as z:
+        # 自带的 SelfTest 测试向量用不上；extract 会丢掉绝对路径与 ..，不会写出 dst
+        for m in z.namelist():
+            if not m.startswith("Crypto/SelfTest/"):
+                z.extract(m, dst)
+print("[tcloud] 随包 Python 库：" + (", ".join("-".join(w.name.split("-")[:2]) for w in whls) or "无"))
+PY
+    fi
     [[ -f "$TASKS/index/tasks.jsonl" ]] || { echo "题库索引不存在：$TASKS（见 docs/DATASET.md）" >&2; exit 1; }
     # 代码 + 题库。答案表与题解目录一律不进包——和 deploy/upload.sh 同一条硬规则。
     tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' -cf - flagpilot | tar -C "$STAGE" -xf -
@@ -50,11 +85,24 @@ case "$MODE" in
     fi
     WORKERS="${FP_WORKERS:-4}"
     (( WORKERS <= 4 )) || { echo "FP_WORKERS=$WORKERS 超过课程服务的 4 并发上限" >&2; exit 1; }
-    ARGS="--split ${SPLIT} --workers ${WORKERS} --turns ${FP_TURNS:-20} --seeds ${FP_SEEDS:-1}"
-    [[ -n "${FP_LIMIT:-}" ]] && ARGS="$ARGS --limit ${FP_LIMIT}"
-    [[ -n "${FP_TASKS:-}" ]] && ARGS="$ARGS --tasks ${FP_TASKS}"
-    printf 'FP_MODE=%q\nFP_BATCH=%q\nFP_ARGS=%q\n' "$MODE" "${FP_BATCH:-tacc-smoke}" "$ARGS" \
-      > "$STAGE/run.env"
+    ORDER="${FP_ORDER:-lpt}"
+    [[ "$ORDER" == lpt || "$ORDER" == fifo ]] || { echo "FP_ORDER 只能是 lpt 或 fifo：$ORDER" >&2; exit 1; }
+    ARGS="--split ${SPLIT} --workers ${WORKERS} --turns ${FP_TURNS:-20} --seeds ${FP_SEEDS:-1} --order ${ORDER}"
+    if [[ -n "${FP_LIMIT:-}" && "${FP_LIMIT}" != "0" ]]; then ARGS="$ARGS --limit ${FP_LIMIT}"; fi
+    if [[ -n "${FP_TASKS:-}" ]]; then ARGS="$ARGS --tasks ${FP_TASKS}"; fi
+    ABL="${FP_ABLATIONS:-}"
+    ABL="${ABL// /,}"
+    if [[ -n "$ABL" && ! "$ABL" =~ ^B[0-3](,B[0-3])*$ ]]; then
+      echo "FP_ABLATIONS 格式不对：$ABL（例：B0,B1,B2,B3）" >&2; exit 1
+    fi
+    T="${FP_TIME:-00:45:00}"
+    [[ "$T" =~ ^([0-9]{2}):([0-5][0-9]):([0-5][0-9])$ ]] || { echo "FP_TIME 格式不对：$T（HH:MM:SS）" >&2; exit 1; }
+    SECS=$(( 10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 + 10#${BASH_REMATCH[3]} ))
+    (( SECS <= 3600 )) || { echo "FP_TIME=$T 超过分区上限 1 小时" >&2; exit 1; }
+    DL="${FP_DEADLINE_EPOCH:-0}"
+    [[ "$DL" =~ ^[0-9]+$ ]] || { echo "FP_DEADLINE_EPOCH 必须是整数秒：$DL" >&2; exit 1; }
+    printf 'FP_MODE=%q\nFP_BATCH=%q\nFP_ARGS=%q\nFP_ABLATIONS=%q\nFP_CLIENT_SECONDS=%q\nFP_DEADLINE_EPOCH=%q\n' \
+      "$MODE" "${FP_BATCH:-tacc-smoke}" "$ARGS" "$ABL" "$SECS" "$DL" > "$STAGE/run.env"
     if [[ "$MODE" == "batch" ]]; then
       URL="${2:?batch 需要服务地址，例如 http://10-0-1-10:8000/v1（见服务日志的 SERVICE_BASE_URL）}"
       # tcloud cat 按 CRLF 输出，从里面截出来的地址带 \r（作业 29311 因此在 /models 检查处 InvalidURL）。
@@ -65,8 +113,8 @@ case "$MODE" in
     else
       printf '%s\n' 'http://NODE:8000/v1' > "$STAGE/server-url.txt"
     fi
-    if [[ -n "${FP_TIME:-}" ]]; then
-      perl -pi -e "s/time=00:45:00/time=${FP_TIME}/" "$STAGE/tuxiv.conf"
+    if [[ "$T" != "00:45:00" ]]; then
+      perl -pi -e "s/time=00:45:00/time=${T}/" "$STAGE/tuxiv.conf"
     fi
     echo "[tcloud] 包大小 $(du -sh "$STAGE" | cut -f1)；run.env：$(tr '\n' ' ' < "$STAGE/run.env")"
     ;;
