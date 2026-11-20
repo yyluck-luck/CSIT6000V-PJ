@@ -147,14 +147,38 @@ try {
   await js("document.querySelector('#histList .row').click()");
   check("replay from Runs reaches a verdict", await until("document.querySelector('.page.on').dataset.page === 'solve' && document.querySelector('#verdict .verdict:not(.run)')", 10000));
 
-  // 7. lab sweep + compare slider
+  // 7. lab: explains itself; a comparison runs in parallel and fills the results; squares open replays; batch map; step diff; probe slider
   await js("document.querySelector('.navbtn[data-page=\"lab\"]').click()");
+  check("lab explains itself: tier ladder, legend, what each tab does", await until("document.querySelectorAll('#pLab .ladder li').length === 4 && document.querySelectorAll('#pLab .legend span').length === 4 && /Every experiment/.test(document.querySelector('#labWhy').textContent)", 3000));
+  await js("document.querySelector('#labSeg button[data-lab=\"compare\"]').click()");
+  await until("document.querySelectorAll('#cmpModels input:checked').length === 1 && document.querySelectorAll('#cmpTiers input:checked').length === 4", 3000);
+  const plan = await js("document.querySelector('#cmpPlan').textContent");
   await js("document.querySelector('#sweep').click()");
-  check("four-tier sweep finishes", await until("document.querySelector('#cmpSlider .cmp')", 40000));
-  const moved = await js(`(() => { const b = document.querySelector('#cmpSlider .cmp'), r = b.getBoundingClientRect();
+  const cmpDone = await until("document.querySelector('#cmpView .forest') && document.querySelectorAll('#cmpView .hc i[data-run]').length === 4 && !document.querySelector('#cmpView .livebar')", 60000);
+  const concl = cmpDone ? await js("document.querySelector('#cmpView .concl').textContent") : "";
+  check("compare: 4 tiers on one challenge give a conclusion, a forest plot and a square per attempt", cmpDone && /4 arms × 1 repeat = 4 attempts/.test(plan) && /verified/.test(concl), JSON.stringify({plan, concl}));
+  await js("document.querySelector('#labSeg button[data-lab=\"results\"]').click()");
+  const listed = await until("document.querySelectorAll('#expList .exp').length >= 1 && document.querySelector('#expView .forest') && document.querySelector('#expView .hc i[data-run]')", 8000);
+  if (listed) await js("document.querySelector('#expView .hc i[data-run]').click()");
+  const replayed = listed && await until("document.querySelector('.page.on').dataset.page === 'solve' && /[?&]run=/.test(location.search) && document.querySelector('#verdict .verdict:not(.run)')", 8000);
+  check("results: the experiment is listed; a square opens that attempt's replay", listed && replayed, JSON.stringify({listed, replayed}));
+  await js("document.querySelector('.navbtn[data-page=\"lab\"]').click()");
+  await js("document.querySelector('#labSeg button[data-lab=\"batch\"]').click()");
+  await until("document.querySelectorAll('#batCats input').length > 0 && !document.querySelector('#batRun').disabled", 3000);
+  await js("document.querySelector('#batRun').click()");
+  const batDone = await until("document.querySelector('#batView .heat') && !document.querySelector('#batView .livebar') && document.querySelectorAll('#batView .hc i[data-run]').length >= 4", 90000);
+  check("batch: the challenge × tier map fills in", batDone);
+  await js("(document.querySelector('#batView [data-diff]') || {click(){}}).click()");
+  const diffed = await until("document.querySelector('#labSeg button.on').dataset.lab === 'diff' && document.querySelector('#diffView .diff .dc') && / ended /.test(document.querySelector('#diffView .concl').textContent)", 10000);
+  check("diff: two attempts side by side, with where they diverged and how each ended", diffed);
+  await js("document.querySelector('#labSeg button[data-lab=\"probe\"]').click()");
+  await js("document.querySelector('#probeBtn').click()");
+  check("probe: the bare model's answer sits next to the agent's", await until("document.querySelector('#probeSlider .cmp')", 20000));
+  const moved = await js(`(() => { const b = document.querySelector('#probeSlider .cmp'); if (!b) return 'none'; const r = b.getBoundingClientRect();
       const ev = (t, x) => b.dispatchEvent(new PointerEvent(t, {clientX: x, clientY: r.top + 40, pointerId: 1, bubbles: true}));
       ev('pointerdown', r.left + r.width * .5); ev('pointermove', r.left + r.width * .25); ev('pointerup', r.left + r.width * .25); return b.style.getPropertyValue('--x'); })()`);
   check("compare slider follows the drag", parseFloat(moved) < 40, "x=" + moved);
+  const smallLab = await js(SMALL); check("no small text on Lab", !smallLab.length, smallLab.join(" | "));
   await noCJK("lab");
 
   // 8. upload with the gooey gold field

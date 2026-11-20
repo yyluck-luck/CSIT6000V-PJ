@@ -39,7 +39,7 @@ from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
-from app import httpcache, runs_index, tacc, tacc_live
+from app import httpcache, lab, runs_index, tacc, tacc_live
 
 STATIC = Path(__file__).resolve().parent / "index.html"
 _STATIC = httpcache.StaticFile(STATIC)
@@ -194,6 +194,11 @@ def _load_run_from_disk(rid: str) -> dict | None:
         if done or summary:
             return {"q": queue.Queue(), "summary": {**(done or summary), "web_run_id": rid},
                     "events": evs, "kind": "disk"}
+    d = lab.find_run(config.RUNS_ROOT, rid)          # Lab / TACC 实验里的一次 attempt
+    evs = read_jsonl(d / "trace.jsonl") if d is not None else []
+    summary = next((e for e in reversed(evs) if e.get("type") == "summary"), None)
+    if summary:
+        return {"q": queue.Queue(), "summary": summary, "events": evs, "kind": "replay"}
     return None
 
 
@@ -427,6 +432,25 @@ class Handler(BaseHTTPRequestHandler):
                                                  if r.get("type") in ("user", "reply", "error")],
                                     "model": runs_index.thread_model(rows),
                                     "exists": bool(rows)})
+        if path == "/api/lab/experiments":
+            return self._json(200, {"experiments": lab.experiments(config.RUNS_ROOT)})
+        if path == "/api/lab/experiment":
+            exp = lab.experiment(config.RUNS_ROOT, self._qparam("id"))
+            return self._json(200, exp) if exp else self._json(404, {"error": "unknown experiment"})
+        if path == "/api/lab/export":
+            exp = lab.experiment(config.RUNS_ROOT, self._qparam("id"))
+            if not exp:
+                return self._json(404, {"error": "unknown experiment"})
+            data = lab.csv_rows(exp).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="flagpilot-{exp["id"].replace("/", "-")}.csv"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/api/memory":
             task = urllib.parse.parse_qs(self.path.split("?", 1)[-1]).get("task", [""])[0]
             store = MemoryStore()
@@ -470,7 +494,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop")
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop")
         if path not in routes:
             return self._json(404, {"error": "not found"})
         if not self._json_content_type():
@@ -499,6 +523,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._delete_custom(payload)
         if path == "/api/settings":
             return self._settings(payload)
+        if path == "/api/lab/start":
+            return self._lab_start(payload)
+        if path == "/api/lab/stop":
+            m = lab.exp_dir(config.RUNS_ROOT, str(payload.get("id") or ""))
+            return self._json(200, {"ok": bool(m) and lab.stop(m.name)})
         if path == "/api/tacc/start":
             r = tacc.start(str(payload.get("batch") or ""), str(payload.get("tiers") or ""),
                            payload.get("limit", 0), config.RUNS_ROOT, _mount_tacc,
@@ -540,6 +569,44 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"run_id": rid, "ablation": ablate or SETTINGS["ablation"]})
 
     # ---------- 运行时设置 ----------
+
+    def _qparam(self, name: str) -> str:
+        return urllib.parse.parse_qs(self.path.split("?", 1)[-1]).get(name, [""])[0]
+
+    def _lab_start(self, payload: dict) -> None:
+        """Lab 的对比 / 多题实验：题 × 组（模型 × 档位）× 重复次数，后台并发跑。"""
+        names = [str(x) for x in (payload.get("tasks") or [])]
+        if not 1 <= len(names) <= lab.MAX_TASKS:
+            return self._json(400, {"error": f"Pick 1 to {lab.MAX_TASKS} challenges"})
+        tasks = []
+        for n in dict.fromkeys(names):
+            t = resolve_task(n)
+            if t is None:
+                return self._json(400, {"error": f"Unknown challenge {n}"})
+            tasks.append(t)
+        arms, seen = [], set()
+        for a in payload.get("arms") or []:
+            tier, model = str((a or {}).get("tier") or "").upper(), str((a or {}).get("model") or "").strip()
+            if tier not in ABLATIONS:
+                return self._json(400, {"error": f"Unknown tier {tier}"})
+            if model and not _MODEL_RE.match(model):
+                return self._json(400, {"error": "bad model name"})
+            if (model, tier) not in seen:
+                seen.add((model, tier))
+                arms.append({"model": model, "tier": tier})
+        if not 1 <= len(arms) <= lab.MAX_ARMS:
+            return self._json(400, {"error": f"Pick 1 to {lab.MAX_ARMS} arms"})
+        try:
+            seeds = max(1, min(lab.MAX_SEEDS, int(payload.get("seeds") or 1)))
+            workers = max(1, min(4, int(payload.get("workers") or 2)))
+        except (TypeError, ValueError):
+            return self._json(400, {"error": "seeds and workers must be numbers"})
+        if len(tasks) * len(arms) * seeds > lab.MAX_JOBS:
+            return self._json(400, {"error": f"At most {lab.MAX_JOBS} attempts per experiment"})
+        r = lab.start(config.RUNS_ROOT, tasks, arms, seeds, workers,
+                      make_cfg=lambda tier, model: _make_cfg("lab", ablate=tier, model=model),
+                      label=str(payload.get("label") or "")[:120])
+        return self._json(200, r)
 
     def _settings(self, payload: dict) -> None:
         """只允许改模型。改完清掉旧会话——它们还挂着上一个模型的客户端。"""

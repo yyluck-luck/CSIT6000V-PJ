@@ -110,7 +110,7 @@ class TestWebAPI(unittest.TestCase):
     def test_index_has_controls(self):
         html = self.get("/")
         # 界面全英文（2026-11-19 起）：标记跟着换成英文，检查的仍是同一批功能
-        for marker in ("Four-tier sweep", "Base-model probe", "Agent flow", "solve.py",
+        for marker in ("Run comparison", "Run batch", "Compare step by step", "Ask without tools", "Agent flow", "solve.py",
                        "Upload challenge", "Ask the tutor", "Allow commands",
                        # 可展开的步骤链路：工具调用与思维链都要看得见
                        "Call chain", "Thought", "Tool output", "Expand all", "data-step",
@@ -398,6 +398,34 @@ class TestWebAPI(unittest.TestCase):
             self.post("/api/chat", {"message": "x", "model": "bad model; rm -rf /"})
         self.assertEqual(ctx.exception.code, 400)
         ctx.exception.close()
+
+    def test_lab_experiment_runs_exports_and_replays(self):
+        """Lab：本地实验在后台跑完，结果带统计；可导出 CSV；格子里的每次 attempt 都能当回放打开。"""
+        import time
+        import urllib.parse
+        task = json.loads(self.get("/api/tasks"))["tasks"][0]["name"]
+        r = self.post("/api/lab/start", {"tasks": [task], "arms": [{"tier": "B0"}, {"tier": "B3", "model": "mock"}],
+                                         "seeds": 1, "workers": 2, "label": "web test"})
+        eid = r["id"]
+        exp = {}
+        for _ in range(600):
+            exp = json.loads(self.get("/api/lab/experiment?id=" + urllib.parse.quote(eid)))
+            if not exp["running"] and exp["attempts"] == 2:
+                break
+            time.sleep(0.1)
+        self.assertEqual([a["key"] for a in exp["arms"]], ["B0", "mock~B3"])
+        self.assertEqual(exp["name"], "web test")
+        rid = exp["tasks"][0]["cells"]["B0"][0]["run"]
+        self.assertTrue(json.loads(self.get("/api/result?id=" + rid))["done"])
+        self.assertTrue(self.get("/api/lab/export?id=" + urllib.parse.quote(eid)).startswith("experiment,arm,model,tier"))
+        self.assertIn(eid, [e["id"] for e in json.loads(self.get("/api/lab/experiments"))["experiments"]])
+        for bad in ({"tasks": [], "arms": [{"tier": "B3"}]}, {"tasks": [task], "arms": [{"tier": "B9"}]},
+                    {"tasks": [task], "arms": [{"tier": "B3", "model": "x y"}]}, {"tasks": ["nope-404"], "arms": [{"tier": "B3"}]},
+                    {"tasks": [task], "arms": [{"tier": "B3"}], "seeds": "many"}):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post("/api/lab/start", bad)
+            self.assertEqual(ctx.exception.code, 400, bad)
+            ctx.exception.close()
 
     def test_chat_requires_message(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:

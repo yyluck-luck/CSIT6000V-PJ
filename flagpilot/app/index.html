@@ -448,6 +448,43 @@
   .arm .orbit{position:absolute;inset:-1.5px;width:calc(100% + 3px);height:calc(100% + 3px);pointer-events:none;display:none}
   .arm .orbit rect{fill:none;stroke:var(--yellow);stroke-width:4;stroke-dasharray:12 88;vector-effect:non-scaling-stroke;animation:orbit 1.6s linear infinite}
   .arm.run .orbit{display:block}
+  /* Lab: tier ladder, legend, experiments, forest plot, heat map, step diff */
+  .ladder{list-style:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:26px 0 0;padding:0;border:1.5px solid var(--ink);background:var(--white)}
+  .ladder li{position:relative;padding:16px 22px 18px;border-left:1.5px solid var(--rule)} .ladder li:first-child{border-left:0}
+  .ladder li:not(:last-child)::after{content:'→';position:absolute;right:-12px;top:14px;z-index:1;padding:0 3px;background:var(--white);font:700 17px var(--mono)}
+  .ladder b{font:800 22px/1 var(--mono)} .ladder .lt{display:block;margin-top:8px;font:700 16px var(--font)} .ladder .ld{display:block;margin-top:4px;font-size:15px;line-height:1.45;color:var(--ink2)}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 24px;margin:14px 0 4px;font-size:15px;color:var(--ink2)} .legend span{display:inline-flex;align-items:center;gap:8px}
+  .labwhy{margin:16px 0 0;max-width:86ch}
+  .exps{display:flex;gap:12px;overflow-x:auto;padding:4px 6px 12px 2px;margin-top:20px;scrollbar-width:thin}
+  .exp{flex:0 0 auto;display:flex;flex-direction:column;gap:5px;min-width:240px;max-width:340px;text-align:left;border:1.5px solid var(--rule);background:var(--white);padding:12px 16px;cursor:pointer;transition:border-color .12s,transform .2s var(--ease),box-shadow .2s var(--ease)}
+  .exp:hover{border-color:var(--ink);transform:translateY(-2px)} .exp.on{border-color:var(--ink);box-shadow:5px 5px 0 var(--ink)}
+  .exp b{font:700 16px var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .exp span{font:500 15px var(--mono);color:var(--ink2);line-height:1.4}
+  .expv{margin-top:20px} .concl{font:600 19px/1.5 var(--font);max-width:76ch;margin:0 0 18px}
+  .forestbox{background:var(--white);border:1.5px solid var(--ink);padding:16px 20px} .forest{display:block;width:100%;max-width:1000px;height:auto;overflow:visible}
+  .forest text{font:600 15px var(--mono);fill:var(--ink)} .forest .lab{font:700 16px var(--font)} .forest .ax{fill:var(--ink2)} .forest .pt{transform-box:fill-box;transform-origin:center}
+  .labt{width:100%;border-collapse:collapse;margin-top:18px;background:var(--white);border:1.5px solid var(--ink)}
+  .labt th,.labt td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--rule2);font-size:15px} .labt th{font-weight:700;background:var(--paper)} .labt td.sig{color:var(--red);font-weight:700}
+  .heat{margin-top:18px;background:var(--white);border:1.5px solid var(--ink);overflow-x:auto}
+  .heat .hr{display:grid;grid-template-columns:minmax(170px,260px) repeat(var(--arms),minmax(70px,1fr)) 76px;align-items:center;border-bottom:1px solid var(--rule2);min-width:max-content}
+  .heat .hr>*{padding:7px 10px;min-width:0} .heat .hh{font:700 15px var(--font);background:var(--paper)} .heat .hh span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .heat .tn{font:600 15px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .heat .cat{padding:8px 10px;font:700 15px var(--font);color:var(--ink2);background:var(--paper);border-bottom:1px solid var(--rule2)}
+  .hc{display:flex;gap:3px} .hc i{flex:1;height:26px;background:var(--rule2);transition:transform .15s var(--ease)} .hc i[data-run]{cursor:pointer} .hc i[data-run]:hover{transform:scaleY(1.18)}
+  .hc i.ok{background:var(--blue)} .hc i.warn{background:var(--yellow)} .hc i.bad{background:var(--red)} .hc i.idle{background:var(--ink3)} .hc i.run{background:var(--ink);animation:blink 1s steps(2) infinite}
+  .hc i.new{animation:land .55s var(--spring)} @keyframes land{from{transform:scale(.25);opacity:0}}
+  /* skeleton while data loads: a light band sweeps across (transform only) */
+  .skel{position:relative;overflow:hidden;background:var(--rule2)} .skel::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);transform:translateX(-100%);animation:shimmer 1.3s var(--ease-io) infinite}
+  @keyframes shimmer{to{transform:translateX(100%)}}
+  .dbtn{border:0;background:none;padding:0;font:600 15px var(--font);color:var(--blue);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+  .form{display:grid;gap:14px;margin-top:22px;background:var(--white);border:1.5px solid var(--ink);padding:20px 22px;max-width:1000px}
+  .frow{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px} .fl{min-width:104px;font:700 15px var(--font);color:var(--ink2)} .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .livebar{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;margin:0 0 14px;font:600 15px var(--mono)}
+  .livebar .bar{flex:1 1 200px;max-width:420px;height:8px;background:var(--rule2);position:relative;overflow:hidden} .livebar .bar i{position:absolute;inset:0;background:var(--blue);transform-origin:0 50%;transform:scaleX(var(--p,0));transition:transform .5s var(--ease)}
+  .diff{margin-top:18px;background:var(--white);border:1.5px solid var(--ink)} .drow{display:grid;grid-template-columns:1fr 1fr} .drow>div{min-width:0}
+  .drow.dh>div{padding:12px 16px;font:700 16px var(--font);background:var(--paper);border-bottom:1.5px solid var(--ink)} .drow>div+div{border-left:1.5px solid var(--ink)}
+  .dc{position:relative;padding:10px 16px;border-bottom:1px solid var(--rule2);font-size:15px} .dc .w{display:flex;align-items:center;gap:8px;font:700 15px var(--font)}
+  .dc code{display:block;margin-top:5px;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .dc .o{margin-top:5px;color:var(--ink2);font:15px/1.4 var(--mono);white-space:pre-wrap;max-height:2.9em;overflow:hidden}
+  .dc.fork{box-shadow:inset 6px 0 0 var(--yellow);background:var(--yellow-t)} .dc .ftag{position:absolute;right:12px;top:10px;font:700 15px var(--font);color:#7a5600}
+  @media (max-width:860px){ .ladder{grid-template-columns:1fr 1fr} .ladder li:nth-child(3){border-left:0} .ladder li:nth-child(2)::after{display:none} .drow{grid-template-columns:1fr} .drow>div+div{border-left:0} }
   .cmp{position:relative;height:280px;border:1.5px solid var(--ink);background:var(--white);overflow:hidden;user-select:none;touch-action:none;cursor:ew-resize;margin-top:30px}
   .cmp .side{position:absolute;inset:0;padding:26px 30px;display:grid;align-content:start;gap:12px}
   .cmp .side.r{background:var(--ink);color:#fff;clip-path:inset(0 0 0 var(--x,50%));justify-items:end;text-align:right}
@@ -751,27 +788,52 @@
   <section class="page" data-page="lab" id="pLab" inert>
     <div class="grid"><div class="c12">
       <h1 class="ltitle">Lab</h1>
-      <p class="lead">Same challenge, same model, one variable at a time.</p>
-      <div class="actions"><div class="segc" id="labSeg" style="--n:3"><span class="thumb"></span>
-        <button data-lab="sweep" class="on">Four-tier sweep</button><button data-lab="probe">Base-model probe</button><button data-lab="tacc">TACC batch</button></div></div>
-      <div class="labp" data-lab="sweep">
-        <div class="actions">
-          <button class="taskpill" data-taskpill><span class="g ring"></span><span class="tn">Choose a challenge</span></button>
-          <button class="btn primary" id="sweep" disabled><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg>Run B0 → B3<span class="arr">→</span></button>
+      <p class="lead">Experiments on the agent itself: which part of it makes challenges solvable, and is a difference real or luck?</p>
+      <ol class="ladder" aria-label="The four agent tiers; each adds one thing to the one before">
+        <li><b>B0</b><span class="lt">Bare model</span><span class="ld">Shell and Python only, a minimal prompt, full tool output.</span></li>
+        <li><b>B1</b><span class="lt">+ Trimming</span><span class="ld">Long tool output keeps its head, its tail and any flag-like lines.</span></li>
+        <li><b>B2</b><span class="lt">+ Structured tools</span><span class="ld">Adds file, strings and decode actions.</span></li>
+        <li><b>B3</b><span class="lt">+ Full rules</span><span class="ld">Adds the solving and submission rules: the default agent.</span></li>
+      </ol>
+      <p class="legend"><span><i class="g c blue"></i>Verified: the flag replayed in a clean sandbox</span><span><i class="g t yellow"></i>Unverified: no reproducible script</span><span><i class="g red"></i>Wrong flag or out of turns</span><span><i class="g ink"></i>Running</span></p>
+      <div class="actions"><div class="segc" id="labSeg" style="--n:6"><span class="thumb"></span>
+        <button data-lab="results" class="on">Results</button><button data-lab="compare">Compare</button><button data-lab="batch">Batch</button><button data-lab="diff">Diff</button><button data-lab="probe">Probe</button><button data-lab="tacc">TACC batch</button></div></div>
+      <p class="hint labwhy" id="labWhy"></p>
+      <div class="labp" data-lab="results"><div class="exps" id="expList"></div><div id="expView"></div></div>
+      <div class="labp" data-lab="compare" hidden>
+        <div class="form">
+          <div class="frow"><span class="fl">Challenge</span><button class="taskpill" data-taskpill><span class="g ring"></span><span class="tn">Choose a challenge</span></button></div>
+          <div class="frow"><span class="fl">Models</span><div class="chips" id="cmpModels"></div></div>
+          <div class="frow"><span class="fl">Tiers</span><div class="chips" id="cmpTiers"></div></div>
+          <div class="frow"><span class="fl">Repeats</span><div class="segc" id="cmpSeeds" style="--n:3"><span class="thumb"></span><button data-v="1" class="on">1</button><button data-v="3">3</button><button data-v="5">5</button></div><span class="fl">In parallel</span><div class="segc" id="cmpWorkers" style="--n:3"><span class="thumb"></span><button data-v="1">1</button><button data-v="2" class="on">2</button><button data-v="4">4</button></div></div>
+          <div class="frow"><button class="btn primary" id="sweep" disabled><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg>Run comparison<span class="arr">→</span></button><span class="hint" id="cmpPlan"></span></div>
         </div>
-        <div class="tiles" id="tiles" hidden></div>
-        <div class="arms" id="arms"></div>
-        <div id="cmp"></div>
+        <div id="cmpView"></div>
+      </div>
+      <div class="labp" data-lab="batch" hidden>
+        <div class="form">
+          <div class="frow"><span class="fl">Model</span><div class="chips" id="batModels"></div></div>
+          <div class="frow"><span class="fl">Tiers</span><div class="chips" id="batTiers"></div></div>
+          <div class="frow"><span class="fl">Categories</span><div class="chips" id="batCats"></div></div>
+          <div class="frow"><span class="fl">Challenges</span><div class="segc" id="batCount" style="--n:4"><span class="thumb"></span><button data-v="5" class="on">5</button><button data-v="10">10</button><button data-v="20">20</button><button data-v="0">All</button></div><span class="fl">Repeats</span><div class="segc" id="batSeeds" style="--n:3"><span class="thumb"></span><button data-v="1" class="on">1</button><button data-v="2">2</button><button data-v="3">3</button></div><span class="fl">In parallel</span><div class="segc" id="batWorkers" style="--n:3"><span class="thumb"></span><button data-v="1">1</button><button data-v="2" class="on">2</button><button data-v="4">4</button></div></div>
+          <div class="frow"><button class="btn primary" id="batRun"><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg>Run batch<span class="arr">→</span></button><span class="hint" id="batPlan"></span></div>
+        </div>
+        <div id="batView"></div>
+      </div>
+      <div class="labp" data-lab="diff" hidden>
+        <div class="form"><div class="frow"><span class="fl">Run A</span><select id="diffA" class="pillsel"></select></div>
+          <div class="frow"><span class="fl">Run B</span><select id="diffB" class="pillsel"></select></div>
+          <div class="frow"><button class="btn primary" id="diffGo">Compare step by step<span class="arr">→</span></button></div></div>
+        <div id="diffView"></div>
       </div>
       <div class="labp" data-lab="probe" hidden>
         <div class="actions">
           <button class="taskpill" data-taskpill><span class="g ring"></span><span class="tn">Choose a challenge</span></button>
           <button class="btn primary" id="probeBtn" disabled><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg>Ask without tools<span class="arr">→</span></button>
         </div>
-        <div id="cmpBase"><p class="hint" style="margin-top:22px">If the bare model already knows the flag, a verified solve is not evidence that the tools helped.</p></div>
+        <div id="cmpBase"></div>
       </div>
       <div class="labp" data-lab="tacc" hidden>
-        <p class="hint" style="margin-top:22px">Qwen 27B on two TACC GPUs, through the course SDK only: start the server, run the dev split, download, stop the server.</p>
         <div class="tacc-ctl">
           <label class="chip toggle"><input type="checkbox" data-tier="B0"><span class="tick"></span>B0</label>
           <label class="chip toggle"><input type="checkbox" data-tier="B1"><span class="tick"></span>B1</label>
@@ -1283,7 +1345,7 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 })();
 
 /* ======================= Challenges / picker ======================= */
-const ABL_NOTE = {B0: ['Bare model', 'no truncation, shell and python only, minimal prompt'], B1: ['+ truncation', 'long observations keep head and tail, so the prefix stays cacheable'],
+const ABL_NOTE = {B0: ['Bare model', 'no truncation, shell and python only, minimal prompt'], B1: ['+ trimming', 'long observations keep head, tail and flag-like lines, so the prefix stays cacheable'],
                   B2: ['+ structured tools', 'adds file, strings and decode actions'], B3: ['+ full rules', 'adds the solving and submission rules (default)']};
 let ablList = [];
 function setAblation(name){
@@ -1401,7 +1463,7 @@ function pick(t){
   $('#run').hidden = !t; $('#runTacc').hidden = !t;
   ['#run', '#sweep', '#probeBtn'].forEach(q => $(q).disabled = !t || busy);
   if (!busy && !(run && run.turns.length)) renderFlow();
-  showMount(); loadMemory(t ? t.name : ''); viewMode();
+  showMount(); loadMemory(t ? t.name : ''); viewMode(); labPlan();
 }
 function showMount(){
   const t = selTask;
@@ -1890,7 +1952,7 @@ function runOne(task, ablate, onEvent, onReset, backend){
   });
 }
 let runPage = 'solve';
-function lockRun(on){ busy = on; if (on) runPage = page; railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run', '#sweep'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); }
+function lockRun(on){ busy = on; if (on) runPage = page; railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); }
 function beginRun(label){ run = fresh(); openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); }
 function clearRunParam(){ if (new URLSearchParams(location.search).has('run')) history.replaceState(null, '', location.pathname + '#/' + page); }
 $('#run').onclick = async () => {
@@ -1983,50 +2045,185 @@ function startReplay(rid){
 }
 
 /* ---------------- lab ---------------- */
-$('#labSeg').addEventListener('click', e => { const b = e.target.closest('button[data-lab]'); if (!b) return;
-  setSeg($('#labSeg'), [...$('#labSeg').querySelectorAll('button')].indexOf(b)); if (b.dataset.lab === 'tacc') taccPoll();
-  qs('.labp').forEach(p => { const on = p.dataset.lab === b.dataset.lab; p.hidden = !on; if (on && !reduced()) p.animate([{transform: 'translateX(12px)'}, {transform: 'none'}], {duration: 200, easing: EASE}); }); });
+/* ======================= Lab: results with statistics, comparisons, batches, step diff ======================= */
+const LAB_WHY = {
+  results: 'Every experiment on disk, each arm with its 95% interval and a paired test between arms. Click any square to replay that attempt.',
+  compare: 'One challenge, several configurations side by side. Repeats show how much of a result is luck.',
+  batch: 'One model over many challenges: the challenge × tier map fills in as attempts finish.',
+  diff: 'Two runs step by step: where they first went different ways, and how each one ended.',
+  probe: 'Ask the bare model with no tools. If it already knows the flag, a solve says nothing about the tools.',
+  tacc: 'Qwen 27B on two TACC GPUs through the course SDK: start the server, run the dev split, download, stop.'};
+let labTab = 'results', labFormsKey = '', diffPreset = null;
+const LAB = {exps: [], cur: null}, LABV = new Map();
+function labShow(tab){ const b = $(`#labSeg button[data-lab="${tab}"]`); if (!b) return; labTab = tab;
+  setSeg($('#labSeg'), [...$('#labSeg').querySelectorAll('button')].indexOf(b)); $('#labWhy').textContent = LAB_WHY[tab] || '';
+  qs('.labp').forEach(p => { const on = p.dataset.lab === tab; if (p.hidden !== on) return; p.hidden = !on;
+    if (on && !reduced()) p.animate([{opacity: 0, transform: 'translateY(10px)'}, {opacity: 1, transform: 'none'}], {duration: 260, easing: EASE}); });
+  if (tab === 'tacc') taccPoll(); else if (tab === 'results') labLoad(); else if (tab === 'diff') diffFill(); else if (tab === 'compare' || tab === 'batch') labForms(); }
+$('#labSeg').addEventListener('click', e => { const b = e.target.closest('button[data-lab]'); if (b) labShow(b.dataset.lab); });
 const ARMS = ['B0', 'B1', 'B2', 'B3'];
-let armState = {}, armTurns = {};
 const ORBIT = '<svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg>';
-function renderArms(){
-  $('#arms').innerHTML = ARMS.map(a => { const s = armState[a] || {}, tone = s.verdict ? verdictTone(s.verdict) : (s.running ? 'run' : '');
-    const shape = tone === 'ok' ? 'c blue' : tone === 'bad' ? 'red' : tone === 'warn' ? 't yellow' : tone === 'run' ? 'spin' : 'ring', [tag] = ABL_NOTE[a] || [''];
-    return `<div class="arm ${tone}">${ORBIT}<span class="an">${a}</span><div class="al">${esc(tag)}</div><div class="av"><span class="g ${shape}"></span>${esc(s.verdict || (s.running ? 'running' : 'waiting'))}</div>`
-      + `<div class="am">${s.turns != null ? s.turns + ' turns' : ''}${s.time != null ? ' · ' + s.time + ' s' : ''}</div></div>`; }).join('');
+const chipBox = (host, items, picked, multi) => { host.innerHTML = items.map(([v, l]) => `<label class="chip toggle"><input type="${multi ? 'checkbox' : 'radio'}" name="${host.id}" value="${esc(v)}"${picked.includes(v) ? ' checked' : ''}><span class="tick"></span>${esc(l)}</label>`).join(''); };
+const chipVals = host => [...host.querySelectorAll('input:checked')].map(i => i.value);
+const segVal = id => +((($(id + ' button.on') || {}).dataset || {}).v || 0);
+const armLabel = k => k.includes('~') ? prettyModel(k.split('~')[0]) + ' · ' + k.split('~')[1] : k;
+function renderArms(){ if (labFormsKey) labForms(); }
+function labForms(){
+  const models = [...new Set([...MODELS, LOCALMODEL].filter(m => m && !isTaccName(m)))], key = models.join() + '|' + TASKS.length;
+  if (key !== labFormsKey){ labFormsKey = key;
+    const prev = ['#cmpModels', '#cmpTiers', '#batModels', '#batTiers', '#batCats'].map(id => chipVals($(id)));
+    const M = models.map(m => [m, prettyModel(m)]), T = ARMS.map(t => [t, t + ' · ' + ABL_NOTE[t][0].replace(/^(\+ )?(\w)/, (m, a, b) => (a || '') + b.toUpperCase())]), cats = [...new Set(TASKS.map(t => t.category || 'Other'))].sort();
+    chipBox($('#cmpModels'), M, prev[0].length ? prev[0] : [LOCALMODEL], true); chipBox($('#cmpTiers'), T, prev[1].length ? prev[1] : ARMS, true);
+    chipBox($('#batModels'), M, prev[2].length ? prev[2] : [LOCALMODEL], false); chipBox($('#batTiers'), T, prev[3].length ? prev[3] : ['B0', 'B3'], true);
+    chipBox($('#batCats'), cats.map(c => [c, c]), prev[4].length ? prev[4] : cats, true); }
+  labPlan(); }
+['#cmpModels', '#cmpTiers', '#batModels', '#batTiers', '#batCats'].forEach(id => $(id).addEventListener('change', labPlan));
+qs('#cmpSeeds,#cmpWorkers,#batCount,#batSeeds,#batWorkers').forEach(seg => setSeg(seg, [...seg.querySelectorAll('button')].findIndex(b => b.classList.contains('on'))));
+qs('#cmpSeeds,#cmpWorkers,#batCount,#batSeeds,#batWorkers').forEach(seg => seg.addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (!b) return; setSeg(seg, [...seg.querySelectorAll('button')].indexOf(b)); labPlan(); }));
+const cmpArms = () => chipVals($('#cmpModels')).flatMap(m => chipVals($('#cmpTiers')).map(t => ({model: m, tier: t})));
+function batTasks(){ const cats = new Set(chipVals($('#batCats'))), n = segVal('#batCount'), list = TASKS.filter(t => cats.has(t.category || 'Other')); return n ? list.slice(0, n) : list; }
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+function labPlan(){
+  if (!$('#cmpPlan')) return;
+  const arms = cmpArms(), r = segVal('#cmpSeeds') || 1, w = segVal('#cmpWorkers'), hosted = arms.some(a => modelKind(a.model) === 'hosted');
+  $('#cmpPlan').textContent = !sel ? 'Choose a challenge first.' : !arms.length ? 'Pick at least one model and one tier.' : arms.length > 8 ? 'At most 8 arms.'
+    : `${plural(arms.length, 'arm')} × ${plural(r, 'repeat')} = ${arms.length * r} attempts on ${sel}` + (hosted && w > 2 ? ' · free Gemini keys allow about 15 requests a minute, so 2 in parallel is safer' : '');
+  if (!$('#sweep').classList.contains('busy')) $('#sweep').disabled = !sel || !arms.length || arms.length > 8;
+  const ts = batTasks(), tiers = chipVals($('#batTiers')), br = segVal('#batSeeds') || 1, bm = chipVals($('#batModels'))[0] || LOCALMODEL, total = ts.length * tiers.length * br;
+  $('#batPlan').textContent = !tiers.length ? 'Pick at least one tier.' : !ts.length ? 'Pick at least one category.'
+    : `${plural(ts.length, 'challenge')} × ${plural(tiers.length, 'tier')} × ${plural(br, 'repeat')} = ${total} attempts with ${prettyModel(bm)}` + (total > 400 ? ' · too many (at most 400)' : '');
+  if (!$('#batRun').classList.contains('busy')) $('#batRun').disabled = !tiers.length || !ts.length || total > 400 || ts.length > 60;
 }
-tilt($('#arms'), '.arm', 8);
-/* Tiles (OriginKit): tiers x turns, each finished turn fills a tile; overall progress on the right */
-function renderTiles(cur){
-  const box = $('#tiles'), cols = run ? run.maxTurns : 20; box.hidden = false; let done = 0;
-  const rows = ARMS.map(a => { const s = armState[a] || {}, used = s.verdict ? (s.turns || 0) : (a === cur && run ? run.turns.length : 0), tone = s.verdict ? verdictTone(s.verdict) : '';
-    if (s.verdict) done += 1; else if (a === cur && run) done += Math.min(.95, run.turns.length / cols);
-    return `<span class="tl">${a}</span><div class="tr" style="--cols:${cols}">${Array.from({length: cols}, (_, i) => `<i class="${i < used ? (tone || 'on') : (a === cur && i === used && !s.verdict ? 'now' : '')}"></i>`).join('')}</div>`; }).join('');
-  box.innerHTML = rows + `<div class="pct"><span id="tilePct"></span><small>%</small></div>`;
-  const pct = $('#tilePct'); pct.dataset.s = R.tileS || ''; pct.dataset.shape = R.tileShape || '';
-  speed(pct, Math.round(done / ARMS.length * 100)); R.tileS = pct.dataset.s; R.tileShape = pct.dataset.shape;
+async function labStart(body, host, btn){
+  btn.disabled = true; btn.classList.add('busy');
+  try { const r = await fetch('/api/lab/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}), d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    railMark('lab', 'working'); toast(`Experiment started: ${d.total} attempts`); LAB.cur = d.id; openExp(d.id, host, btn); }
+  catch(e){ host.innerHTML = `<p class="hint bad" style="margin-top:18px">${esc(en(e.message))}</p>`; btn.classList.remove('busy'); labPlan(); }
 }
-$('#sweep').onclick = async () => {
-  if (!sel || busy) return;
-  clearRunParam(); lockRun(true); armState = {}; armTurns = {}; R.tileS = ''; R.tileShape = ''; const rows = []; $('#cmp').innerHTML = '';
-  for (const a of ARMS){
-    armState[a] = {running: true}; renderArms(); renderTiles(a);
-    beginRun('Sweep · ' + a); setStatus('Running', '', `${sel} · ${a}`);
-    const tick = setInterval(() => renderTiles(a), 400); let r;
-    try { r = await runOne(sel, a, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }); } catch(e){ r = {verdict: 'error', reason: e.message, ablation: a}; }
-    clearInterval(tick); r.ablation = r.ablation || a; rows.push(r);
-    armTurns[a] = run ? run.turns.map(t => (t.ms || 0) + ((t.tool && t.tool.ms) || 0)) : [];
-    const t = r.e2e_s != null ? r.e2e_s : r.wall_s;
-    armState[a] = {verdict: r.verdict, turns: r.turns, time: t != null ? (+t).toFixed(1) : null, tok: r.completion_tokens ?? r.total_tokens}; renderArms(); renderTiles(null);
+$('#sweep').onclick = () => { if (sel) labStart({tasks: [sel], arms: cmpArms(), seeds: segVal('#cmpSeeds') || 1, workers: segVal('#cmpWorkers') || 2, label: `Compare · ${sel}`}, $('#cmpView'), $('#sweep')); };
+$('#batRun').onclick = () => { const tiers = chipVals($('#batTiers')), m = chipVals($('#batModels'))[0] || LOCALMODEL, ts = batTasks();
+  labStart({tasks: ts.map(t => t.name), arms: tiers.map(t => ({model: m, tier: t})), seeds: segVal('#batSeeds') || 1, workers: segVal('#batWorkers') || 2,
+            label: `Batch · ${prettyModel(m)} · ${plural(ts.length, 'challenge')}`}, $('#batView'), $('#batRun')); };
+/* results: the experiment list, then one experiment (polled while it runs; only new squares animate) */
+const expMeta = e => `${e.source === 'tacc' ? 'TACC' : 'Local'} · ${(e.models || []).map(prettyModel).join(', ') || '—'} · ${plural(e.n_tasks, 'challenge')} · ${e.attempts} attempts${e.running ? ' · running' : ''} · ${ago(e.ts)}`;
+async function labLoad(){
+  let d = {}; try { d = await getJSON('/api/lab/experiments'); } catch(_){}
+  LAB.exps = d.experiments || [];
+  $('#expList').innerHTML = LAB.exps.map(e => `<button class="exp${e.id === LAB.cur ? ' on' : ''}" data-id="${esc(e.id)}"><b>${esc(e.name)}</b><span>${esc(expMeta(e))}</span></button>`).join('');
+  if (!LAB.exps.length){ $('#expView').innerHTML = '<p class="hint" style="margin-top:18px">No experiments yet. Start one from Compare or Batch, or run a TACC batch.</p>'; return; }
+  if (!LAB.exps.some(e => e.id === LAB.cur)){ LAB.cur = LAB.exps[0].id; qs('#expList .exp')[0].classList.add('on'); }
+  const v = LABV.get($('#expView')); if (!v || v.id !== LAB.cur) openExp(LAB.cur, $('#expView'));
+}
+function openExp(id, host, btn){
+  const old = LABV.get(host); if (old) clearTimeout(old.timer);
+  const me = {id, timer: 0, seen: new Set(), sig: '', drawn: false, was: false}; LABV.set(host, me);
+  host.innerHTML = '<div class="expv"><div class="skel" style="height:26px;width:60%"></div><div class="skel" style="height:180px;margin-top:18px"></div></div>';
+  const tick = async () => {
+    if (LABV.get(host) !== me) return;
+    let exp = null; try { exp = await getJSON('/api/lab/experiment?id=' + encodeURIComponent(id)); } catch(_){}
+    if (LABV.get(host) !== me) return;
+    if (!exp || exp.error){ host.innerHTML = `<p class="hint bad" style="margin-top:18px">${esc((exp && exp.error) || 'Could not load the experiment')}</p>`; return; }
+    const sig = exp.attempts + '|' + JSON.stringify(((exp.live || {}).running) || []) + '|' + exp.running + '|' + ((exp.live || {}).stopping || '');
+    if (sig !== me.sig){ me.sig = sig; renderExp(exp, host, me); }
+    if (exp.running) me.timer = setTimeout(tick, page === 'lab' ? 1500 : 4000);
+    else { if (btn){ btn.classList.remove('busy'); labPlan(); }
+      if (me.was){ railMark('lab', 'ok'); toast('Experiment finished'); if (host !== $('#expView')) LAB.cur = id; } }
+    me.was = exp.running;
+  };
+  tick();
+}
+function renderExp(exp, host, me){
+  const arms = exp.arms || [], live = exp.live, keys = arms.map(a => a.key).concat((exp.planned || []).filter(k => !arms.some(a => a.key === k)));
+  const labelOf = k => (arms.find(a => a.key === k) || {}).label || armLabel(k);
+  const prog = live && !live.finished ? `<div class="livebar"><span>${live.done} of ${live.total} attempts · ${live.running.length} running · ${fmtClock(live.elapsed)}</span><span class="bar"><i style="--p:${live.total ? live.done / live.total : 0}"></i></span>`
+    + (live.stopping ? '<span>Stopping after the running attempts…</span>' : `<button class="btn plain" data-stop="${esc(exp.id)}">Stop</button>`) + '</div>' : '';
+  host.innerHTML = `<div class="expv">${prog}<p class="concl">${esc(exp.conclusion || (exp.running ? 'Waiting for the first attempts to finish…' : 'No finished attempts.'))}</p>`
+    + (arms.length ? `<div class="forestbox">${forestSVG(arms)}</div>` : '') + pairsHTML(exp, labelOf) + heatHTML(exp, keys, labelOf, me) + catsHTML(exp, keys, labelOf)
+    + `<div class="actions"><a class="btn" href="/api/lab/export?id=${encodeURIComponent(exp.id)}" download>Export CSV</a>${arms.length ? '<button class="btn" data-svg>Export chart (SVG)</button>' : ''}</div></div>`;
+  if (!me.drawn && !reduced()){
+    host.querySelectorAll('.forest .ci').forEach((l, i) => { const n = l.getTotalLength(); l.animate([{strokeDasharray: `0 ${n}`}, {strokeDasharray: `${n} 0`}], {duration: 650, delay: 90 * i, easing: EASE}); });
+    host.querySelectorAll('.forest .pt').forEach((c, i) => c.animate([{transform: 'scale(0)'}, {transform: 'scale(1)'}], {duration: 650, delay: 280 + 90 * i, easing: SPRING, fill: 'backwards'}));
+    host.querySelectorAll('.hc i').forEach((c, i) => c.animate([{opacity: 0, transform: 'scale(.5)'}, {opacity: 1, transform: 'none'}], {duration: 280, delay: Math.min(700, i * 5), easing: EASE, fill: 'backwards'}));
   }
-  stopClock();
-  const cell = v => `<span class="badge ${verdictTone(v) === 'idle' ? '' : verdictTone(v)}">${esc(v)}</span>`;
-  $('#cmp').innerHTML = `<div id="cmpSlider"></div><div class="list" style="margin-top:30px;padding:4px 18px 10px"><table><tr><th>Tier</th><th>Verdict</th><th>Turns</th><th>Tokens</th><th>Time</th></tr>
-    ${rows.map(r => `<tr><td><b>${esc(r.ablation || '?')}</b></td><td>${cell(r.verdict)}</td><td>${r.turns ?? '—'}</td><td>${r.completion_tokens ?? r.total_tokens ?? '—'}</td><td>${(r.e2e_s ?? r.wall_s) != null ? (r.e2e_s ?? r.wall_s) + ' s' : '—'}</td></tr>`).join('')}</table></div>`;
-  const side = a => { const s = armState[a] || {}; return {tag: `${a} · ${(ABL_NOTE[a] || [''])[0]}`, big: String(s.verdict || '—').toUpperCase(), sub: `${s.turns ?? '—'} turns · ${s.tok ?? '—'} tok · ${s.time ?? '—'} s`, bars: armTurns[a] || []}; };
-  compareSlider($('#cmpSlider'), side('B0'), side('B3'));
-  lockRun(false); hair(null, 'off'); setStatus('Sweep done', '', sel); toast('Sweep finished');
-};
+  if (arms.length || (exp.tasks || []).length) me.drawn = true;
+}
+function forestSVG(arms){
+  const W = 1000, rowH = 46, L = 250, R = 230, top = 34, H = top + arms.length * rowH + 10, X = v => (L + v * (W - L - R)).toFixed(1), best = Math.max(...arms.map(a => a.rate));
+  let g = '';
+  for (const v of [0, .25, .5, .75, 1]) g += `<line x1="${X(v)}" y1="${top - 8}" x2="${X(v)}" y2="${H - 6}" stroke="var(--rule2)" stroke-width="1.5"/><text class="ax" x="${X(v)}" y="${top - 16}" text-anchor="middle">${v * 100}%</text>`;
+  arms.forEach((a, i) => { const y = top + i * rowH + rowH / 2, c = a.rate === best ? 'var(--blue)' : 'var(--ink)';
+    g += `<text class="lab" x="0" y="${y + 5}">${esc(a.label)}</text><line class="ci" x1="${X(a.ci[0])}" y1="${y}" x2="${X(a.ci[1])}" y2="${y}" stroke="${c}" stroke-width="3"/>`
+      + `<line x1="${X(a.ci[0])}" y1="${y - 8}" x2="${X(a.ci[0])}" y2="${y + 8}" stroke="${c}" stroke-width="2"/><line x1="${X(a.ci[1])}" y1="${y - 8}" x2="${X(a.ci[1])}" y2="${y + 8}" stroke="${c}" stroke-width="2"/>`
+      + `<circle class="pt" cx="${X(a.rate)}" cy="${y}" r="8" fill="${c}"/><text x="${W - R + 18}" y="${y + 5}">${a.verified}/${a.n} · ${Math.round(a.rate * 100)}% (${Math.round(a.ci[0] * 100)}–${Math.round(a.ci[1] * 100)})</text>`; });
+  return `<svg class="forest" viewBox="0 0 ${W} ${H}" role="img" aria-label="Verified share per arm with its 95% interval">${g}</svg>`;
+}
+function pairsHTML(exp, labelOf){ const ps = (exp.pairs || []).filter(p => p.n); if (!ps.length) return '';
+  return `<table class="labt"><tr><th>Pair (same challenge, same repeat)</th><th>Pairs</th><th>Only the first verified</th><th>Only the second verified</th><th>McNemar p</th></tr>`
+    + ps.map(p => `<tr><td>${esc(labelOf(p.a))} vs ${esc(labelOf(p.b))}</td><td>${p.n}</td><td>${p.only_a}</td><td>${p.only_b}</td><td class="${p.p < .05 ? 'sig' : ''}">${p.p < .001 ? '< 0.001' : p.p.toFixed(3)}${p.p < .05 ? ' · significant' : ''}</td></tr>`).join('') + '</table>'; }
+function catsHTML(exp, keys, labelOf){ const cats = exp.categories || {}, names = Object.keys(cats).sort(); if (names.length < 2) return '';
+  return `<table class="labt"><tr><th>Category</th>${keys.map(k => `<th>${esc(labelOf(k))}</th>`).join('')}</tr>`
+    + names.map(c => `<tr><td>${esc(c)}</td>${keys.map(k => { const v = cats[c][k]; return `<td>${v ? `${v[0]}/${v[1]}` : '—'}</td>`; }).join('')}</tr>`).join('') + '</table>'; }
+function heatHTML(exp, keys, labelOf, me){
+  if (!keys.length) return '';
+  const running = new Set((((exp.live || {}).running) || []).map(r => r.arm + '|' + r.task)), tasks = (exp.tasks || []).slice(), have = new Set(tasks.map(t => t.task));
+  for (const n of exp.planned_tasks || []) if (!have.has(n)){ const t = taskByName(n); tasks.push({task: n, category: t ? t.category : '', cells: {}}); }
+  tasks.sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.task.localeCompare(b.task));
+  let html = `<div class="heat" style="--arms:${keys.length}"><div class="hr hh"><span>Challenge</span>${keys.map(k => `<span title="${esc(labelOf(k))}">${esc(labelOf(k))}</span>`).join('')}<span></span></div>`, cat = null;
+  for (const t of tasks){
+    if (t.category !== cat){ cat = t.category; html += `<div class="cat">${esc(cat || 'Other')}</div>`; }
+    const firsts = keys.map(k => [((t.cells[k] || [])[0] || {}).run, `${t.task} · ${labelOf(k)}`]).filter(x => x[0]);
+    html += `<div class="hr"><span class="tn" title="${esc(t.task)}">${esc(t.task)}</span>` + keys.map(k => { const cs = t.cells[k] || [], on = running.has(k + '|' + t.task);
+      return '<span class="hc">' + cs.map(c => { const id = k + '|' + t.task + '|' + c.seed, fresh = me.drawn && !me.seen.has(id); me.seen.add(id);
+        return `<i class="${verdictTone(c.verdict)}${fresh ? ' new' : ''}"${c.run ? ` data-run="${esc(c.run)}"` : ''} data-tip="${esc(`${t.task} · ${labelOf(k)} · ${(V[c.verdict] || [, , String(c.verdict).toUpperCase()])[2]} · ${c.turns ?? '—'} turns · ${c.wall_s ?? '—'} s`)}"></i>`; }).join('')
+        + (on ? '<i class="run" data-tip="Running"></i>' : '') + (!cs.length && !on ? '<i></i>' : '') + '</span>'; }).join('')
+      + `<span>${firsts.length >= 2 ? `<button class="dbtn" data-diff="${esc(JSON.stringify([firsts[0], firsts[firsts.length - 1]]))}">Diff</button>` : ''}</span></div>`;
+  }
+  return html + '</div>';
+}
+function exportSVG(svg){ if (!svg) return; const cs = getComputedStyle(document.documentElement);
+  let txt = svg.outerHTML.replace(/var\((--[\w-]+)\)/g, (_, v) => cs.getPropertyValue(v).trim() || '#000');
+  txt = txt.replace(/^<svg /, `<svg xmlns="http://www.w3.org/2000/svg" font-family="${cs.getPropertyValue('--mono').replace(/"/g, "'").trim()}" `)
+    .replace(/(<svg[^>]*>)/, '$1<style>text{font-size:15px;font-weight:600;fill:#141414}.lab{font-size:16px;font-weight:700}.ax{fill:#4f4f4a}</style>');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], {type: 'image/svg+xml'})); a.download = 'flagpilot-lab.svg'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1500); }
+$('#pLab').addEventListener('click', e => {
+  const c = e.target.closest('.hc i[data-run]'); if (c){ openReplay(c.dataset.run); return; }
+  const d = e.target.closest('[data-diff]'); if (d){ try { diffPreset = JSON.parse(d.dataset.diff); } catch(_){ diffPreset = null; } labShow('diff'); return; }
+  const s = e.target.closest('[data-stop]'); if (s){ s.disabled = true; s.textContent = 'Stopping…'; fetch('/api/lab/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: s.dataset.stop})}); return; }
+  const x = e.target.closest('[data-svg]'); if (x){ exportSVG(x.closest('.expv').querySelector('svg.forest')); return; }
+  const ex = e.target.closest('.exp[data-id]'); if (ex){ LAB.cur = ex.dataset.id; qs('#expList .exp').forEach(b => b.classList.toggle('on', b === ex)); openExp(ex.dataset.id, $('#expView')); }
+});
+/* diff: align two runs by step; the first step where they did something different is marked */
+async function diffFill(){
+  let runs = []; try { runs = (await getJSON('/api/runs')).runs || []; } catch(_){}
+  const opts = runs.filter(r => r.id && !r.running).slice(0, 80).map(r => [r.id, `${en(r.task)} · ${r.ablation || '—'} · ${prettyModel(r.model) || '—'} · ${String(r.verdict || '').toUpperCase()} · ${ago(r.ts)}`]);
+  const fill = (el, want) => { const o = opts.slice(); if (want && !o.some(x => x[0] === want[0])) o.unshift(want); el.innerHTML = o.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join(''); if (want) el.value = want[0]; };
+  const [a, b] = diffPreset || [null, opts[1] || null]; fill($('#diffA'), a); fill($('#diffB'), b);
+  if (diffPreset){ diffPreset = null; diffRuns(); } else if (!$('#diffView').innerHTML) $('#diffView').innerHTML = opts.length < 2 ? '<p class="hint" style="margin-top:18px">Two finished runs are needed: run a challenge twice, or use the Diff button on a row of an experiment.</p>' : '';
+}
+$('#diffGo').onclick = () => diffRuns();
+async function diffRuns(){
+  const a = $('#diffA').value, b = $('#diffB').value, host = $('#diffView'), lab = el => (el.selectedOptions[0] || {}).textContent || '';
+  if (!a || !b){ host.innerHTML = '<p class="hint" style="margin-top:18px">Pick two runs.</p>'; return; }
+  host.innerHTML = '<div class="skel" style="height:220px;margin-top:18px"></div>';
+  const [A, B] = await Promise.all([a, b].map(id => getJSON('/api/result?id=' + encodeURIComponent(id)).catch(() => ({}))));
+  if (!A.events || !B.events){ host.innerHTML = '<p class="hint bad" style="margin-top:18px">Could not load one of the runs.</p>'; return; }
+  const steps = r => { const out = []; for (const ev of r.events){ if (ev.type === 'model'){ const o = parseModel(ev.text); out.push({n: ev.turn, act: o && o.action ? o : null, invalid: null, tool: null}); }
+    else if (ev.type === 'tool' && out.length) out[out.length - 1].tool = {exit_code: ev.exit_code, obs: ev.obs_head || ''};
+    else if (ev.type === 'invalid_action' && out.length) out[out.length - 1].invalid = ev.reason; } return out; };
+  const sa = steps(A), sb = steps(B), what = t => t ? chipWhat(t) : '', sig = t => t ? (t.act ? t.act.action + ':' + what(t) : 'x') : '';
+  let fork = -1; for (let i = 0; i < Math.max(sa.length, sb.length); i++) if (sig(sa[i]) !== sig(sb[i])){ fork = i; break; }
+  const nm = s => String((V[s] || [, , s || '?'])[2]).toLowerCase(), va = (A.summary || {}).verdict, vb = (B.summary || {}).verdict;
+  let say = fork < 0 ? `Both runs took the same ${plural(sa.length, 'step')}` : fork === 0 ? 'They went different ways from the first step' : `They took the same first ${plural(fork, 'step')}, then went different ways`;
+  if (fork >= 0) say += sa[fork] && sb[fork] ? `: at step ${fork + 1}, A did ${what(sa[fork])} while B did ${what(sb[fork])}` : `: ${sa[fork] ? 'B' : 'A'} had already stopped`;
+  say += `. A ended ${nm(va)} after ${plural(sa.length, 'turn')}; B ended ${nm(vb)} after ${plural(sb.length, 'turn')}.`;
+  const cell = (t, i) => !t ? '<div class="dc"></div>' : `<div class="dc${i === fork ? ' fork' : ''}"><div class="w"><span class="g ${ACT[t.act && t.act.action] || 'ring'}"></span>${pad2(t.n)} · ${esc(t.act ? t.act.action : 'error')} · ${esc(what(t))}</div>`
+    + (t.act && (t.act.cmd || t.act.code) ? `<code>${esc(String(t.act.cmd || t.act.code).split('\n')[0].slice(0, 160))}</code>` : '') + (t.tool && t.tool.obs ? `<div class="o">${esc(en(String(t.tool.obs)).slice(0, 220))}</div>` : '')
+    + (i === fork ? '<span class="ftag">first divergence</span>' : '') + '</div>';
+  let rows = ''; for (let i = 0; i < Math.max(sa.length, sb.length); i++) rows += `<div class="drow">${cell(sa[i], i)}${cell(sb[i], i)}</div>`;
+  host.innerHTML = `<p class="concl" style="margin-top:18px">${esc(say)}</p><div class="diff"><div class="drow dh"><div>A · ${esc(lab($('#diffA')))}</div><div>B · ${esc(lab($('#diffB')))}</div></div>${rows}</div>`;
+  if (!reduced()) host.querySelectorAll('.drow:not(.dh)').forEach((r, i) => r.animate([{opacity: 0, transform: 'translateY(6px)'}, {opacity: 1, transform: 'none'}], {duration: 260, delay: Math.min(500, i * 30), easing: EASE, fill: 'backwards'}));
+}
 $('#probeBtn').onclick = async () => {
   if (!sel || busy) return;
   const out = $('#cmpBase'), btn = $('#probeBtn'); out.innerHTML = '<p class="hint" style="margin-top:22px">Asking the bare model, one turn, no tools…</p>'; btn.disabled = true; btn.classList.add('busy');
@@ -2221,7 +2418,7 @@ $('#runTacc').onclick = async () => { if (!sel) return;
   if (QW.phase === 'ready') return runOnTacc();
   pendingRun = sel; if (QW.phase !== 'starting'){ await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
   toast('Starting Qwen 27B on TACC (about 5 minutes); the run starts by itself'); runningVerdict('Waiting for Qwen 27B on TACC …'); qwenPoll(); };
-pageHooks.lab = () => { if (!$('.labp[data-lab="tacc"]').hidden) taccPoll(); };
+pageHooks.lab = () => labShow(labTab);
 
 /* ---------------- upload ---------------- */
 let upFiles = [];
