@@ -471,6 +471,16 @@
   .hc{display:flex;gap:3px} .hc i{flex:1;height:26px;background:var(--rule2);transition:transform .15s var(--ease)} .hc i[data-run]{cursor:pointer} .hc i[data-run]:hover{transform:scaleY(1.18)}
   .hc i.ok{background:var(--blue)} .hc i.warn{background:var(--yellow)} .hc i.bad{background:var(--red)} .hc i.idle{background:var(--ink3)} .hc i.run{background:var(--ink);animation:blink 1s steps(2) infinite}
   .hc i.new{animation:land .55s var(--spring)} @keyframes land{from{transform:scale(.25);opacity:0}}
+  /* find a challenge online: a public CTF archive on GitHub, or a link */
+  .imp{margin-top:34px;background:var(--white);border:1.5px solid var(--ink);padding:20px 22px 22px}
+  .imp h2{margin:0 0 6px;font:800 24px var(--font);letter-spacing:-.01em} .imp>.segc{margin-top:16px}
+  .impbar{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px} .impbar input{flex:1 1 280px;min-width:0;font:16px var(--font);padding:10px 14px;border:1.5px solid var(--ink);background:var(--white);border-radius:0}
+  .impbar input:focus-visible{outline:none;box-shadow:4px 4px 0 var(--blue)}
+  .impctfs{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0}
+  .imprs{margin-top:14px;max-height:430px;overflow:auto;scrollbar-width:thin} button.row{width:100%;border:0;border-bottom:1px solid var(--rule2);background:transparent;font:inherit;text-align:left;color:inherit}
+  .impcard{margin-top:18px;border-top:1.5px solid var(--ink);padding-top:16px} .impcard h3{margin:0;font:800 22px var(--font);letter-spacing:-.01em}
+  .impcard .md{max-height:260px;overflow:auto;margin:12px 0;font-size:15px;padding:12px 14px;background:var(--paper);border-left:4px solid var(--ink)}
+  .impcard h4{margin:12px 0 4px;font:700 15px var(--font);color:var(--ink2)} .impcard ul{margin:0 0 6px;padding-left:20px;font:15px/1.6 var(--mono)}
   /* watching a run: step mode, pause, hints; a waiting command can be edited, run or skipped */
   .runctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin:16px 0 0;padding:12px 14px;border:1.5px dashed var(--ink);background:var(--white)}
   .runctl .hintbox{display:flex;flex:1 1 320px;min-width:240px;border:1.5px solid var(--rule);transition:border-color .12s} .runctl .hintbox:focus-within{border-color:var(--ink)}
@@ -869,7 +879,21 @@
   <section class="page" data-page="upload" id="pUpload" inert>
     <div class="grid"><div class="c8">
       <h1 class="ltitle">Upload</h1>
-      <p class="lead">Same sandbox and replay as the built-in set.</p>
+      <p class="lead">Find a past challenge online or upload your own. Same sandbox and replay as the built-in set.</p>
+      <section class="imp" id="imp" aria-label="Find a challenge online">
+        <h2>Find a challenge online</h2>
+        <p class="hint">Search a public archive of challenges from about 500 past CTFs, or paste a link. Solution files are left out; a real <code>flag.txt</code> becomes the gold flag.</p>
+        <div class="segc" id="impSeg" style="--n:2"><span class="thumb"></span><button data-imp="search" class="on">Search the archive</button><button data-imp="link">Paste a link</button></div>
+        <div class="impp" data-imp="search">
+          <div class="impbar"><input type="search" id="impQ" placeholder="A CTF or a challenge, e.g. picoCTF 2019 crypto" autocomplete="off" spellcheck="false" aria-label="Search the archive"></div>
+          <div id="impRes"></div><div id="impPrev"></div>
+        </div>
+        <div class="impp" data-imp="link" hidden>
+          <div class="impbar"><input type="url" id="impUrl" placeholder="https://github.com/…/tree/main/… or a link to a file" autocomplete="off" spellcheck="false" aria-label="Challenge link">
+            <button class="btn primary" id="impUrlGo"><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg>Import<span class="arr">→</span></button></div>
+          <div id="impUrlMsg"></div>
+        </div>
+      </section>
       <div id="upCard" style="margin-top:34px">
         <div id="upForm">
           <label class="drop" id="drop" for="upFiles">
@@ -965,6 +989,7 @@
       <button data-cat="mine"><span class="g d ink"></span>Mine</button></div>
     <div class="count" id="taskCount">—</div>
     <div class="list" id="tasks" tabindex="-1"></div>
+    <button class="btn plain" id="sheetOnline" style="margin-top:12px">Not here? Find one online<span class="arr">→</span></button>
   </div>
 </div>
 <div id="toast"></div>
@@ -2533,6 +2558,67 @@ $('#doUpload').onclick = async () => {
   } catch(e){ $('#upMsg').innerHTML = '<p class="toastline">' + esc(en(e.message)) + '</p>'; }
   finally { btn.disabled = false; btn.classList.remove('busy'); }
 };
+
+/* ---------------- find a challenge online: a public CTF archive on GitHub, or a link ---------------- */
+let impT = 0, impSeq = 0;
+const SKEL_ROWS = '<div class="list imprs">' + '<div class="row"><span></span><div class="skel" style="height:16px;width:70%"></div><span></span></div>'.repeat(4) + '</div>';
+const impSuggest = () => '<p class="hint" style="margin-top:12px">Try <button class="dbtn" data-q="picoCTF">picoCTF</button>, <button class="dbtn" data-q="0CTF">0CTF</button> or <button class="dbtn" data-q="DiceCTF">DiceCTF</button>, then open a CTF to search inside it.</p>';
+$('#impRes').innerHTML = impSuggest();
+$('#impSeg').addEventListener('click', e => { const b = e.target.closest('button[data-imp]'); if (!b) return; setSeg($('#impSeg'), [...$('#impSeg').querySelectorAll('button')].indexOf(b));
+  qs('.impp').forEach(p => { p.hidden = p.dataset.imp !== b.dataset.imp; }); (b.dataset.imp === 'link' ? $('#impUrl') : $('#impQ')).focus(); });
+$('#impQ').addEventListener('input', () => { clearTimeout(impT); impT = setTimeout(impSearch, 260); });
+const impFail = (host, e) => { host.innerHTML = `<p class="hint bad" style="margin-top:12px">${esc(en(e.message || String(e)))}</p>`; };
+async function impJSON(url, opt){ const r = await fetch(url, opt), d = await r.json().catch(() => ({})); if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status)); return d; }
+function impRows(rows){ return `<div class="list imprs">${rows.map(r => `<button type="button" class="row impr" data-path="${esc(r.path)}"><span class="g ${catOf(r.category || '')[1]}"></span><div style="min-width:0"><div class="nm">${esc(r.name)}</div>`
+  + `<div class="ds">${esc([r.ctf, r.year, r.category].filter(Boolean).join(' · '))} · ${plural(r.files, 'file')} · ${kb(r.bytes)}</div></div><span class="arr">→</span></button>`).join('')}</div>`; }
+async function impSearch(){
+  const q = $('#impQ').value.trim(), my = ++impSeq, box = $('#impRes');
+  if (!q){ box.innerHTML = impSuggest(); return; }
+  box.innerHTML = SKEL_ROWS;
+  let d; try { d = await impJSON('/api/catalog/search?q=' + encodeURIComponent(q)); } catch(e){ if (my === impSeq) impFail(box, e); return; }
+  if (my !== impSeq) return;
+  box.innerHTML = (d.ctfs.length ? `<div class="impctfs">${d.ctfs.map(n => `<button type="button" class="chip" data-ctf="${esc(n)}"><span class="g ring"></span>Open ${esc(n)}</button>`).join('')}</div>` : '')
+    + (d.challenges.length ? impRows(d.challenges) : `<p class="hint" style="margin-top:12px">${d.ctfs.length ? 'Open a CTF to list its challenges.' : 'No match.'} ${d.opened} of ${d.total_ctfs} CTFs have been opened, and only those are searched by challenge name.</p>`);
+}
+async function impOpenCtf(name){
+  const box = $('#impRes'), my = ++impSeq; box.innerHTML = SKEL_ROWS;
+  let d; try { d = await impJSON('/api/catalog/challenges?ctf=' + encodeURIComponent(name)); } catch(e){ if (my === impSeq) impFail(box, e); return; }
+  if (my === impSeq) box.innerHTML = `<p class="hint" style="margin-top:12px">${esc(name)} · ${plural(d.rows.length, 'challenge')}</p>` + impRows(d.rows);
+}
+async function impPreview(path){
+  const host = $('#impPrev'); host.innerHTML = '<div class="impcard"><div class="skel" style="height:26px;width:40%"></div><div class="skel" style="height:120px;margin-top:14px"></div></div>';
+  let d; try { d = await impJSON('/api/catalog/preview?path=' + encodeURIComponent(path)); } catch(e){ impFail(host, e); return; }
+  const parts = path.split('/'), li = xs => xs.length ? `<ul>${xs.join('')}</ul>` : '<p class="hint">None.</p>';
+  host.innerHTML = `<div class="impcard"><h3>${esc(parts[parts.length - 1])}</h3><p class="hint">${esc(parts.slice(1, -1).join(' · '))}</p>`
+    + (d.readme ? `<div class="md">${mdLite(en(d.readme))}</div>` : '<p class="hint">No description in the archive.</p>')
+    + `<h4>Attachments</h4>${li(d.files.map(f => `<li>${esc(f.name)} · ${kb(f.size)}</li>`))}`
+    + (d.skipped.length ? `<h4>Left out</h4>${li(d.skipped.map(x => `<li>${esc(x.name)}: ${esc(x.why)}</li>`))}` : '')
+    + `<p class="hint">${d.gold ? 'The archive holds the real flag, so a solve can be verified against it.' : 'No gold flag: a solve can be reproduced in a clean sandbox but not checked against an answer.'}</p>`
+    + `<div class="actions"><button class="btn primary" data-import="${esc(path)}">${ORBIT}Import<span class="arr">→</span></button></div></div>`;
+  host.scrollIntoView({block: 'nearest', behavior: reduced() ? 'auto' : 'smooth'});
+}
+async function impImport(body, btn, host){
+  btn.disabled = true; btn.classList.add('busy');
+  try {
+    const d = await impJSON('/api/catalog/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const all = await loadTasks(), nw = (all.custom_tasks || []).find(x => x.name === d.task.name);
+    host.innerHTML = `<div class="impcard"><h3>Imported</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known' : 'no gold flag'}`
+      + `${d.skipped && d.skipped.length ? ' · left out ' + plural(d.skipped.length, 'file') : ''}</p><div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
+    $('#impSolve').onclick = () => { if (nw) pick(nw); go('solve'); };
+    $('#impAsk').onclick = () => { if (nw) pick(nw); go('chat'); };
+    toast('Imported ' + d.task.title); railMark('upload', 'ok');
+  } catch(e){ impFail(host, e); }
+  finally { btn.disabled = false; btn.classList.remove('busy'); }
+}
+$('#pUpload').addEventListener('click', e => {
+  const c = e.target.closest('[data-ctf]'); if (c){ impOpenCtf(c.dataset.ctf); return; }
+  const q = e.target.closest('[data-q]'); if (q){ $('#impQ').value = q.dataset.q; impSearch(); return; }
+  const r = e.target.closest('.impr[data-path]'); if (r){ qs('#impRes .impr.sel').forEach(x => x.classList.remove('sel')); r.classList.add('sel'); impPreview(r.dataset.path); return; }
+  const b = e.target.closest('[data-import]'); if (b) impImport({path: b.dataset.import}, b, $('#impPrev'));
+});
+$('#impUrlGo').onclick = () => { const u = $('#impUrl').value.trim(); if (!u){ $('#impUrl').focus(); return; } impImport({url: u}, $('#impUrlGo'), $('#impUrlMsg')); };
+$('#impUrl').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); $('#impUrlGo').click(); } });
+$('#sheetOnline').onclick = () => { closeSheet(); go('upload'); setTimeout(() => $('#impQ').focus({preventScroll: false}), 60); };
 
 /* ---------------- ask: threads on the left, a back-and-forth conversation on the right ---------------- */
 function mdLite(text){ return String(text || '').split(/```/).map((p, i) => {

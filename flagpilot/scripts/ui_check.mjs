@@ -220,6 +220,35 @@ try {
   await js("document.querySelector('#goSolveNew').click()");
   check("'Solve it' opens it on Solve", await until("document.querySelector('.page.on').dataset.page === 'solve' && /custom|ui/.test(document.querySelector('#sgId').textContent)", 3000));
 
+  // 8b. find a challenge online (the archive answers are stubbed here; tests/test_catalog.py covers the server side offline)
+  await js("document.querySelector('.navbtn[data-page=\"upload\"]').click()");
+  await js(`(() => { window.__F = window.fetch; window.__imp = [];
+    const J = o => Promise.resolve(new Response(JSON.stringify(o), {headers: {'Content-Type': 'application/json'}}));
+    window.fetch = (u, o) => { u = String(u);
+      if (u.startsWith('/api/catalog/search')) return J({ctfs: ['picoCTF'], challenges: [], opened: 0, total_ctfs: 499});
+      if (u.startsWith('/api/catalog/challenges')) return J({rows: [{path: 'ctfs/picoCTF/2019/crypto/caesar', ctf: 'picoCTF', year: '2019', category: 'Cryptography', name: 'caesar', files: 2, bytes: 2048, readme: true}]});
+      if (u.startsWith('/api/catalog/preview')) return J({path: 'ctfs/picoCTF/2019/crypto/caesar', readme: 'Decrypt this message.', files: [{name: 'ciphertext', size: 1024}], skipped: [{name: 'solve.py', why: 'looks like a solution'}], gold: false});
+      if (u.startsWith('/api/catalog/import')){ window.__imp.push(JSON.parse(o.body)); return J({task: {name: 'custom-ui-imported', title: 'caesar', n_assets: 1}, gold: false, skipped: [{name: 'solve.py', why: 'looks like a solution'}]}); }
+      return window.__F(u, o); }; })()`);
+  await js("(() => { const q = document.querySelector('#impQ'); q.value = 'pico'; q.dispatchEvent(new Event('input', {bubbles: true})); })()");
+  const ctfChip = await until("document.querySelector('#impRes [data-ctf=\"picoCTF\"]')", 3000);
+  if (ctfChip) await js("document.querySelector('#impRes [data-ctf=\"picoCTF\"]').click()");
+  const listed2 = await until("document.querySelector('#impRes .impr[data-path]')", 3000);
+  if (listed2) await js("document.querySelector('#impRes .impr[data-path]').click()");
+  const previewed = await until("/Decrypt this message/.test((document.querySelector('#impPrev .impcard .md') || {}).textContent || '') && /solve.py: looks like a solution/.test(document.querySelector('#impPrev').textContent)", 3000);
+  if (previewed) await js("document.querySelector('#impPrev [data-import]').click()");
+  const imported = await until("/Imported/.test(document.querySelector('#impPrev').textContent) && document.querySelector('#impSolve')", 5000);
+  await js("window.fetch = window.__F");
+  check("upload: search the online archive, open a CTF, preview a challenge (solutions left out), import it", ctfChip && listed2 && previewed && imported && (await js("(window.__imp[0] || {}).path")) === "ctfs/picoCTF/2019/crypto/caesar",
+    JSON.stringify({ctfChip, listed2, previewed, imported}));
+  const smallUp = await js(SMALL); check("no small text on Upload", !smallUp.length, smallUp.join(" | "));
+  await noCJK("upload");
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click(); document.querySelector('[data-taskpill]') && null");
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "/", code: "Slash", text: "/" }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "/", code: "Slash" });
+  await until("!document.querySelector('#sheetWrap').hidden", 2000);
+  await js("document.querySelector('#sheetOnline').click()");
+  check("picker: 'Find one online' leads to the archive search", await until("document.querySelector('.page.on').dataset.page === 'upload' && document.querySelector('#sheetWrap').hidden && document.activeElement === document.querySelector('#impQ')", 3000));
+
   // 9. ask: Enter sends, typing dots, threads
   await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()");
   await until("document.activeElement === document.querySelector('#chatInput')", 2000);

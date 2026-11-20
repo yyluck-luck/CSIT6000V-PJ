@@ -39,7 +39,7 @@ from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
-from app import httpcache, lab, runs_index, tacc, tacc_live
+from app import catalog, httpcache, lab, runs_index, tacc, tacc_live
 from flagpilot.control import OPS, RunControl
 
 STATIC = Path(__file__).resolve().parent / "index.html"
@@ -441,6 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                                                  if r.get("type") in ("user", "reply", "error")],
                                     "model": runs_index.thread_model(rows),
                                     "exists": bool(rows)})
+        if path.startswith("/api/catalog/"):
+            return self._catalog_get(path)
         if path == "/api/lab/experiments":
             return self._json(200, {"experiments": lab.experiments(config.RUNS_ROOT)})
         if path == "/api/lab/experiment":
@@ -503,7 +505,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/run/control")
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/run/control",
+                  "/api/catalog/import")
         if path not in routes:
             return self._json(404, {"error": "not found"})
         if not self._json_content_type():
@@ -536,6 +539,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._lab_start(payload)
         if path == "/api/run/control":
             return self._run_control(payload)
+        if path == "/api/catalog/import":
+            return self._catalog_import(payload)
         if path == "/api/lab/stop":
             m = lab.exp_dir(config.RUNS_ROOT, str(payload.get("id") or ""))
             return self._json(200, {"ok": bool(m) and lab.stop(m.name)})
@@ -582,6 +587,37 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"run_id": rid, "ablation": ablate or SETTINGS["ablation"]})
 
     # ---------- 运行时设置 ----------
+
+    def _catalog_get(self, path: str) -> None:
+        """在线题库：比赛列表、某个比赛的题、搜索、预览。网络或额度问题以 502 + 可读原因返回。"""
+        try:
+            if path == "/api/catalog/ctfs":
+                return self._json(200, {"ctfs": [c["name"] for c in catalog.ctfs()], "token": bool(catalog._token())})
+            if path == "/api/catalog/challenges":
+                return self._json(200, {"rows": catalog.challenges(self._qparam("ctf"))})
+            if path == "/api/catalog/search":
+                return self._json(200, catalog.search(self._qparam("q")[:200]))
+            if path == "/api/catalog/preview":
+                return self._json(200, catalog.preview(self._qparam("path")[:600]))
+        except catalog.CatalogError as e:
+            return self._json(502, {"error": str(e)})
+        return self._json(404, {"error": "not found"})
+
+    def _catalog_import(self, payload: dict) -> None:
+        try:
+            if payload.get("path"):
+                r = catalog.import_archive(str(payload["path"])[:600])
+            elif payload.get("url"):
+                r = catalog.import_url(str(payload["url"])[:2000])
+            else:
+                return self._json(400, {"error": "path or url required"})
+        except catalog.CatalogError as e:
+            return self._json(502, {"error": str(e)})
+        except ValueError as e:              # custom.create 的输入校验
+            return self._json(400, {"error": str(e)})
+        t = r["task"]
+        return self._json(200, {**r, "task": {"name": t.name, "title": t.title, "category": t.category,
+                                              "has_gold": t.has_gold, "n_assets": len(t.assets)}})
 
     def _run_control(self, payload: dict) -> None:
         """看着一次本机运行的人：单步、暂停 / 继续、批准 / 修改 / 跳过当前命令、停止、插提示。"""
