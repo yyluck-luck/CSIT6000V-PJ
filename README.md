@@ -427,14 +427,15 @@ distinction is stated wherever repetition counts are reported.
 
 ### 4. Deployment on TACC
 
-Three paths, in increasing order of what they require. **Path A needs no cluster at all** and is
-what grading and demos should use; the other two exist because the evaluation itself needs a GPU.
+Four paths. **Path A needs no cluster at all** and is what grading should use; the others exist
+because the evaluation itself needs a GPU.
 
 | Path | Needs | Use |
 |---|---|---|
 | A. Offline replay | A `runs/` directory | Reviewing results, demos, screenshots |
 | B. Backend on the cluster, frontend on your laptop | TACC account + SSH forwarding | Interactive debugging of the UI |
 | C. Batch job on the cluster, pull results back | TACC account + the course SDK | Producing real evaluation data |
+| D. Live agent from the web page | TACC account + the course SDK | Demos with the real model, no forwarding |
 
 #### 4A. Nothing on the cluster
 
@@ -502,8 +503,29 @@ sbatch --export=ALL,FP_LIMIT=20,FP_SPLIT=dev deploy/serve.slurm
 sbatch --export=ALL,FP_LIMIT=20,FP_SPLIT=dev deploy/run.slurm
 ```
 
+#### 4D. Live agent from the web page (SDK only)
+
+The page can drive Qwen on the course platform directly. The local server submits SDK jobs and reads
+their Slurm logs, so nothing is forwarded.
+
+```bash
+cd flagpilot && python3 -m flagpilot web --replay runs/tacc   # then click "Qwen on TACC · connect" (Solve) or "connect Qwen" (Ask)
+```
+
+- Connecting submits one serving job and keeps it for the partition's hour, counted from when the job
+  starts running. It is cancelled three minutes before the limit, or when you click the chip again.
+- **Run on TACC** on Solve submits a small client job with just that challenge. The job prints each
+  trace event into its log; the page reads it with `tcloud cat` every 4 s, then downloads the finished
+  run and mounts it as a replay.
+- Each Ask message is one small job (`fp chat-once`) that sends its reply back the same way. Threads
+  stay on the laptop in `runs/chat/`.
+- Client jobs share one working directory on the platform, so one solve or reply runs at a time.
+- Measured on 2026-11-20 (serving job 30111): ready in 5 minutes, one Ask reply in 31 s, and
+  general-004 (B3) from click to `verified` in 64 s.
+
 **Known platform constraints.** The course partition caps a job at 1 hour, and serving a 27B model
-takes about 17 minutes to become ready, leaving roughly 43 minutes of work per job; long evaluations
+takes 5–17 minutes to become ready (5 on 2026-11-20, 17 in an earlier run), leaving 43–55 minutes of
+work per job; long evaluations
 must be sharded with `--shard i/n`. `max_num_seqs` and `enable_prefix_caching` are fixed in the
 provided serving script, which is why E3's grid is smaller than planned. Full notes:
 `flagpilot/docs/DEPLOY-TACC.md` and `flagpilot/docs/TACC.md`.
@@ -525,13 +547,13 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 336 tests
+python3 -m unittest discover -s tests -t . -q     # 347 tests
 bash scripts/verify.sh                            # 13 feature checks (the last one drives the web UI)
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 336 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all 347 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check.
 
