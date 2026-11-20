@@ -763,8 +763,9 @@ class Handler(BaseHTTPRequestHandler):
                     if ev.get("type") == "done":
                         return
                 if st.get("summary"):
-                    # 兜底：worker 异常结束时 summary 有值但 done 没进列表
-                    send({"type": "done", **st["summary"]})
+                    # 兜底：worker 异常结束时 summary 有值但 done 没进列表；回放与从盘上读回的 run 也走这里。
+                    # type 放在最后：盘上的 summary 事件自带 "type": "summary"，放前面会被它盖掉。
+                    send({**st["summary"], "type": "done"})
                     return
                 if partial is not None and cond is not None:
                     with cond:

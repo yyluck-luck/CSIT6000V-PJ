@@ -204,6 +204,26 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("model", [e.get("type") for e in d["events"]])
         self.assertIn(f"{self.task_name()}-s0", d["summary"].get("run_dir", ""))
 
+    def test_replay_stream_ends_with_done(self):
+        """挂载的回放经 SSE 读：最后一条必须是 done。以前兜底那条写成 {"type": "done", **summary}，
+        被 summary 自带的 type 覆盖成了 summary，按 done 收尾的读端会一直等到超时。"""
+        d = self.tmp / "replay-src" / "x-001-s0"
+        d.mkdir(parents=True)
+        rows = [{"type": "meta", "task": "x-001"}, {"type": "model", "turn": 1, "prompt_tokens": 1, "completion_tokens": 1},
+                {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1}]
+        (d / "trace.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        (rid, _, _), = S._mount_replay(str(d.parent))
+        got = []
+        with urllib.request.urlopen(self.base + f"/api/stream?id={rid}", timeout=10) as s:
+            for raw in s:
+                line = raw.decode()
+                if line.startswith("data:"):
+                    got.append(json.loads(line[5:]))
+                    if got[-1].get("type") == "done" or len(got) > len(rows):
+                        break
+        self.assertEqual([e["type"] for e in got], ["meta", "model", "summary", "done"])
+        self.assertEqual((got[-1]["verdict"], got[-1]["reason"]), ("verified", "match"))
+
     def test_models_endpoint(self):
         d = json.loads(self.get("/api/models"))
         self.assertTrue(d["models"])
