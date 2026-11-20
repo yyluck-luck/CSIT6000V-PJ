@@ -49,6 +49,13 @@ tcloud cancel -j <serve job>                            # 释放 GPU
   - 平台上客户端作业共用一个工作目录，所以求解和答疑同一时间只跑一件，忙时网页会提示。
   - 2026-11-20 实测（服务作业 30111，节点 10-0-3-11）：开服到就绪 300 s；一条答疑往返 31 s；
     general-004（B3）从点击到 verified 64 s。
+  - **一条回复为什么要半分钟**：课程平台只给 SDK，消息到不了常驻服务，每条都要交一个 Slurm 作业。
+    实测拆分（作业 30163）：提交 35 s（SDK 按文件逐个上传，当时 37 个文件）→ 排队与启动 9 s → 生成 < 2 s。
+    现在除 tuxiv.conf / job.sh / run.env 外打成一个 payload.tgz、代码打成 flagpilot.zip：
+    不挂题 43.7 s → 26.6 s（作业 30165）；挂题（带 pycryptodome / gmpy2，以前 200 多个文件）约 79 s → 56 s（作业 30166）。
+  - **排队中（on hold）**：另一个回复或单题正在跑时，新请求排队而不是报 "busy"；作业排着队时页面显示 Slurm 的原因
+    （QOSMaxJobsPerUserLimit = 个人两个作业的名额已满，Resources = 没有空闲 GPU）。会话结束时取消还在排队的作业。
+  - **重启网页服务不丢会话**：会话写在 runs/tacc/session.json，重启后核实服务作业还在跑就接回来。
 
 | 档位（dev，n=20，qwen3.8-27b） | verified | 95% CI | raw | 平均轮次 | 整批 prefix cache |
 |---|---|---|---|---|---|

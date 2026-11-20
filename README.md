@@ -529,6 +529,13 @@ cd flagpilot && python3 -m flagpilot web --replay runs/tacc   # then click "Qwen
 - Client jobs share one working directory on the platform, so one solve or reply runs at a time.
 - Measured on 2026-11-20 (serving job 30111): ready in 5 minutes, one Ask reply in 31 s, and
   general-004 (B3) from click to `verified` in 64 s.
+- A reply is a Slurm job, so most of its time is the SDK upload and scheduling, not the model. The SDK
+  uploads files one by one, so client jobs now ship everything except `tuxiv.conf`, `job.sh` and
+  `run.env` as one `payload.tgz`. That cut an Ask reply from 43.7 s to 26.6 s, and one with a
+  challenge attached from about 79 s to 56 s.
+- While another job is running, a new request waits ("on hold") instead of failing. The page shows
+  Slurm's reason for any queue: the account's two-job limit, or no free GPUs.
+- Restarting the web server reconnects to a serving job that is still running.
 
 **Known platform constraints.** The course partition caps a job at 1 hour, and serving a 27B model
 takes 5–17 minutes to become ready (5 on 2026-11-20, 17 in an earlier run), leaving 43–55 minutes of
@@ -554,13 +561,13 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 365 tests
+python3 -m unittest discover -s tests -t . -q     # 368 tests
 bash scripts/verify.sh                            # 13 feature checks (the last one drives the web UI)
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 365 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all 368 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check.
 
