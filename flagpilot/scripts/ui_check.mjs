@@ -55,6 +55,12 @@ const until = async (expr, ms = 15000) => { const t = Date.now(); while (Date.no
 const vp = (w, h) => send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false });
 const nav = async url => { await send("Page.navigate", { url }); await until("document.readyState === 'complete'", 10000); await sleep(150); };
 const noCJK = async label => { const hits = await js(`(document.body.innerText.match(/[\\u3000-\\u9fff\\uff00-\\uffef]+/g) || []).slice(0, 5)`); check(`no CJK text on screen (${label})`, !hits.length, hits.join(" ")); };
+const SMALL = `(() => { const out = new Set(); const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  while (w.nextNode()){ const n = w.currentNode, t = n.textContent.trim(), el = n.parentElement; if (!t || !el) continue;
+    if (el.closest('[hidden],script,style,canvas,svg,.cb,code,pre,.n,#tip') || (el.closest('.page') && !el.closest('.page.on'))) continue;
+    const r = el.getBoundingClientRect(), cs = getComputedStyle(el); if (!r.width || !r.height || cs.visibility === 'hidden' || +cs.opacity === 0) continue;
+    if (parseFloat(cs.fontSize) < 14.9) out.add(t.slice(0, 30) + ' @' + cs.fontSize); }
+  return [...out].slice(0, 6); })()`;
 
 await send("Page.enable"); await send("Runtime.enable"); await send("Log.enable"); await vp(1440, 900);
 await send("Browser.grantPermissions", { permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"], origin: base }).catch(() => {});
@@ -62,6 +68,9 @@ try {
   // 1. landing
   await nav(base + "/#/solve");
   check("landing renders", await until("document.querySelectorAll('#tasks .row').length > 0 && !document.querySelector('#landing').hidden"));
+  const fill = await js("(() => { const F = document.querySelector('#feats').getBoundingClientRect(); return {table: !!document.querySelector('#latest'), right: Math.round(innerWidth - F.right), bottom: Math.round(F.bottom), vh: innerHeight, ox: document.documentElement.scrollWidth - innerWidth}; })()");
+  check("landing fills the window: no side table, cards span the width, one screen", !fill.table && fill.right < 120 && fill.bottom <= fill.vh && fill.ox <= 0, JSON.stringify(fill));
+  const smallLanding = await js(SMALL); check("no small text on the landing", !smallLanding.length, smallLanding.join(" | "));
   const w0 = await js("document.querySelector('#flip').textContent");
   check("layout text flip cycles", await until(`document.querySelector('#flip').textContent.trim() !== ${JSON.stringify(w0.trim())}`, 4000));
   await noCJK("landing");
@@ -98,6 +107,7 @@ try {
   // 5. live run
   await js("document.querySelector('#run').click()");
   check("run reaches a verdict", await until("document.querySelector('#verdict .verdict:not(.run)')", 20000));
+  const smallSolve = await js(SMALL); check("no small text on Solve after a run", !smallSolve.length, smallSolve.join(" | "));
   check("verdict bar does not repeat the readouts", await js("!/turns|\\d+\\.\\d+ s/.test((document.querySelector('#verdict .vbar') || {}).textContent || 'x')") && await js("!!document.querySelector('#promptBtn')"));
   check("steps rendered", await js("document.querySelectorAll('#flow details.step').length >= 2"));
   check("scrubber has a tick per step", await js("!document.querySelector('#scrub').hidden && document.querySelectorAll('#scrub .tk').length === document.querySelectorAll('#flow details.step').length"));
@@ -122,6 +132,7 @@ try {
   // 6. runs + replay
   await js("document.querySelector('.navbtn[data-page=\"history\"]').click()");
   check("runs list and stats render", await until("document.querySelectorAll('#histList .row').length >= 1 && /\\d/.test(document.querySelector('#hs-n').textContent)", 5000));
+  const smallRuns = await js(SMALL); check("no small text on Runs", !smallRuns.length, smallRuns.join(" | "));
   check("leaving Solve clears the finished verdict from the status pill", await until("document.querySelector('#status').textContent === 'Ready' && !document.querySelector('#islMore').textContent", 2000), await js("document.querySelector('#status').textContent + ' / ' + document.querySelector('#islMore').textContent"));
   await js("document.querySelector('#histList .row').click()");
   check("replay from Runs reaches a verdict", await until("document.querySelector('.page.on').dataset.page === 'solve' && document.querySelector('#verdict .verdict:not(.run)')", 10000));
@@ -228,6 +239,7 @@ try {
   const meWant = [/^dashed \| On hold · uploading to TACC$/, /^solid \| On hold · queued on TACC · job 30120 · your two-job limit is in use$/, /^solid \| On hold · running on 10-0-3-11/, /^solid \| On hold · replying$/, /^solid \| On hold · replying$/, /^solid \| -$/];
   check("my bubble: dashed until the job is queued, then solid; the hold receipt lasts until the reply", meSeen.length === 6 && meWant.every((re, i) => re.test(meSeen[i])), JSON.stringify(meSeen));
   await noCJK("ask");
+  const smallAsk = await js(SMALL); check("no small text on Ask", !smallAsk.length, smallAsk.join(" | "));
 
   // 10. narrow viewport + reduced motion
   await vp(390, 844); await nav(base + "/#/history"); await sleep(300);

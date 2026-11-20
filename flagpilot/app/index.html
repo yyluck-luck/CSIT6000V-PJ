@@ -27,7 +27,7 @@
     --blue:#1e50d2; --red:#e2302d; --yellow:#f4b400;
     --blue-t:rgba(30,80,210,.08); --yellow-t:rgba(244,180,0,.16);
     --code:#111214; --code2:#1a1b1e; --code-ink:#e7e6e2; --code-dim:#8a8984; --code-rule:#2a2b2f;
-    --rail:176px; --gut:24px; --mar:52px;
+    --rail:176px; --gut:clamp(16px,1.6vw,40px); --mar:clamp(20px,3.4vw,96px);
     --font:"Inter",-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,system-ui,sans-serif;
     --mono:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
     --ease:cubic-bezier(.16,1,.3,1); --ease-io:cubic-bezier(.65,0,.35,1);
@@ -101,7 +101,7 @@
   #stage{position:fixed;left:var(--rail);right:0;top:0;bottom:0;z-index:1}
   .page{position:absolute;inset:0;overflow:auto;padding:88px var(--mar) 110px;scrollbar-width:thin;scrollbar-color:var(--rule) transparent;visibility:hidden}
   .page.on{visibility:visible}
-  .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--gut);max-width:1240px}
+  .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--gut)}
   .c12{grid-column:1/-1} .c8{grid-column:span 8} .c4{grid-column:span 4}
   .ltitle{margin:0;font:800 clamp(40px,4.6vw,64px)/1.0 var(--font);letter-spacing:-.035em;word-break:break-word}
   .lead{color:var(--ink2);font-size:18px;line-height:1.55;margin:18px 0 0;max-width:46ch}
@@ -196,9 +196,13 @@
   .grouphd{font:600 13px var(--mono);color:var(--ink3);padding:16px 18px 8px;background:var(--paper);border-top:1px solid var(--rule)}
 
   /* ---------- solve: landing — type only, one flipping word (Aceternity Layout Text Flip) ---------- */
-  .hero2{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr);gap:56px;align-items:start;max-width:1240px}
+  #landing{min-height:calc(100vh - 198px);display:flex;flex-direction:column;justify-content:space-between;gap:clamp(28px,4vh,96px)}
+  .hero2{display:block}
   #hero{position:relative;padding:6px 0 0}
-  #hero h1{margin:0;font:800 clamp(42px,4.7vw,78px)/1.0 var(--font);letter-spacing:-.045em}
+  /* everything on the landing scales with the smaller of the window's width and height, so it fills the screen without spilling */
+  #hero h1{margin:0;font:800 clamp(44px,min(6.6vw,10.5vh),184px)/.98 var(--font);letter-spacing:-.045em}
+  #hero .actions{margin-top:clamp(24px,min(3vw,4.5vh),64px)}
+  #hero .actions .btn{height:clamp(50px,min(3.7vw,6vh),84px);padding:0 clamp(22px,1.7vw,40px);font-size:clamp(15px,min(1.05vw,1.7vh),22px)}
   .latest{border:1.5px solid var(--ink);background:var(--white);box-shadow:5px 5px 0 var(--ink);padding:20px 22px 12px}
   .latest .lab{font:600 15px var(--font);color:var(--ink2);display:flex;justify-content:space-between;gap:10px}
   .latest .big{font:800 54px/1 var(--font);letter-spacing:-.03em;margin-top:12px;color:var(--blue)}
@@ -209,12 +213,12 @@
   .flip{position:relative;display:inline-block;vertical-align:bottom;height:1.02em;overflow:hidden;padding:0 .14em;margin:0 .04em;background:var(--blue);color:#fff;transition:width .5s var(--spring),background .35s ease}
   .flip span{display:block;white-space:nowrap}
   .flip.yellow{background:var(--yellow);color:var(--ink)} .flip.red{background:var(--red)}
-  #hero .sub{font:500 clamp(18px,1.5vw,22px)/1.5 var(--font);color:var(--ink2);margin-top:28px;max-width:42ch}
+  #hero .sub{font:500 clamp(18px,min(1.6vw,2.6vh),36px)/1.45 var(--font);color:var(--ink2);margin-top:clamp(18px,min(2vw,3vh),44px);max-width:44ch}
   /* features with skeletons (Aceternity) */
-  .feats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gut);max-width:1240px;margin:48px 0 0}
+  .feats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gut);margin:0}
   .feat{border:1.5px solid var(--ink);background:var(--white);box-shadow:5px 5px 0 var(--ink);display:flex;flex-direction:column}
-  .feat .sk{height:150px;border-bottom:1.5px solid var(--ink);position:relative;overflow:hidden;background:var(--paper)}
-  .feat h3{margin:0;padding:20px 22px 6px;font:800 23px/1.15 var(--font);letter-spacing:-.02em}
+  .feat .sk{height:clamp(120px,min(14vw,17vh),330px);border-bottom:1.5px solid var(--ink);position:relative;overflow:hidden;background:var(--paper)}
+  .feat h3{margin:0;padding:clamp(16px,min(1.5vw,2.4vh),34px);font:800 clamp(21px,min(1.9vw,3.1vh),42px)/1.15 var(--font);letter-spacing:-.02em}
   .feat p{margin:0;padding:0 22px 22px;font-size:16px;color:var(--ink2);line-height:1.55}
   .sk-term{position:absolute;inset:22px;background:var(--code);padding:16px;display:grid;align-content:start;gap:10px}
   .sk-term i{height:9px;background:#2c2d32;transform-origin:0 50%;animation:skline 3.2s var(--ease) infinite}
@@ -595,6 +599,11 @@
     *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
     #wipe{display:none}
   }
+  /* minimum text size: captions that only repeated something are hidden; the rest is read at 15px */
+  #figSum,#mState,.thread span{display:none!important}
+  .btn,.btn.sm,.chip,.pixbtn,.navbtn,th,.tcell,.count,.ago,.row .rt,.grouphd,.stat,.stp,.step .act,.step .no,.step .tm,.sec>summary,.sec>summary::before,
+  .statbox .ci,.arm .am,.arm .av,.tiles .tl,.tacc-steps div b,.scrub .bubble,.cmp .knob,.bub .note,.peek .lstat,.fig figcaption .key,#island,#island .flagl,.livetxt,.badge,.rcpt,.step code,.chip.thr b{font-size:15px}
+  .chip.thr .n,.threads .rail b,.threads .rail .n,#tip{font-size:14px}
 </style>
 </head>
 <body>
@@ -642,16 +651,14 @@
             <button class="btn" data-go="history">Replay a run<span class="arr">→</span></button></div>
         </div>
       </header>
-      <aside class="latest" id="latest"><div class="lab"><span>Table 1 — latest runs</span><button class="btn plain" data-go="history">All →</button></div>
-        <div class="big" id="latestRate">—</div><div class="ci" id="latestCi">No runs yet.</div><div id="latestList"></div></aside>
       </div>
       <section class="feats" id="feats">
         <article class="feat"><div class="sk"><div class="sk-term"><i></i><i></i><i></i><i></i><i></i></div></div>
-          <h3>Watch every step.</h3><p>Thought, command and the sandbox's real output, turn by turn.</p></article>
+          <h3>Watch every step.</h3></article>
         <article class="feat"><div class="sk"><div class="sk-room"><div class="b"></div><div class="arrow"></div><div class="b r"></div><i class="tok"></i></div></div>
-          <h3>Replay in a clean room.</h3><p>The script reruns where only the attachments exist.</p></article>
+          <h3>Replay in a clean room.</h3></article>
         <article class="feat"><div class="sk"><div class="sk-bars"><i></i><i></i><i></i><i></i></div></div>
-          <h3>Measure, don't claim.</h3><p>Every rate comes with its 95% interval.</p></article>
+          <h3>Measure, don't claim.</h3></article>
       </section>
     </div>
     <div class="grid" id="work" hidden>
@@ -1831,13 +1838,14 @@ function renderHistory(animate){
 /* landing, Table 1: the latest runs and the overall verified rate with its 95% interval (real data, not decoration) */
 const isReal = h => h.model && !/^mock/i.test(h.model);
 function renderLatest(){
+  if (!$('#latestList')) return;          // the landing no longer carries the runs table
   const H = (HIST || []).filter(isReal), n = H.length, ok = H.filter(h => h.verdict === 'verified').length, ci = wilson(ok, n);
   speed($('#latestRate'), n ? ok / n * 100 : null, v => v.toFixed(1) + '%');
   $('#latestCi').textContent = n ? `${ok} of ${n} real-model runs verified · 95% CI ${(ci[0] * 100).toFixed(1)}–${(ci[1] * 100).toFixed(1)}%` : 'No real-model runs yet.';
   $('#latestList').innerHTML = H.slice(0, 6).map(h => { const tone = verdictTone(h.verdict), shape = tone === 'ok' ? 'c blue' : tone === 'bad' ? 'red' : tone === 'warn' ? 't yellow' : tone === 'run' ? 'spin' : 'ring';
     return `<div class="row" data-id="${esc(h.id)}"><span class="g ${shape}"></span><div style="min-width:0"><div class="nm">${esc(en(h.task))}</div><div class="ds">${esc(h.model || '—')} · ${esc(h.ablation || '—')} · ${ago(h.ts)}</div></div><span class="badge ${tone === 'idle' ? '' : tone}">${esc(h.verdict)}</span></div>`; }).join('');
 }
-$('#latestList').addEventListener('click', e => { const r = e.target.closest('.row[data-id]'); if (r) openReplay(r.dataset.id); });
+
 function filterHistory(){
   const q = $('#histSearch').value.trim().toLowerCase();
   qs('#histList .row').forEach(el => { const tone = el.dataset.tone; const okF = !histF || (histF === 'ok' ? tone === 'ok' : histF === 'bad' ? (tone === 'bad' || tone === 'warn') : tone === 'run');
