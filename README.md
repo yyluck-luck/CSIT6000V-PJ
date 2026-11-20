@@ -9,6 +9,9 @@ The system runs against a served model (vLLM on TACC, or any OpenAI-compatible e
 web interface for task submission, live progress, and result review, and records every attempt as a
 replayable trace.
 
+> **Assessment in one command:** `cd flagpilot && bash scripts/verify.sh` — 13 checks, no GPU, no network,
+> no model weights. The last check drives the web UI in headless Chrome (needs Node ≥ 22 and Chrome; skipped otherwise).
+
 Artifact for **CSIT6000V Advanced AI Computing and Systems**, HKUST CSE. The course specification is
 in [`course_project.pdf`](course_project.pdf), and the proposal this artifact implements is in
 [`proposal.pdf`](proposal.pdf). Group contributions are listed in the submitted PDF, not here.
@@ -522,13 +525,13 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 307 tests
-bash scripts/verify.sh                            # 12 feature checks
+python3 -m unittest discover -s tests -t . -q     # 336 tests
+bash scripts/verify.sh                            # 13 feature checks (the last one drives the web UI)
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 307 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all 336 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check.
 

@@ -25,6 +25,28 @@ tcloud cancel -j <serve job>                            # 释放 GPU
 # 或一条命令：deploy/tcloud/pipeline.sh <本地输出目录>（显存 / 8000 端口被占的节点自动排除重交，结束必取消服务）
 ```
 
+**2026-11-19 起的增强**（作业 30030/30031 实跑验证）：
+
+- **一个服务作业跑多档**：`FP_ABLATIONS=B3,B0,B1,B2 FP_LIMIT=0 FP_BATCH=tacc-dev-v5 deploy/tcloud/pipeline.sh runs/tacc/v5 "10-0-1-10,10-0-1-11,10-0-4-10"`
+  在同一个 qwen 服务上依次跑四档（开服只付一次 5 分钟），每档一个批次 `<FP_BATCH>-Bx`；客户端按服务作业的
+  截止时刻估算下一档还来不来得及，不够就整档跳过并在日志里写明怎么续跑。dev 20 题 × 4 档实测约 23 分钟。
+- **补齐运行时缺的工具**：`bin/xxd`、`bin/exiftool` 是纯 Python 替身（xxd 与系统 xxd 逐字节一致），
+  pycryptodome / gmpy2 的 manylinux wheel 在本机下好、随包解进作业目录，只经 `FLAGPILOT_SANDBOX_PYTHONPATH`
+  进沙箱（动作与重放一致）。doctor 不再报这四样缺失。
+- **调度**：批跑默认"预计最慢的先跑"（LPT），先验来自同目录下历史批次的 wall_s。
+- **从网页发起**：`python3 -m flagpilot web --replay runs/tacc` → Lab → *TACC batch*：选档位与题量，点 *Run on TACC*；
+  页面显示阶段（Queue → Server → Batch → Download → Done）、作业号、逐题结论，跑完把每档挂成回放（Runs 页可逐步复盘）。
+  Solve 页的 *Run on TACC* 用同一条流水线只跑当前这一题。
+
+| 档位（dev，n=20，qwen3.8-27b） | verified | 95% CI | raw | 平均轮次 | 整批 prefix cache |
+|---|---|---|---|---|---|
+| B0 | 70.0% | 48.1–85.5% | 80% | 6.5 | 76.2% |
+| B1 | 65.0% | 43.3–81.9% | 80% | 6.75 | 75.9% |
+| B2 | 60.0% | 38.7–78.1% | 70% | 7.1 | 74.4% |
+| B3 | 60.0% | 38.7–78.1% | 65% | 8.25 | 84.4% |
+
+四档区间完全重叠：n=20 时档位之间的差异不显著，这是要如实写进报告的结论，不是要调掉的噪声。
+
 踩过的坑都已在脚本里处理：课程运行时（PRoot）没有 `python3` → 客户端垫一层；PRoot 解析不了节点名 →
 宿主机上换成 IP；`tcloud cat` 输出带 `\r` → `submit.sh` 校验地址；部分节点有 Slurm 管不到的进程占着显存或
 8000 端口 → 服务作业开服前体检，用 `FP_EXCLUDE=节点` 换节点。GPU 秒记在服务作业上，客户端批次不计。
