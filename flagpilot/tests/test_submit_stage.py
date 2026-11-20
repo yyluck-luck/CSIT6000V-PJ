@@ -2,6 +2,7 @@
 
 网页的 TACC 会话每条答疑、每次单题都会交一次作业；以前暂存目录从不删，一天下来 TMPDIR 里能积几百 M。
 这里用假的 tcloud（放在 PATH 最前）跑真的 submit.sh，TMPDIR 指到隔离目录，数 fp-tcloud-* 就知道删没删。
+题库用临时造的一道题（FLAGPILOT_TASKS），不依赖评测数据集——干净的克隆里也要能跑。
 """
 
 from __future__ import annotations
@@ -34,13 +35,22 @@ class TestSubmitStageCleanup(unittest.TestCase):
         fake = self.bin / "tcloud"
         fake.write_text(FAKE_TCLOUD, encoding="utf-8")
         fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        self.tasks = self.tmp / "tasks"
+        (self.tasks / "index").mkdir(parents=True)
+        (self.tasks / "t-001").mkdir()
+        (self.tasks / "t-001" / "a.txt").write_text("x", encoding="utf-8")
+        (self.tasks / "_private").mkdir()
+        (self.tasks / "_private" / "gold_private.json").write_text("{}", encoding="utf-8")
+        (self.tasks / "index" / "tasks.jsonl").write_text(json.dumps({"name": "t-001", "task_id": 1}) + "\n",
+                                                          encoding="utf-8")
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def submit(self, mode="doctor", url="", **extra):
         env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
-               "TMPDIR": str(self.tmpdir), "FAKE_DIR": str(self.tmp), "LANG": "en_US.UTF-8", **extra}
+               "TMPDIR": str(self.tmpdir), "FAKE_DIR": str(self.tmp), "LANG": "en_US.UTF-8",
+               "FLAGPILOT_TASKS": str(self.tasks), **extra}
         for k in ("FP_KEEP_STAGE", "FP_DRY_RUN", "FAKE_RC"):
             if k not in extra:
                 env.pop(k, None)
@@ -73,15 +83,7 @@ class TestSubmitStageCleanup(unittest.TestCase):
         frozen = ROOT / "docs" / "splits-picoctf-53.json"
         if not frozen.exists():
             self.skipTest("没有冻结的划分文件")
-        tasks = self.tmp / "tasks"
-        (tasks / "index").mkdir(parents=True)
-        (tasks / "t-001").mkdir()
-        (tasks / "t-001" / "a.txt").write_text("x", encoding="utf-8")
-        (tasks / "_private").mkdir()
-        (tasks / "_private" / "gold_private.json").write_text("{}", encoding="utf-8")
-        (tasks / "index" / "tasks.jsonl").write_text(json.dumps({"name": "t-001", "task_id": 1}) + "\n", encoding="utf-8")
-        r, left = self.submit("batch", "http://10-0-0-1:8000/v1", FP_DRY_RUN="1", FP_VENDOR="0",
-                              FLAGPILOT_TASKS=str(tasks))
+        r, left = self.submit("batch", "http://10-0-0-1:8000/v1", FP_DRY_RUN="1", FP_VENDOR="0")
         self.assertEqual((r.returncode, len(left)), (0, 1), r.stderr[-400:])
         staged = left[0] / "flagpilot-client" / "tasks"
         self.assertEqual((staged / "index" / "splits.json").read_bytes(), frozen.read_bytes())
