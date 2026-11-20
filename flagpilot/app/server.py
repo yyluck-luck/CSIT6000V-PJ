@@ -47,6 +47,8 @@ _MODELS = httpcache.TTLCache(30.0)     # /api/models：30 s 内复用，换模�
 # SSE 空闲多久发一次心跳。模型一轮可能想很久；经 SSH 隧道或代理时，
 # 长时间没有字节的连接会被掐断，前端只能等 150 s 看门狗再补救。
 SSE_PING_S = 15.0
+PARTIAL_NOTIFY_S = 0.05     # 逐字输出最多 20 次/秒推给浏览器：再密肉眼看不出，只是白占 CPU
+PARTIAL_MAX_CHARS = 6000    # 一轮的动作 JSON 不会这么长；超出部分不再推（整段结果仍走 model 事件）
 
 STATE: dict[str, dict] = {}
 CHATS: dict[str, ChatSession] = {}
@@ -181,6 +183,22 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
                 del events[:1000]
             cond.notify_all()
 
+    # 模型逐字输出：只放一份"本轮已生成的文本"给 SSE 读端，不进事件历史（回放 / trace 都不需要它）。
+    # 写端按 PARTIAL_NOTIFY_S 节流唤醒；本轮的 model 事件一到，读端就不再发这一轮的 partial。
+    partial = STATE[run_id].setdefault("partial", {"turn": 0, "text": "", "seq": 0, "t": 0.0})
+
+    def on_delta(turn: int, chunk: str) -> None:
+        with cond:
+            if partial["turn"] != turn:
+                partial["turn"], partial["text"] = turn, ""
+            if len(partial["text"]) < PARTIAL_MAX_CHARS:
+                partial["text"] += chunk
+            partial["seq"] += 1
+            now = time.monotonic()
+            if now - partial["t"] >= PARTIAL_NOTIFY_S:
+                partial["t"] = now
+                cond.notify_all()
+
     try:
         task = resolve_task(task_name)
         if task is None:
@@ -190,7 +208,7 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
         # "题目-s0"，同一题跑第二遍会把上一遍的 trace 覆盖掉。四档连跑更糟，
         # B0→B3 只剩最后一档的痕迹，事后想核对"当时到底调了什么"就没了。
         summary = run_attempt(task, cfg, config.RUNS_ROOT / "web" / run_id,
-                              seed=0, hook=hook)
+                              seed=0, hook=hook, on_delta=on_delta)
         # 归因按需重算（不写回 runs.jsonl），界面上直接显示"为什么没解出来"
         t_tag = time.time()
         try:
@@ -449,6 +467,7 @@ class Handler(BaseHTTPRequestHandler):
             STATE[rid] = {"q": queue.Queue(), "summary": None, "task": task,
                           "events": [],          # 供断线重连回放
                           "cond": threading.Condition(),   # 新事件到达即唤醒 SSE
+                          "partial": {"turn": 0, "text": "", "seq": 0, "t": 0.0},  # 本轮逐字输出
                           "t0": time.time(),     # 端到端计时起点（收到 POST 那一刻）
                           "ablate": ablate or SETTINGS["ablation"]}
         try:
@@ -658,12 +677,16 @@ class Handler(BaseHTTPRequestHandler):
         if "events" in st:
             i = 0
             cond = st.get("cond")
+            partial = st.get("partial")
+            sent_seq, model_turn = -1, 0
             deadline = time.monotonic() + 1800
             while time.monotonic() < deadline:
                 evs = st["events"]
                 while i < len(evs):
                     ev = evs[i]
                     i += 1
+                    if ev.get("type") == "model":
+                        model_turn = max(model_turn, int(ev.get("turn") or 0))
                     if not send(ev):
                         return
                     if ev.get("type") == "done":
@@ -672,13 +695,23 @@ class Handler(BaseHTTPRequestHandler):
                     # 兜底：worker 异常结束时 summary 有值但 done 没进列表
                     send({"type": "done", **st["summary"]})
                     return
+                if partial is not None and cond is not None:
+                    with cond:
+                        seq, turn, text = partial["seq"], partial["turn"], partial["text"]
+                    # 同一份内容只看一次；只推"还没出 model 事件"的那一轮
+                    if seq != sent_seq:
+                        sent_seq = seq
+                        if turn > model_turn and text and \
+                                not send({"type": "model_partial", "turn": turn, "text": text}):
+                            return
                 if cond is None:
                     time.sleep(0.15)
                     continue
                 # 以前固定睡 150 ms 再看，每个事件平均晚 75 ms 才推出去。
                 # 现在在锁里复查再等：写端 append 后 notify，读端立即醒，不会漏唤醒。
                 with cond:
-                    idle = i >= len(st["events"]) and not st.get("summary")
+                    idle = (i >= len(st["events"]) and not st.get("summary")
+                            and (partial is None or partial["seq"] == sent_seq))
                     woke = cond.wait(timeout=SSE_PING_S) if idle else True
                 if not woke and i >= len(st["events"]):
                     try:

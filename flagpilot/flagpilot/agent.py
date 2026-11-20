@@ -366,7 +366,13 @@ def run_attempt(
     out_dir: Path,
     seed: int = 0,
     hook: Callable[[dict], None] | None = None,
+    on_delta: Callable[[int, str], None] | None = None,
 ) -> dict:
+    """跑一次 attempt。
+
+    on_delta(turn, chunk)：模型逐字输出时回调，只给界面做实时显示（Web 端"边生成边看"）。
+    它不进 trace、不改 messages，传不传对评测结果没有任何影响；None 时走原来的整段返回。
+    """
     if storage.enabled():
         storage._cipher()
     t_enter = time.monotonic()          # 计时起点：函数一进来就开始算总账
@@ -512,7 +518,11 @@ def run_attempt(
         active = hosted_client or client
         # 截断判定必须跟着 active 走，不能用 cfg.model（见 turn_max_tokens）。
         turn_max = turn_max_tokens(active, cfg)
-        comp = active.complete(messages)
+        if on_delta is None:
+            comp = active.complete(messages)
+        else:
+            # 绑定本轮轮次：回调晚到（流结束后才被调度）也不会记到下一轮头上
+            comp = active.complete(messages, on_delta=lambda s, _t=turns: on_delta(_t, s))
         sum_prompt += comp.prompt_tokens
         sum_completion += comp.completion_tokens
         # L 与 H 分开记账：E4 要比的是 "verified solves vs hosted tokens and cost"，
