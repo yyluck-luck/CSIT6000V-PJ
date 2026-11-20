@@ -42,6 +42,15 @@ INT_SCRIPT = "print(''.join(chr(c) for c in %r))\n" % [ord(c) for c in FLAG]
 SILENT_SCRIPT = "value = 1\n"
 CRASH_SCRIPT = "x = None\nprint(x.group(1))\n"
 NOFLAG_SCRIPT = "print('nothing interesting here')\n"
+# 读了但不用：open 成功、读到的内容被丢弃，答案仍是硬编码。
+# 30052 实跑里模型被拒一次后就是这么写的——补一行 open 来满足判据，
+# 答案照旧来自脚本本身。清空材料能挡住它（open 抛异常），
+# 换成同名假材料就挡不住了，所以需要第二段。
+DECORATIVE_SCRIPT = (
+    "with open('challenge/data.txt') as f:\n"
+    "    content = f.read()\n"
+    "print(''.join(chr(c) for c in %r))\n"
+) % [ord(c) for c in FLAG]
 
 
 def make_task(root: Path) -> Task:
@@ -114,6 +123,31 @@ class TestMaterialFree(Base):
         r = verify.evaluate(self.task, FLAG, INT_SCRIPT, self.tmp, timeout_s=20)
         self.assertEqual(r.verdict, "unverified")
         self.assertEqual(r.reason, "hardcoded_no_material")
+
+    def test_decorative_read_is_caught_by_the_decoy_stage(self):
+        """30052 的漏洞：补一行 open 就能骗过"清空材料"那一段。"""
+        r = verify.evaluate(self.task, FLAG, DECORATIVE_SCRIPT, self.tmp, timeout_s=20)
+        self.assertEqual(r.verdict, "unverified")
+        self.assertEqual(r.reason, "hardcoded_no_material")
+        self.assertIn("假材料", r.detail)
+
+    def test_empty_stage_alone_would_miss_the_decorative_read(self):
+        """确认新测试确实测到了新东西：只做"清空"时它会放行。"""
+        empty = self.tmp / "only-empty"
+        empty.mkdir()
+        verify._stage(empty, self.task, self.tmp, with_material=False)
+        res = verify._run_script(empty, DECORATIVE_SCRIPT, 20, None)
+        self.assertNotIn(FLAG, res.stdout or "")
+
+    def test_decoy_keeps_file_names_and_size(self):
+        dest = self.tmp / "decoy-check"
+        dest.mkdir()
+        verify._stage_decoy(dest, self.task, self.tmp)
+        orig = self.tmp / "tasks" / "selfcheck-001" / "data.txt"
+        fake = dest / "challenge" / "data.txt"
+        self.assertTrue(fake.exists())
+        self.assertEqual(fake.stat().st_size, orig.stat().st_size)
+        self.assertNotIn(FLAG, fake.read_text(encoding="utf-8", errors="ignore"))
 
     def test_good_script_survives_the_extra_check(self):
         r = verify.evaluate(self.task, FLAG, GOOD_SCRIPT, self.tmp, timeout_s=20)

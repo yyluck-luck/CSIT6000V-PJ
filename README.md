@@ -59,10 +59,14 @@ task ──► sandbox prep ──► agent loop ──► submit(flag, solve.py
 | `wrong` | Flag does not match gold |
 | `budget` | Turn / token / wall-clock / format budget exhausted |
 
-Gate 4 is the **material-free replay**: the verifier empties `challenge/` and runs the same script
-again. If it still prints the submitted flag, the flag was hardcoded and the verdict becomes
-`unverified / hardcoded_no_material`. This catches encoded fallbacks that the literal scan in gate 2
-cannot see. Tasks with no attached files skip gate 4 automatically.
+Gate 4 is the **material-dependence check**, run in two stages. The verifier first empties
+`challenge/` and runs the same script again; then it restores the files under their original names
+with their contents replaced by equal-length decoys. If the script prints the submitted flag in
+either stage, the answer did not come from the material, and the verdict becomes
+`unverified / hardcoded_no_material`. The second stage exists because the first is not enough: after
+one rejection a model can add a decorative `open('./challenge/x')` whose result it never uses, which
+fails against an empty directory but succeeds against decoys. This catches encoded fallbacks that the
+literal scan in gate 2 cannot see. Tasks with no attached files skip gate 4 automatically.
 
 **Pre-submit self-check.** Before submitting, the agent can spend one turn on a `run_script` action
 that runs its candidate script in a clean directory under exactly the replay conditions. A rejected
@@ -295,7 +299,7 @@ python3 -m flagpilot list --scope extra-gs    # 10 supplementary General Skills 
 ```
 
 The builder drops reference solutions, removes network-dependent tasks, and replaces plaintext flags
-with `gold_sha256`. Our evaluated set contains **53 tasks** (General Skills 25 / Cryptography 16 /
+with `gold_sha256`. The frozen dataset contains **53 tasks** (General Skills 25 / Cryptography 16 /
 Forensics 12), of which 43 are `scope=core` and 10 are `scope=extra-gs`; `list` shows the core set by
 default. There are no reverse-engineering tasks, which matters for one known bias discussed in
 [Limitations](#7-known-limitations-and-expected-variation).
@@ -352,7 +356,10 @@ cache-hit, cache-miss, and output tokens separately.
 Each experiment writes a Markdown summary and a `runs.jsonl` ledger under `runs/<batch>/`.
 Measured rates and their current status are tabulated in `flagpilot/docs/STATUS.md`
 (§二 commitments, §四 recorded verification); design rationale is in `flagpilot/docs/DESIGN.md`.
-The commands below regenerate every number those tables cite.
+DeepSeek Flash B3 attempted 43 of 53 frozen tasks. It returned 25 correct flags (58.1%) and verified
+22 solves by replay (51.2%). The [evaluation baseline](flagpilot/docs/EVALUATION_BASELINE.md) records
+the frozen split, per-split results, and run conditions. The commands below describe the formal
+experiment configurations.
 
 **E1 — ablation ladder (B0 → B3).** Each rung adds exactly one capability: `B0` bare loop,
 `B1` + context truncation, `B2` + structured tool schema, `B3` + full system prompt.
@@ -598,6 +605,12 @@ prints one line per check.
     fail for environmental reasons, not model reasons; `doctor` lists them with their task counts.
     `flagpilot/requirements.txt` covers everything that *can* ship with the repository.
 12. **No sampling seed is sent.** `--seeds` repeats attempts; it does not fix the provider's RNG.
+13. **The dependence check has a known false positive.** A task whose input is carried in the prompt
+    (a ROT13 ciphertext, for example) can be solved without touching the files, so a legitimate
+    script is flagged `hardcoded_no_material`. The two stages show that the output depends on the
+    material's *contents*; they cannot show that the reasoning was correct. A script that reads the
+    material but still falls back to a hardcoded answer will pass if the decoy happens to satisfy its
+    assertions.
 
 ### 8. Troubleshooting
 

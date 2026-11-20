@@ -112,6 +112,7 @@ runs/<batch>/gpu.jsonl                   GPU 秒账本（检测到 GPU 时才写
 | [docs/TASKS.md](docs/TASKS.md) | 题库目录结构、字段说明、怎么加自己的题 |
 | [docs/TACC.md](docs/TACC.md) | 集群提交流程与常见错误 |
 | [docs/STATUS.md](docs/STATUS.md) | 逐条对照 proposal 与课程要求的实现状态 |
+| [Evaluation baseline](docs/EVALUATION_BASELINE.md) | Frozen dev/test split and DeepSeek Flash results |
 | [docs/WRITEUPS_AND_STORAGE.md](docs/WRITEUPS_AND_STORAGE.md) | writeup 生成与加密存储 |
 
 ---
