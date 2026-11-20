@@ -917,6 +917,10 @@ def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
         print(f"⚠ 监听 {host} 且无鉴权：仅限可信内网，勿暴露到公网", flush=True)
     srv = ThreadingHTTPServer((host, port), Handler)
     print(f"FlagPilot demo → http://{host}:{port}   model={model}", flush=True)
+    # 重启前若有 Qwen 会话还在 TACC 上跑，接回来（不然它白占 GPU 和个人名额到 1 小时）
+    state = config.RUNS_ROOT / "tacc" / "session.json"
+    tacc_live.STATE_FILE = state
+    threading.Thread(target=tacc_live.restore, args=(state,), daemon=True).start()
     if replay_dir:
         mounted = _mount_replay(replay_dir)
         print(f"回放模式：挂载 {len(mounted)} 个已完成的 run（只读，不需要模型）", flush=True)

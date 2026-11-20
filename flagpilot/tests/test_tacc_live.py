@@ -66,10 +66,12 @@ class TaccLiveCase(unittest.TestCase):
             "FAKE_STATE": str(self.tmp / "state"), "FLAGPILOT_TACC_POLL": "0.02", "FLAGPILOT_TACC_TICK": "0.02"})
         self.env.start()
         os.environ.pop("FLAGPILOT_TASKS", None)          # 只看 tacc_live 自己给的题库（verify.sh 会设这个变量）
+        tacc_live.STATE_FILE = self.tmp / "session.json"
         tacc_live.S.update(phase="idle", serve=None, node=None, url="", t0=0.0, ready=0.0, log=[], busy="", error="")
 
     def tearDown(self):
         tacc_live.stop()
+        tacc_live.STATE_FILE = None
         self.env.stop()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
@@ -198,6 +200,40 @@ class TaccLiveCase(unittest.TestCase):
         self.assertEqual(rep["error"], "the TACC session ended before the job started")
         self.assertIn("cancel 502", self.record())
         self.assertNotIn("502", (st / "ps").read_text())   # 确认取消生效（ps 里已经没有它）
+
+    def test_session_survives_a_web_server_restart(self):
+        """网页服务重启：状态落盘，重启后核实服务作业还在跑就接回来，否则不接（以前一重启就丢下一个白占 GPU 的作业）。"""
+        self.ready()
+        saved = json.loads((self.tmp / "session.json").read_text())
+        self.assertEqual((saved["phase"], saved["serve"], saved["url"]), ("ready", "501", "http://10-0-9-9:8000/v1"))
+        st = self.tmp / "state"
+        # 模拟进程重启：内存里的会话没了，作业还在 TACC 上跑
+        tacc_live.S.update(phase="idle", serve=None, node=None, url="", t0=0.0, ready=0.0, log=[], busy="")
+        (st / "ps").write_text("             501      tacc run.slur   yliutz  R      12:00      1 10-0-9-9\n")
+        self.assertTrue(tacc_live.restore(self.tmp / "session.json"))
+        s = tacc_live.status()
+        self.assertEqual((s["phase"], s["serve"], s["url"]), ("ready", "501", "http://10-0-9-9:8000/v1"))
+        self.assertGreater(s["remaining"], 3000)
+        self.assertIn("reconnected", s["log"][-1])
+        # 作业已经不在了、或会话已过 1 小时：不接
+        tacc_live.S.update(phase="idle", serve=None)
+        (st / "ps").write_text("")
+        self.assertFalse(tacc_live.restore(self.tmp / "session.json"))
+        (st / "ps").write_text("             501      tacc run.slur   yliutz  R      12:00      1 10-0-9-9\n")
+        old = dict(saved, t0=time.time() - 3600)
+        (self.tmp / "session.json").write_text(json.dumps(old))
+        self.assertFalse(tacc_live.restore(self.tmp / "session.json"))
+        self.assertEqual(tacc_live.status()["phase"], "idle")
+        # 用户已经自己开了新会话：不覆盖
+        (self.tmp / "session.json").write_text(json.dumps(saved))
+        tacc_live.S["phase"] = "starting"
+        self.assertFalse(tacc_live.restore(self.tmp / "session.json"))
+        tacc_live.S["phase"] = "idle"
+
+    def test_stop_is_written_down(self):
+        self.ready()
+        tacc_live.stop()
+        self.assertEqual(json.loads((self.tmp / "session.json").read_text())["phase"], "idle")
 
     def test_cancel_is_verified(self):
         st = self.tmp / "state"

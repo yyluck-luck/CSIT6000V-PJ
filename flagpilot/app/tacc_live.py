@@ -129,6 +129,52 @@ def _cancel(jid: str) -> bool:
     return False
 
 
+STATE_FILE: Path | None = None       # serve() 设置：runs/tacc/session.json
+
+
+def _save() -> None:
+    """会话状态落盘（原子替换）。网页服务重启后靠它接回还在跑的服务作业。"""
+    if STATE_FILE is None:
+        return
+    with _L:
+        d = {k: S[k] for k in ("phase", "serve", "node", "url", "t0", "ready")}
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d), encoding="utf-8")
+        os.replace(tmp, STATE_FILE)
+    except OSError:
+        pass
+
+
+def restore(path: Path) -> bool:
+    """网页服务重启后接回还在跑的会话。
+
+    服务作业不随网页进程退出：以前一重启就把它丢了，它照样在 TACC 上占着 GPU 和个人名额跑满 1 小时
+    （之后的答疑作业就排在 QOSMaxJobsPerUserLimit 后面）。这里只接"就绪、没过 1 小时、TACC 上确实还在跑"的。
+    """
+    global STATE_FILE
+    STATE_FILE = Path(path)
+    try:
+        d = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    jid = str(d.get("serve") or "")
+    if d.get("phase") != "ready" or not jid or not d.get("url") or time.time() > float(d.get("t0") or 0) + SESSION_S:
+        return False
+    running = any(c[:1] == [jid] and len(c) >= 5 and c[4] == "R" for c in (l.split() for l in _sdk("ps", timeout=60).splitlines()))
+    if not running:
+        return False
+    with _L:
+        if S["phase"] != "idle":
+            return False
+        S.update(phase="ready", serve=jid, node=d.get("node"), url=d["url"], t0=float(d["t0"]),
+                 ready=float(d.get("ready") or time.time()), log=[], busy="", error="", queue="")
+    _log(f"reconnected to serve job {jid} on {d.get('node')} after a restart")
+    threading.Thread(target=_watchdog, args=(jid,), daemon=True).start()
+    return True
+
+
 def _log(msg: str) -> None:
     with _L:
         S["log"].append(time.strftime("%H:%M:%S ") + msg)
@@ -155,6 +201,7 @@ def _fail(msg: str) -> None:
     _log(msg)
     with _L:
         S.update(phase="failed", error=msg, url="")
+    _save()
 
 
 def _serve_loop() -> None:
@@ -177,6 +224,7 @@ def _serve_loop() -> None:
                 _log(f"serve job {jid} cancelled")
                 with _L:
                     S.update(phase="idle", serve=None, queue="")
+                _save()
                 return
             time.sleep(poll)
             t_ask = time.time()
@@ -205,6 +253,7 @@ def _serve_loop() -> None:
                     if S["phase"] != "starting":
                         continue
                     S.update(phase="ready", url=m.group(1), node=m.group(2), ready=time.time(), queue="")
+                _save()
                 _log(f"Qwen 27B ready on {m.group(2)}")
                 threading.Thread(target=_watchdog, args=(jid,), daemon=True).start()
                 return
@@ -246,6 +295,7 @@ def stop() -> dict:
         if ph != "ready":
             return {"ok": True}
         S.update(phase="idle", url="", serve=None, node=None, queue="")
+    _save()
     ok = _cancel(jid)
     _log(f"serve job {jid} cancelled" if ok else f"serve job {jid}: cancel not confirmed")
     return {"ok": True, "cancelled": ok}

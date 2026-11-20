@@ -554,13 +554,13 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 363 tests
+python3 -m unittest discover -s tests -t . -q     # 365 tests
 bash scripts/verify.sh                            # 13 feature checks (the last one drives the web UI)
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 363 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all 365 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check.
 
