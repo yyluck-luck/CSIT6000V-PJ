@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import tempfile
 import threading
@@ -108,15 +109,34 @@ class TestWebAPI(unittest.TestCase):
 
     def test_index_has_controls(self):
         html = self.get("/")
-        for marker in ("四档连跑", "能力对照", "Agent 流程", "solve.py",
-                       "上传题目", "答疑讲解", "允许跑命令",
+        # 界面全英文（2026-11-19 起）：标记跟着换成英文，检查的仍是同一批功能
+        for marker in ("Four-tier sweep", "Base-model probe", "Agent flow", "solve.py",
+                       "Upload challenge", "Ask the tutor", "Allow commands",
                        # 可展开的步骤链路：工具调用与思维链都要看得见
-                       "调用链路", "思考（模型自述）", "工具返回", "展开全部", "data-step",
+                       "Call chain", "Thought", "Tool output", "Expand all", "data-step",
                        # 每步的自动解读 + 工具/文件的"说人话"词表
-                       "这一步在做什么", "自动解读", "TOOL_DOC", "chipWhat",
+                       "What this step does", "auto-explained", "TOOL_DOC", "chipWhat",
                        # 按 run_id 回放一次已有运行
                        "?run=", "recoverRun"):
             self.assertIn(marker, html)
+
+    def test_chat_sessions_listed_newest_first(self):
+        """答疑页左侧的会话列表：标题取第一句提问，不带回答正文。"""
+        root = config.RUNS_ROOT / "chat"
+        for sid, q, ts in (("aaaa1111bbbb", "first question", 1000), ("cccc2222dddd", "second question", 2000)):
+            (root / sid).mkdir(parents=True, exist_ok=True)
+            f = root / sid / "chat.jsonl"
+            f.write_text(json.dumps({"type": "meta", "task": "demo-001"}) + "\n"
+                         + json.dumps({"type": "user", "turn": 1, "text": q}) + "\n"
+                         + json.dumps({"type": "reply", "turn": 1, "answer": "secret answer body"}) + "\n",
+                         encoding="utf-8")
+            os.utime(f, (ts, ts))
+        d = json.loads(self.get("/api/chat/sessions"))
+        ids = [x["id"] for x in d["sessions"]]
+        self.assertLess(ids.index("cccc2222dddd"), ids.index("aaaa1111bbbb"))
+        one = next(x for x in d["sessions"] if x["id"] == "cccc2222dddd")
+        self.assertEqual((one["title"], one["turns"], one["task"]), ("second question", 1, "demo-001"))
+        self.assertNotIn("secret answer body", json.dumps(d))
 
     def test_tasks_expose_ablations(self):
         d = json.loads(self.get("/api/tasks"))

@@ -55,7 +55,7 @@ _COACH = re.compile(
 # 提示模式下在数据流上脱敏，而不是靠模型自觉。
 # 27B 实测会无视"不要把结果贴出来"——它执行 cat 之后看到 flag，就照抄了。
 FLAG_MASK = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}\n]{1,120}\}")
-MASK = "picoCTF{***已隐藏（提示模式）***}"
+MASK = "picoCTF{***hidden in hint mode***}"
 
 
 def mask_flags(text: str) -> str:
@@ -69,7 +69,7 @@ _COACH_RULE = (
 )
 
 
-SYSTEM = """你是 FlagPilot 的答疑助教，用中文回答。
+SYSTEM = """你是 FlagPilot 的答疑助教。Always answer in English, even when the user writes in Chinese.
 
 你的角色是讲解，不是刷分。回答遵循这几条：
 - 先给结论，再给推理过程。不要用"让我想想"开头。
@@ -279,7 +279,7 @@ class ChatSession:
             reply.completion_tokens += comp.completion_tokens
             if comp.error:
                 reply.error = comp.error
-                reply.answer = reply.answer or f"模型调用失败：{comp.error}"
+                reply.answer = reply.answer or f"Model call failed: {comp.error}"
                 break
 
             body_text = comp.text or ""
@@ -291,7 +291,7 @@ class ChatSession:
             if not self.use_tools:
                 cmds = []
             if not cmds or last_round:
-                reply.answer = body or ("（模型这一轮只发出了命令，没有给出讲解）" if cmds else "")
+                reply.answer = body or ("(the model only issued commands this turn and gave no explanation)" if cmds else "")
                 self.messages.append({"role": "assistant", "content": body_text})
                 break
 
@@ -341,7 +341,7 @@ class ChatSession:
 
         reply.wall_s = round(time.monotonic() - t0, 2)
         if not reply.answer:
-            reply.answer = "（没有产出内容）"
+            reply.answer = "(no content)"
         if coach:
             reply.answer = mask_flags(reply.answer)
         # 答案落盘时保留完整文本（提示模式的脱敏已在上面做完）；

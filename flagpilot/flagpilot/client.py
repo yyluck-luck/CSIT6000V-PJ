@@ -289,10 +289,10 @@ class MockClient(ChatClient):
             )
             if "challenge/" in sys_txt and not has_obs:
                 text = ("<run>ls -la challenge</run>\n"
-                        "我先看题目给了哪些附件，再决定用什么手法。")
+                        "First I check which attachments the challenge ships, then pick a method.")
             else:
-                text = ("这是 mock 助教的示例回答。真实模型会在这里给出成段讲解："
-                        "先给结论，再说明为什么，必要时先用 <run> 跑命令验证。")
+                text = ("This is the mock tutor's sample answer. A real model explains here: "
+                        "conclusion first, then why, running commands with <run> when it needs evidence.")
             if on_delta is not None:
                 on_delta(text)
             return Completion(text=text, prompt_tokens=len(last) // 4,
@@ -311,10 +311,10 @@ class MockClient(ChatClient):
 
         n_obs = sum(1 for m in messages if m["role"] == "user") - 1  # 减去题面
         if n_obs <= 0:
-            action = {"thought": "先看有哪些文件", "action": "shell", "cmd": "ls -la challenge"}
+            action = {"thought": "List the files first", "action": "shell", "cmd": "ls -la challenge"}
         elif n_obs == 1:
             action = {
-                "thought": "把每个文件的内容打出来看看",
+                "thought": "Print every file to see what is inside",
                 "action": "shell",
                 "cmd": "for f in challenge/*; do echo \"== $f ==\"; head -c 400 \"$f\"; echo; done",
             }
@@ -333,10 +333,10 @@ class MockClient(ChatClient):
                     "        if '{' in line and '}' in line and 'pico' in line.lower():\n"
                     "            print(line.strip())\n"
                 )
-                action = {"thought": "找到了，提交并附上复现脚本", "action": "submit",
+                action = {"thought": "Found it; submit with a script that reproduces it", "action": "submit",
                           "flag": flag, "script": script}
             else:
-                action = {"thought": "没找到，交一个占位答案让流程走完", "action": "submit",
+                action = {"thought": "Nothing found; submit a placeholder so the pipeline completes", "action": "submit",
                           "flag": "picoCTF{mock_not_found}", "script": "print('nothing')"}
 
         text = "```json\n" + json.dumps(action, ensure_ascii=False) + "\n```"

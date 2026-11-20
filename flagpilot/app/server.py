@@ -39,7 +39,7 @@ from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
-from app import httpcache, runs_index
+from app import httpcache, runs_index, tacc
 
 STATIC = Path(__file__).resolve().parent / "index.html"
 _STATIC = httpcache.StaticFile(STATIC)
@@ -202,7 +202,7 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
     try:
         task = resolve_task(task_name)
         if task is None:
-            raise ValueError(f"未知题目 {task_name}")
+            raise ValueError(f"Unknown challenge {task_name}")
         cfg = _make_cfg("web", ablate)
         # 每次运行一个独立目录：以前 out_dir 固定是 runs/web，run_id 又只是
         # "题目-s0"，同一题跑第二遍会把上一遍的 trace 覆盖掉。四档连跑更糟，
@@ -296,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _html(self) -> None:
         if not STATIC.exists():
-            self._json(500, {"error": "index.html 缺失"})
+            self._json(500, {"error": "index.html is missing"})
             return
         page = _STATIC.load()
         # no-cache = 每次都向服务端确认；没改动只回 304，不重传 80KB。
@@ -371,6 +371,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"summary": st.get("summary"),
                                     "events": st.get("events") or [],
                                     "done": bool(st.get("summary"))})
+        if path == "/api/tacc":
+            return self._json(200, tacc.status(config.RUNS_ROOT))
+        if path == "/api/chat/sessions":
+            return self._json(200, {"sessions": runs_index.list_chats(config.RUNS_ROOT / "chat")})
         if path == "/api/chat/history":
             raw = self._qid()
             if raw and not _SID_RE.match(raw):
@@ -424,16 +428,16 @@ class Handler(BaseHTTPRequestHandler):
         global RUNNING
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
-                  "/api/custom/delete", "/api/settings")
+                  "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop")
         if path not in routes:
             return self._json(404, {"error": "not found"})
         if not self._json_content_type():
-            return self._json(415, {"error": "Content-Type 必须是 application/json"})
+            return self._json(415, {"error": "Content-Type must be application/json"})
         if not self._origin_ok():
-            return self._json(403, {"error": "跨源请求被拒绝"})
+            return self._json(403, {"error": "Cross-origin request refused"})
         n = int(self.headers.get("Content-Length") or 0)
         if n > 200 * 1024 * 1024:
-            return self._json(413, {"error": "请求体过大"})
+            return self._json(413, {"error": "Request body too large"})
         try:
             payload = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:
@@ -447,6 +451,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._delete_custom(payload)
         if path == "/api/settings":
             return self._settings(payload)
+        if path == "/api/tacc/start":
+            r = tacc.start(str(payload.get("batch") or ""), str(payload.get("tiers") or ""),
+                           payload.get("limit", 0), config.RUNS_ROOT, _mount_tacc,
+                           exclude=str(payload.get("exclude") or ""), tasks=str(payload.get("tasks") or ""))
+            return self._json(400 if "error" in r else 200, r)
+        if path == "/api/tacc/stop":
+            r = tacc.stop()
+            return self._json(400 if "error" in r else 200, r)
 
         task = payload.get("task")
         if not task:
@@ -457,11 +469,11 @@ class Handler(BaseHTTPRequestHandler):
 
         ablate = payload.get("ablate")
         if ablate and str(ablate).upper() not in ABLATIONS:
-            return self._json(400, {"error": f"未知档位 {ablate}"})
+            return self._json(400, {"error": f"Unknown tier {ablate}"})
         rid = uuid.uuid4().hex[:12]
         with LOCK:
             if RUNNING >= MAX_CONCURRENT_RUNS:
-                return self._json(429, {"error": f"已有 {RUNNING} 个 run 在跑，稍后再试"})
+                return self._json(429, {"error": f"{RUNNING} run(s) already in progress; try again shortly"})
             _evict_state()
             RUNNING += 1
             STATE[rid] = {"q": queue.Queue(), "summary": None, "task": task,
@@ -490,7 +502,7 @@ class Handler(BaseHTTPRequestHandler):
             CHATS.clear()
         _MODELS.clear()
         return self._json(200, {"model": model,
-                                "note": "新运行与新会话生效；已开始的运行不受影响"})
+                                "note": "Applies to new runs and chats; runs in progress are unaffected"})
 
     # ---------- 自建题目 ----------
 
@@ -509,14 +521,14 @@ class Handler(BaseHTTPRequestHandler):
                 name = str(item.get("name") or "upload.bin")
                 raw = item.get("data_b64") or ""
                 if not isinstance(raw, str):
-                    raise ValueError("data_b64 必须是字符串")
+                    raise ValueError("data_b64 must be a string")
                 if len(raw) > custom.MAX_FILE_BYTES * 2:
-                    return self._json(413, {"error": f"{name} 超过单文件上限"})
+                    return self._json(413, {"error": f"{name} exceeds the per-file limit"})
                 data = _b64.b64decode(raw, validate=False)
                 total_decoded += len(data)
                 # 先按解码后的真实字节卡总量，别等 20 个 32MB 全进内存才在 create 里拒绝
                 if total_decoded > custom.MAX_TOTAL_BYTES:
-                    return self._json(413, {"error": "附件合计超过上限"})
+                    return self._json(413, {"error": "Attachments exceed the total size limit"})
                 files.append((name, data))
             task = custom.create(
                 title=str(payload.get("title") or ""),
@@ -532,13 +544,13 @@ class Handler(BaseHTTPRequestHandler):
                      "has_gold": task.has_gold, "n_assets": len(task.assets),
                      "custom": True},
             "warning": "" if task.has_gold else
-                       "没有填标准答案：结果最高只能判 reproduced（重放成功但不能判定对错）",
+                       "No gold flag: the best possible verdict is reproduced (the replay can run, but correctness cannot be judged).",
         })
 
     def _delete_custom(self, payload: dict) -> None:
         name = str(payload.get("task") or "")
         if not name.startswith("custom-"):
-            return self._json(400, {"error": "只能删除自建题目"})
+            return self._json(400, {"error": "Only uploaded challenges can be deleted"})
         ok = custom.delete(name)
         return self._json(200 if ok else 404, {"deleted": ok})
 
@@ -621,7 +633,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             task = resolve_task(task_name)
             if task is None:
-                return self._json(404, {"error": f"未知题目 {task_name}"})
+                return self._json(404, {"error": f"Unknown challenge {task_name}"})
             cfg = _make_cfg("web-probe")
             r = probe.run_probe(task, cfg, mode=mode)
             return self._json(200, r.as_dict())
@@ -753,8 +765,9 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
     if not base.exists():
         print(f"⚠ 回放目录不存在：{base}", flush=True)
         return []
+    # 一层（<batch>/<run>/trace.jsonl）或两层（<root>/<batch>/<run>/trace.jsonl，例如 runs/tacc 下按档位分的批次）
     dirs = [base] if (base / "trace.jsonl").exists() else \
-        sorted(p.parent for p in base.glob("*/trace.jsonl"))
+        sorted({p.parent for pat in ("*/trace.jsonl", "*/*/trace.jsonl", "*/*/*/trace.jsonl") for p in base.glob(pat)})
     mounted: list[tuple[str, str, str]] = []
     for d in dirs:
         evs = read_jsonl(d / "trace.jsonl")
@@ -770,6 +783,11 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
                       "events": evs, "kind": "replay"}
         mounted.append((rid, d.name, f"{summary.get('verdict')}/{summary.get('reason')}"))
     return mounted
+
+
+def _mount_tacc(out: Path) -> int:
+    """TACC 流水线跑完：把每一档（<batch>-B0..B3）挂成只读回放，Runs 页立刻能逐步复盘。"""
+    return sum(len(_mount_replay(str(d))) for d in sorted(Path(out).glob("*-B[0-3]")))
 
 
 def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",

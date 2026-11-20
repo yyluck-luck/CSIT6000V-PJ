@@ -92,7 +92,7 @@ def create(
     """
     root = root or store_root()
     files = list(files or [])
-    title = (title or "").strip()[:200] or "未命名题目"
+    title = (title or "").strip()[:200] or "Untitled challenge"
     query = (query or "").strip()
     if not files and not query:
         raise ValueError("至少要给题面或附件之一")

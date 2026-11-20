@@ -114,3 +114,47 @@ def item_from_state(rid: str, st: dict) -> dict:
         item["turns"] = sum(1 for e in evs if e.get("type") == "model")
     return item
 
+
+# ---------------------------------------------------------------- 答疑会话列表
+_CHAT_CACHE: dict = {}
+_SID = re.compile(r"^[a-f0-9]{8,32}$")
+
+
+def list_chats(chat_root: Path, limit: int = 60) -> list[dict]:
+    """答疑页左侧的会话列表：runs/chat/<sid>/chat.jsonl，按最后修改时间倒序。
+
+    只取标题（第一句提问）、轮数、挂的题、时间；不读回答正文。按 (mtime, size) 缓存，
+    列表刷新时没变的会话不重读。读不了的文件（缺密钥、半截写入）跳过。
+    """
+    from flagpilot.chat import read_log
+    root = Path(chat_root)
+    if not root.exists():
+        return []
+    items = []
+    for d in root.iterdir():
+        f = d / "chat.jsonl"
+        if not (_SID.match(d.name) and f.is_file()):
+            continue
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        key = (st.st_mtime_ns, st.st_size)
+        hit = _CHAT_CACHE.get(d.name)
+        if not hit or hit[0] != key:
+            try:
+                rows = read_log(f)
+            except Exception:
+                continue
+            users = [r for r in rows if r.get("type") == "user"]
+            if not users:
+                continue
+            meta = next((r for r in rows if r.get("type") == "meta"), {})
+            title = " ".join(str(users[0].get("text") or "").split())[:80]
+            hit = (key, {"id": d.name, "title": title or "(empty)", "turns": len(users),
+                         "task": meta.get("task") or "", "ts": st.st_mtime})
+            _CHAT_CACHE[d.name] = hit
+        items.append(hit[1])
+    items.sort(key=lambda x: x["ts"], reverse=True)
+    return items[:limit]
+
