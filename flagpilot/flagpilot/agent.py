@@ -395,8 +395,12 @@ def run_attempt(
     seed: int = 0,
     hook: Callable[[dict], None] | None = None,
     on_delta: Callable[[int, str], None] | None = None,
+    control=None,
 ) -> dict:
     """跑一次 attempt。
+
+    control（flagpilot.control.RunControl）：网页上的人在回路——单步批准 / 修改 / 跳过、暂停、插提示。
+    批量评测和 CLI 不传，行为不变。
 
     on_delta(turn, chunk)：模型逐字输出时回调，只给界面做实时显示（Web 端"边生成边看"）。
     它不进 trace、不改 messages，传不传对评测结果没有任何影响；None 时走原来的整段返回。
@@ -542,6 +546,11 @@ def run_attempt(
                          to_model=spec.name, stall_streak=stall_streak,
                          hosted_tokens=hosted_prompt + hosted_completion)
 
+        if control is not None:
+            # 看着运行的人插的提示：本轮调模型前加进对话，轨迹里标出来（评测批次不会有）
+            for h in control.take_hints():
+                tr.event("hint", turn=turns + 1, text=h)
+                messages.append({"role": "user", "content": "HINT from the person watching this run (use it if it helps): " + h + NT})
         turns += 1
         active = hosted_client or client
         # 截断判定必须跟着 active 走，不能用 cfg.model（见 turn_max_tokens）。
@@ -692,6 +701,26 @@ def run_attempt(
             reason = replay.reason
             break
 
+        if control is not None:
+            field = "cmd" if act.action == "shell" else "code" if act.action == "python" else ""
+            t_wait = time.monotonic()
+            shown = getattr(act, field) if field else (act.path or f"{act.scheme} {act.text}".strip() or act.cmd)
+            op, edited, waited = control.gate(turns, act.action, field, shown,
+                                              lambda info: tr.event("await", **info))
+            t0 += time.monotonic() - t_wait          # 人想事情的时间不算进墙钟预算
+            if waited:
+                tr.event("decision", turn=turns, op=op, **({field: (edited or "")[:400]} if op == "edit" and field else {}))
+            if op == "stop":
+                verdict, reason = "error", "stopped by the user"
+                break
+            if op == "skip":
+                messages.append({"role": "assistant", "content": comp.text[:2000]})
+                messages.append({"role": "user", "content": "OBSERVATION\nSKIPPED: the person watching chose not to run this step. Take a different step." + NT})
+                continue
+            if op == "edit" and field and edited:
+                setattr(act, field, edited)
+                if field == "code":
+                    act.cmd = edited[:400]
         res = toolbox.execute(act)
         if res is None:
             verdict, reason = "error", "tool returned nothing"

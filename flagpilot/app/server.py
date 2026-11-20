@@ -40,6 +40,7 @@ from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
 from app import httpcache, lab, runs_index, tacc, tacc_live
+from flagpilot.control import OPS, RunControl
 
 STATIC = Path(__file__).resolve().parent / "index.html"
 _STATIC = httpcache.StaticFile(STATIC)
@@ -202,6 +203,14 @@ def _load_run_from_disk(rid: str) -> dict | None:
     return None
 
 
+def _new_control(payload: dict) -> RunControl:
+    """开跑时就带上单步：否则第一条命令可能抢在"打开单步"的请求之前执行。"""
+    ctl = RunControl()
+    if payload.get("step"):
+        ctl.set("step", True)
+    return ctl
+
+
 def _wake(cond: threading.Condition) -> None:
     """summary 落定后再叫醒一次：读端可能正等在"没有新事件"上。"""
     with cond:
@@ -251,7 +260,7 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
         # "题目-s0"，同一题跑第二遍会把上一遍的 trace 覆盖掉。四档连跑更糟，
         # B0→B3 只剩最后一档的痕迹，事后想核对"当时到底调了什么"就没了。
         summary = run_attempt(task, cfg, config.RUNS_ROOT / "web" / run_id,
-                              seed=0, hook=hook, on_delta=on_delta)
+                              seed=0, hook=hook, on_delta=on_delta, control=STATE[run_id].get("control"))
         # 归因按需重算（不写回 runs.jsonl），界面上直接显示"为什么没解出来"
         t_tag = time.time()
         try:
@@ -494,7 +503,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop")
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/run/control")
         if path not in routes:
             return self._json(404, {"error": "not found"})
         if not self._json_content_type():
@@ -525,6 +534,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._settings(payload)
         if path == "/api/lab/start":
             return self._lab_start(payload)
+        if path == "/api/run/control":
+            return self._run_control(payload)
         if path == "/api/lab/stop":
             m = lab.exp_dir(config.RUNS_ROOT, str(payload.get("id") or ""))
             return self._json(200, {"ok": bool(m) and lab.stop(m.name)})
@@ -558,6 +569,8 @@ class Handler(BaseHTTPRequestHandler):
                           "cond": threading.Condition(),   # 新事件到达即唤醒 SSE
                           "partial": {"turn": 0, "text": "", "seq": 0, "t": 0.0},  # 本轮逐字输出
                           "t0": time.time(),     # 端到端计时起点（收到 POST 那一刻）
+                          # 单步 / 暂停 / 插提示：只有本机运行能在命令之间停下来，TACC 作业做不到
+                          "control": _new_control(payload) if payload.get("backend") != "tacc" else None,
                           "ablate": ablate or SETTINGS["ablation"]}
         try:
             target = _tacc_worker if payload.get("backend") == "tacc" else _worker
@@ -569,6 +582,19 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"run_id": rid, "ablation": ablate or SETTINGS["ablation"]})
 
     # ---------- 运行时设置 ----------
+
+    def _run_control(self, payload: dict) -> None:
+        """看着一次本机运行的人：单步、暂停 / 继续、批准 / 修改 / 跳过当前命令、停止、插提示。"""
+        rid, op = str(payload.get("id") or ""), str(payload.get("op") or "")
+        st = STATE.get(rid) if _SID_RE.match(rid) else None
+        ctl = st.get("control") if st else None
+        if ctl is None or st.get("summary"):
+            return self._json(404, {"error": "No run in progress with that id"})
+        if op not in OPS:
+            return self._json(400, {"error": f"Unknown control {op!r}"})
+        turn = payload.get("turn")
+        ok = ctl.set(op, payload.get("value"), turn=int(turn) if isinstance(turn, (int, float)) else None)
+        return self._json(200 if ok else 409, {"ok": ok, **ctl.state()})
 
     def _qparam(self, name: str) -> str:
         return urllib.parse.parse_qs(self.path.split("?", 1)[-1]).get(name, [""])[0]

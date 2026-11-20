@@ -471,6 +471,16 @@
   .hc{display:flex;gap:3px} .hc i{flex:1;height:26px;background:var(--rule2);transition:transform .15s var(--ease)} .hc i[data-run]{cursor:pointer} .hc i[data-run]:hover{transform:scaleY(1.18)}
   .hc i.ok{background:var(--blue)} .hc i.warn{background:var(--yellow)} .hc i.bad{background:var(--red)} .hc i.idle{background:var(--ink3)} .hc i.run{background:var(--ink);animation:blink 1s steps(2) infinite}
   .hc i.new{animation:land .55s var(--spring)} @keyframes land{from{transform:scale(.25);opacity:0}}
+  /* watching a run: step mode, pause, hints; a waiting command can be edited, run or skipped */
+  .runctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin:16px 0 0;padding:12px 14px;border:1.5px dashed var(--ink);background:var(--white)}
+  .runctl .hintbox{display:flex;flex:1 1 320px;min-width:240px;border:1.5px solid var(--rule);transition:border-color .12s} .runctl .hintbox:focus-within{border-color:var(--ink)}
+  .runctl input{flex:1;min-width:0;border:0;padding:8px 12px;font:15px var(--font);background:transparent;outline:none}
+  .await{margin:14px 0 0;border:1.5px solid var(--ink);background:var(--yellow-t);box-shadow:5px 5px 0 var(--ink);padding:14px 16px;animation:awaitIn .4s var(--spring)}
+  @keyframes awaitIn{from{transform:translateY(10px);opacity:0}}
+  .await .ah{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font:700 16px var(--font)} .await .ah span{font:600 15px var(--mono);color:#7a5600}
+  .await textarea{display:block;width:100%;margin-top:10px;font:15px/1.5 var(--mono);min-height:0;resize:vertical;border:1.5px solid var(--rule);padding:8px 10px;background:var(--white)}
+  .await textarea[readonly]{color:var(--ink2)} .await .aa{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:10px}
+  .explain{margin:10px 0 2px}
   /* skeleton while data loads: a light band sweeps across (transform only) */
   .skel{position:relative;overflow:hidden;background:var(--rule2)} .skel::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);transform:translateX(-100%);animation:shimmer 1.3s var(--ease-io) infinite}
   @keyframes shimmer{to{transform:translateX(100%)}}
@@ -751,6 +761,13 @@
           <button class="ibtn" id="inspBtn" aria-label="Agent flow" data-tip="Agent flow · call chain · solve.py">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg></button>
         </div>
+        <div class="runctl" id="runCtl" hidden>
+          <label class="chip toggle" data-tip="Each command waits for your OK before it runs"><input type="checkbox" id="ctlStep"><span class="tick"></span>Step mode</label>
+          <button class="btn" id="ctlPause">Pause</button>
+          <div class="hintbox"><input id="ctlHint" maxlength="500" placeholder="Give the agent a hint, e.g. try base64" aria-label="Hint for the agent"><button class="btn plain" id="ctlHintGo">Send hint</button></div>
+          <button class="btn plain" id="ctlStop">Stop</button>
+        </div>
+        <div id="awaitCard" hidden></div>
         <div class="scrub" id="scrub" hidden><div class="bubble" id="scrubBubble"></div><div class="track" id="scrubTrack"></div><div class="under" id="scrubUnder"></div></div>
         <div id="traceEmpty"></div>
         <div id="timeline" class="none"><div id="flow" aria-label="Agent flow"></div></div>
@@ -1539,7 +1556,7 @@ function explainStep(t){
   if (t.repeat) L.push('The same action repeated; the harness inserted a REPEAT WARNING asking for a new approach.');
   return L;
 }
-function stepStatus(t){ if (t.invalid) return ['s-bad', '✗', 'failed']; if (t.tool) return t.tool.exit_code === 0 ? ['s-ok', '✓', 'ok'] : ['s-warn', '!', 'non-zero exit']; return ['', '·', '']; }
+function stepStatus(t){ if (t.invalid) return ['s-bad', '✗', 'failed']; if (t.skipped) return ['s-warn', '↷', 'skipped by you']; if (t.tool) return t.tool.exit_code === 0 ? ['s-ok', '✓', 'ok'] : ['s-warn', '!', 'non-zero exit']; return ['', '·', '']; }
 function actBlock(a){
   if (!a) return '';
   if (a.action === 'shell') return termBlock(a.cmd || '', null, {title: 'sandbox — bash'});
@@ -1596,10 +1613,11 @@ function flush(){
 }
 function summaryHTML(t){
   return `<span class="no">${pad2(t.n)}</span><span class="act"><span class="g ${ACT[t.act && t.act.action] || 'ring'}"></span>${esc(t.act ? t.act.action : (t.invalid ? 'error' : '?'))}</span>
-    <span class="ttl">${esc(chipWhat(t))}</span><span class="tm">${t.tool ? (t.tool.ms / 1000).toFixed(2) + ' s' : ''}</span><span class="mk"></span><span class="chev">›</span>`;
+    <span class="ttl">${esc(chipWhat(t))}${t.hint ? ' · after your hint' : ''}${t.decision === 'edit' ? ' · edited by you' : t.skipped ? ' · skipped by you' : ''}</span><span class="tm">${t.tool ? (t.tool.ms / 1000).toFixed(2) + ' s' : ''}</span><span class="mk"></span><span class="chev">›</span>`;
 }
 function bodyHTML(t){
   const [, mk, word] = stepStatus(t), body = [], why = explainStep(t);
+  if (t.hint) body.push(sect('Your hint', `<p class="think-txt">${esc(t.hint)}</p>`, true, 'A hint you gave while the run was going'));
   if (why.length) body.push(sect('Why', `<ul class="why">${why.map(x => `<li>${x}</li>`).join('')}</ul>`, true, 'What this step does — auto-explained'));
   if (t.thought) body.push(sect('Thought', `<p class="think-txt">${esc(t.thought)}</p>`, true, "Thought — the model's own words"));
   if (t.act) body.push(sect(`Action ${mk} ${esc(word)}`, actBlock(t.act), true));
@@ -1608,6 +1626,7 @@ function bodyHTML(t){
   if (t.tool && t.tool.stderr) body.push(sect('stderr', termBlock(null, en(t.tool.stderr), {title: 'stderr'}), false));
   if (t.invalid) body.push(sect('Protocol error', codeBlock(en(t.invalid), 'text', 'harness'), true));
   if (t.raw) body.push(sect('Raw reply', codeBlock(t.raw.slice(0, 1500), 'json', 'raw'), false));
+  if (t.act && t.act.action !== 'submit') body.push(`<div class="explain"><button type="button" class="dbtn" data-explain="${esc(t.key)}">Explain this step in Ask →</button></div>`);
   return body.join('');
 }
 const sigOf = t => `${t.tool ? 1 : 0}|${t.invalid || ''}|${t.repeat || 0}`;
@@ -1793,11 +1812,11 @@ function onEvent(ev){
     case 'model': { dropLive();
       const o = parseModel(ev.text), key = 't' + ev.turn;
       const t = {key, n: ev.turn, ptok: ev.prompt_tokens, ctok: ev.completion_tokens, ttft: ev.ttft_ms, ms: ev.latency_ms, raw: ev.text || '',
-                 act: (o && o.action) ? o : null, thought: (o && o.thought) ? o.thought : '', tool: null, invalid: null, repeat: 0};
+                 act: (o && o.action) ? o : null, thought: (o && o.thought) ? o.thought : '', tool: null, invalid: null, repeat: 0, hint: (run.hints || {})[ev.turn] || ''};
       run.turns.push(t); run.byKey.set(key, t); run.ctok += ev.completion_tokens || 0; run.ptok += ev.prompt_tokens || 0; run.modelMs += ev.latency_ms || 0;
       if (ev.ttft_ms > 0) run.ttfts.push(ev.ttft_ms);
       if (!R.bulk) openSteps.add(key); touch(key); break; }
-    case 'tool': { const t = run.turns[run.turns.length - 1];
+    case 'tool': { awaitHide(); const t = run.turns[run.turns.length - 1];
       if (t){ t.tool = {action: ev.action, exit_code: ev.exit_code, ms: ev.duration_ms, chars: ev.sent_chars, truncated: ev.truncated, timed_out: ev.timed_out, obs: ev.obs_head, stderr: ev.stderr_head || ''}; touch(t.key); }
       break; }
     case 'invalid_action': { const t = run.turns[run.turns.length - 1]; if (t){ t.invalid = ev.reason; touch(t.key); } break; }
@@ -1807,6 +1826,9 @@ function onEvent(ev){
       touch('submit'); break;
     case 'replay': run.replay = ev; touch('submit'); break;
     case 'done': dropLive(); run.done = ev; showDone(ev); schedule(); break;
+    case 'hint': (run.hints = run.hints || {})[ev.turn] = ((run.hints[ev.turn] || '') + ' ' + (ev.text || '')).trim(); break;
+    case 'await': if (!R.bulk) awaitShow(ev); break;
+    case 'decision': { awaitHide(); const t = run.turns[run.turns.length - 1]; if (t){ t.decision = ev.op; if (ev.op === 'skip') t.skipped = true; touch(t.key); } break; }
   }
 }
 /* bulk replay (history / reconnect): one flush at the end, last step open, no entry animations */
@@ -1934,12 +1956,14 @@ const onEventRef = onEvent;
 function runOne(task, ablate, onEvent, onReset, backend){
   return new Promise(async (resolve, reject) => {
     let r;
-    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || ''})}); } catch(e){ return reject(e); }
+    const step = backend !== 'tacc' && $('#ctlStep').checked;
+    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step})}); } catch(e){ return reject(e); }
     if (!r.ok){ let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch(_){} return reject(new Error('Submission failed: ' + m)); }
     const {run_id} = await r.json(); if (!run_id) return reject(new Error('The server returned no run id'));
     let settled = false, es = null, lastEv = Date.now(); const t0 = performance.now();
-    const finish = v => { if (!settled){ settled = true; try { es && es.close(); } catch(_){} resolve(v); } };
-    const die = e => { if (!settled){ settled = true; try { es && es.close(); } catch(_){} reject(e); } };
+    if (backend !== 'tacc') ctlShow(run_id);
+    const finish = v => { if (!settled){ settled = true; ctlHide(); try { es && es.close(); } catch(_){} resolve(v); } };
+    const die = e => { if (!settled){ settled = true; ctlHide(); try { es && es.close(); } catch(_){} reject(e); } };
     const rescue = () => { if (!settled) recoverRun(run_id, onEvent, onReset).then(finish).catch(die); };
     const wd = setInterval(() => { if (settled){ clearInterval(wd); return; } if (Date.now() - lastEv > (backend === 'tacc' ? 900000 : 150000)){ clearInterval(wd); try { es.close(); } catch(_){} rescue(); } }, 5000);
     es = new EventSource('/api/stream?id=' + run_id);
@@ -1951,6 +1975,43 @@ function runOne(task, ablate, onEvent, onReset, backend){
     es.onerror = () => { if (settled) return; try { es.close(); } catch(_){} clearInterval(wd); rescue(); };
   });
 }
+/* ---------------- watching a run: step mode, pause, hints, stop ---------------- */
+let ctlRid = null, awaitTurn = null;
+const STEP_KEY = 'fp.stepmode';
+try { $('#ctlStep').checked = localStorage.getItem(STEP_KEY) === '1'; } catch(_){}
+function ctlShow(rid){ ctlRid = rid; $('#runCtl').hidden = false; $('#ctlPause').textContent = 'Pause'; $('#ctlPause').dataset.on = ''; }
+function ctlHide(){ ctlRid = null; $('#runCtl').hidden = true; awaitHide(); }
+async function ctl(op, value, turn){ if (!ctlRid) return {ok: false};
+  try { const r = await fetch('/api/run/control', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: ctlRid, op, value, turn})}); return await r.json(); }
+  catch(_){ return {ok: false}; } }
+$('#ctlStep').addEventListener('change', e => { try { localStorage.setItem(STEP_KEY, e.target.checked ? '1' : '0'); } catch(_){} ctl('step', e.target.checked);
+  toast(e.target.checked ? 'Step mode: each command waits for your OK' : 'Step mode off'); });
+$('#ctlPause').onclick = async () => { const b = $('#ctlPause'), on = !b.dataset.on; b.dataset.on = on ? '1' : ''; b.textContent = on ? 'Resume' : 'Pause'; await ctl(on ? 'pause' : 'resume');
+  if (on) toast('Pausing before the next command'); };
+const sendHint = async () => { const i = $('#ctlHint'), v = i.value.trim(); if (!v) return; const d = await ctl('hint', v);
+  if (d.ok){ i.value = ''; toast('Hint sent: the agent reads it on its next step'); } else toast('Could not send the hint: the run has ended'); };
+$('#ctlHintGo').onclick = sendHint; $('#ctlHint').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing){ e.preventDefault(); sendHint(); } });
+$('#ctlStop').onclick = async () => { await ctl('stop'); toast('Stopping after the current step'); };
+function awaitShow(ev){
+  awaitTurn = ev.turn; const card = $('#awaitCard'), editable = !!ev.field;
+  card.innerHTML = `<div class="await" role="alertdialog" aria-label="A command is waiting for you"><div class="ah"><b>Step ${pad2(ev.turn)} is waiting for you</b><span>${esc(ev.action)}${ev.paused && !ev.step ? ' · paused' : ''}</span></div>`
+    + `<textarea id="awaitText" rows="${Math.min(8, Math.max(1, String(ev.text || '').split('\n').length))}" spellcheck="false"${editable ? '' : ' readonly'} aria-label="The command">${esc(ev.text || '')}</textarea>`
+    + `<div class="aa"><button class="btn primary" id="awRun">${editable ? 'Run it' : 'Go on'}<span class="arr">↵</span></button><button class="btn" id="awSkip">Skip</button><button class="btn plain" id="awStop">Stop the run</button>`
+    + `<span class="hint">${editable ? 'Edit the command first if you like. ⌘↵ or Ctrl↵ runs it.' : 'This action cannot be edited.'}</span></div></div>`;
+  card.hidden = false; const ta = $('#awaitText'), orig = ta.value;
+  const go = () => { const v = ta.value; ctl(editable && v.trim() && v !== orig ? 'edit' : 'approve', v, ev.turn).then(d => { if (!d.ok) toast('That step has already moved on'); }); awaitHide(); };
+  $('#awRun').onclick = go; $('#awSkip').onclick = () => { ctl('skip', null, ev.turn); awaitHide(); }; $('#awStop').onclick = () => { ctl('stop'); awaitHide(); };
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)){ e.preventDefault(); go(); } });
+  if (editable) ta.focus({preventScroll: true}); card.scrollIntoView({block: 'nearest', behavior: reduced() ? 'auto' : 'smooth'});
+  setStatus('Waiting for you', 'warn', `step ${pad2(ev.turn)} · ${ev.action}`);
+}
+function awaitHide(){ const c = $('#awaitCard'); if (c && !c.hidden){ c.hidden = true; c.innerHTML = ''; if (busy) setStatus('Running', '', sel || ''); } awaitTurn = null; }
+/* "Explain this step": the step's command and output go to Ask as a question about this challenge */
+document.addEventListener('click', e => { const b = e.target.closest('[data-explain]'); if (!b || !run) return; const t = run.byKey.get(b.dataset.explain); if (!t || !t.act) return;
+  if (chatBusy){ toast('A reply is still coming in Ask; try again in a moment'); return; }
+  const a = t.act, what = a.cmd || a.code || a.path || [a.scheme, a.text].filter(Boolean).join(' ') || a.action, out = t.tool ? en(String(t.tool.obs || '')).slice(0, 700) : '';
+  const msg = `Explain step ${t.n} of my run on ${sel || 'this challenge'}. The agent did a ${a.action} action:\n${String(what).slice(0, 600)}` + (out ? `\nIt got this output:\n${out}` : '') + '\nWhy was this a sensible step, and what does the output tell us?';
+  chatRestored = true; go('chat'); $('#newChat').click(); const box = $('#chatInput'); box.value = msg; box.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); });
 let runPage = 'solve';
 function lockRun(on){ busy = on; if (on) runPage = page; railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); }
 function beginRun(label){ run = fresh(); openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); }

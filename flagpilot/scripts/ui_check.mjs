@@ -139,6 +139,29 @@ try {
   await js("QW = {phase: 'idle'}");
   await noCJK("solve");
 
+  // 5b. watching a run: step mode holds each command; it can be edited or skipped; a hint reaches the next step; a step can be explained in Ask
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("(() => { const c = document.querySelector('#ctlStep'); c.checked = true; c.dispatchEvent(new Event('change', {bubbles: true})); })()");
+  await js("document.querySelector('#run').click()");
+  const stHeld = await until("!document.querySelector('#awaitCard').hidden && document.querySelector('#awaitText')", 20000);
+  await js("(() => { const i = document.querySelector('#ctlHint'); i.value = 'try base64'; document.querySelector('#ctlHintGo').click(); })()");
+  await sleep(300);
+  await js("(() => { const t = document.querySelector('#awaitText'); if (!t.readOnly) t.value = 'echo hello-from-test'; document.querySelector('#awRun').click(); })()");
+  const edited = await until("run && run.turns.some(t => t.decision === 'edit' && t.tool && /hello-from-test/.test(t.tool.obs || ''))", 15000);
+  const stSecond = await until("!document.querySelector('#awaitCard').hidden", 8000);
+  if (stSecond) await js("document.querySelector('#awSkip').click()");
+  const stSkipped = !stSecond || await until("run && run.turns.some(t => t.skipped)", 10000);
+  await js("(() => { const c = document.querySelector('#ctlStep'); c.checked = false; c.dispatchEvent(new Event('change', {bubbles: true})); })()");
+  await js("document.querySelector('#awRun') && document.querySelector('#awRun').click()");
+  const finished = await until("document.querySelector('#verdict .verdict:not(.run)') && document.querySelector('#runCtl').hidden", 30000);
+  const hinted = await js("!!(run && run.turns.some(t => /base64/.test(t.hint || '')))");
+  check("step mode: a held command can be edited, skipped or run; a hint reaches the next step", stHeld && edited && stSkipped && finished && hinted, JSON.stringify({stHeld, edited, stSecond, stSkipped, finished, hinted}));
+  await js("localStorage.removeItem('fp.stepmode')");
+  await js("(() => { const d = document.querySelector('#flow details.step'); if (d) d.open = true; const b = document.querySelector('[data-explain]'); b && b.click(); })()");
+  check("a step can be explained in Ask", await until("document.querySelector('.page.on').dataset.page === 'chat' && /Explain step \\d+ of my run/.test((document.querySelector('#chatLog .bub.me') || {}).textContent || '') && document.querySelector('#chatLog .bub.bot .md')", 15000));
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
+
   // 6. runs + replay
   await js("document.querySelector('.navbtn[data-page=\"history\"]').click()");
   check("runs list and stats render", await until("document.querySelectorAll('#histList .row').length >= 1 && /\\d/.test(document.querySelector('#hs-n').textContent)", 5000));
