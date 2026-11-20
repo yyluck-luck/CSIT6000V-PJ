@@ -490,6 +490,7 @@
   .chatwrap.collapsed .threads .rail{display:flex}
   /* the composer's Threads button wears the same face as the sidebar's toggle: arrow, spaced caps, count */
   .chip.thr{border-color:transparent;gap:8px;padding:0 10px} .chip.thr:hover{background:var(--hover);border-color:transparent}
+  .cbar #threadsBtn{display:none}     /* wide screens: the sidebar has its own toggle; the composer button is for phones only */
   .chip.thr .ar{font:700 18px var(--mono);line-height:1} .chip.thr b{font:800 13px var(--font);letter-spacing:.16em;text-transform:uppercase}
   .chip.thr .n{font:700 12px var(--mono);color:var(--ink3)}
   .threads .hd .x{border:0;background:transparent;font:700 18px var(--mono);cursor:pointer;padding:4px 8px;color:var(--ink2)} .threads .hd .x:hover{background:var(--hover);color:var(--ink)}
@@ -578,6 +579,7 @@
     .c8,.c4{grid-column:1/-1} .notes{position:static} .feats{grid-template-columns:1fr} .hero2{grid-template-columns:1fr} .tacc-steps{grid-template-columns:repeat(3,1fr)}
     .htable .row{grid-template-columns:18px minmax(0,1fr) 110px 14px} .htable .col-t,.htable .col-a{display:none}
     .chatwrap{grid-template-columns:1fr} .threads{display:none} .chatwrap.showthreads .threads{display:flex;position:absolute;inset:0 30% 0 0;z-index:5}
+    .cbar #threadsBtn{display:inline-flex}
     .chatwrap.collapsed{grid-template-columns:1fr} .chatwrap.collapsed .threads .rail{display:none} .chatwrap.collapsed .threads .hd{display:flex} .chatwrap.collapsed #threadList{display:block}
   }
   @media (max-width:860px){

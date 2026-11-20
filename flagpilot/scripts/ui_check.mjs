@@ -191,8 +191,7 @@ try {
   await js("document.querySelector('#threadsShow').click()");
   const railBack = await until("!document.querySelector('#chatWrap').classList.contains('collapsed') && document.querySelector('#threadList').offsetParent && document.querySelector('#threadsBtn').getAttribute('aria-pressed') === 'true'", 2000);
   check("collapsed threads keep an expand control that restores them", railShown && railBack, railShown ? (railBack ? "" : "did not expand") : "no expand control after collapsing");
-  const chipArrow = await js("(() => { const c = document.querySelector('#threadsBtn'), a1 = c.querySelector('.ar').textContent; c.click(); const a2 = c.querySelector('.ar').textContent; c.click(); return a1 + a2 + '|' + c.querySelector('.n').textContent; })()");
-  check("Threads button wears the sidebar toggle: arrow follows the list, count shown", /^‹›\|[1-9]\d*$/.test(chipArrow), chipArrow);
+  check("wide screens: no Threads button under the composer (the sidebar has its own toggle)", await js("getComputedStyle(document.querySelector('#threadsBtn')).display === 'none'"));
   // typing dots: folded by default; a tap opens the live panel (stage, elapsed); the choice is remembered; the reply replaces it
   const typeMsg = async text => { await js(`(() => { const t = document.querySelector('#chatInput'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input', {bubbles: true})); })()`); await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); };
   await js("localStorage.removeItem('fp.chat.live')"); await js("document.querySelector('#newChat').click()"); await js("QW = {phase: 'starting'}");
@@ -235,6 +234,8 @@ try {
   check("narrow: no horizontal overflow", await js("document.documentElement.scrollWidth <= innerWidth + 1"));
   await js("localStorage.setItem('fp.threads.hidden', '1')"); await nav(base + "/#/chat"); await sleep(200);
   const askW = await js("Math.round(document.querySelector('#chatCol').getBoundingClientRect().width)");
+  const phoneThreads = await js("(() => { const c = document.querySelector('#threadsBtn'); if (getComputedStyle(c).display === 'none') return 'hidden'; const a1 = c.querySelector('.ar').textContent; c.click(); const open = document.querySelector('#chatWrap').classList.contains('showthreads'); const a2 = c.querySelector('.ar').textContent; c.click(); return a1 + a2 + (open ? '|open' : '|closed') + '|' + c.querySelector('.n').textContent; })()");
+  check("phones: the composer's Threads button opens the list (no sidebar there)", /^›‹\|open\|[1-9]\d*$/.test(phoneThreads), phoneThreads);
   check("narrow: a remembered collapse does not squeeze Ask", askW >= 300 && await js("document.documentElement.scrollWidth <= innerWidth + 1"), askW + " px");
   await js("localStorage.removeItem('fp.threads.hidden')");
   await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] }); await vp(1280, 800);
