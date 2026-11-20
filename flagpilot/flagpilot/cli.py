@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, config, gpu, metrics, splits, storage, writeup
-from .config import (ABLATIONS, TRACK_H, Budget, Hybrid, Policy, RunConfig, SandboxLimits,
+from .config import (ABLATIONS, TRACK_H, Budget, Hybrid, ModelSpec, Policy, RunConfig, SandboxLimits,
                      get_ablation, make_model_spec, track_h_api_key)
 from .runner import BatchRunner
 from .tasks import load_index, select
@@ -736,7 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--api-key")
         p.add_argument("--metrics-url", default="")
         p.add_argument("--temperature", type=float, default=0.2)
-        p.add_argument("--max-tokens", type=int, default=2048)
+        p.add_argument("--max-tokens", type=int, default=ModelSpec.max_tokens)   # 4096，依据见 config.ModelSpec
         p.add_argument("--turns", type=int, default=20)
         p.add_argument("--wall", type=int, default=1500)
         p.add_argument("--head", type=int, default=1500)

@@ -124,7 +124,13 @@ class ModelSpec:
     base_url: str = "http://127.0.0.1:8000/v1"
     api_key: str = "EMPTY"
     temperature: float = 0.2
-    max_tokens: int = 2048
+    # 每轮输出上限。2048 → 4096 是 dev 上定的（2026-11-20，qwen3.8-27b，B3，同 20 题）：
+    # 2048 时 3 题共 5 条回复被截断（截断算一次无效动作，连着 3 次整题出局），4096 时 0 条；
+    # verified 12 → 13（crypto-079），原来解出的一题没丢；输出 token +14%、墙钟 +9%。
+    # n=20 时差异不显著（McNemar p=1.0），改它是为去掉截断这个失败机制，不是为涨分。
+    # 上下文余量：实测单次最大 prompt 24.3k，加 4096 仍在 32k 之内；万一放不下，
+    # 客户端按服务端报错把本轮上限调小重试（client.fit_after_overflow）。
+    max_tokens: int = 4096
     request_timeout_s: float = 180.0
     # vLLM 的 Prometheus 端点，用于读 prefix cache 命中率；留空则不采
     metrics_url: str = ""

@@ -13,7 +13,7 @@
 #   FP_ORDER（lpt|fifo，默认 lpt：预计最慢的题先跑）  FP_LIMIT=0 表示不限题数
 #   FP_DEADLINE_EPOCH（服务作业的结束时刻；pipeline.sh 自动给，客户端据此决定下一档还来不来得及）
 #   FP_VENDOR=0（不随包带 pycryptodome / gmpy2；默认带，见下）
-#   FP_MAX_TOKENS（每轮输出上限，默认沿用 2048；B3 在 dev 上出现过一次截断，复验用 4096）
+#   FP_MAX_TOKENS（每轮输出上限；不给就用 CLI 默认 4096。2048 时 dev 上有截断，依据见 flagpilot/config.py 的 ModelSpec）
 # 任一模式都可加 FP_EXCLUDE=节点[,节点]：课程 serve.sh 写死 8000 端口，某节点的 8000 被占时
 # 服务会 "Address already in use" 秒退（作业 29239），用它换节点。
 # 结果留在 TACC 的 USERDIR/flagpilot-runs/<batch>/，取回：
