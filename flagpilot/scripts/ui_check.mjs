@@ -82,6 +82,16 @@ try {
   const worst = Math.max(...lat.map(x => x[1]));
   check("page switch commits in the click frame", lat.every(x => x[2]) && worst < 50, `worst handler ${worst.toFixed(1)} ms; ` + lat.map(x => `${x[0]} ${x[1].toFixed(1)}`).join(", "));
 
+  // the rail pill stretches over the items it passes (labels invert under it) and lands exactly on the last one clicked
+  const pill = await js(`(async () => { const pl = document.querySelector('#navPill'), at = p => document.querySelector('.navbtn[data-page="' + p + '"]').getBoundingClientRect();
+      document.querySelector('.navbtn[data-page="solve"]').click(); await new Promise(r => setTimeout(r, 700));
+      document.querySelector('.navbtn[data-page="chat"]').click(); const a = pl.getAnimations()[0]; if (!a) return 'no animation';
+      a.pause(); a.currentTime = a.effect.getTiming().duration * .45; const mid = pl.getBoundingClientRect(), span = Math.round(mid.bottom - mid.top), want = Math.round(at('chat').bottom - at('solve').top); a.play();
+      for (const p of ['lab', 'upload', 'history']) document.querySelector('.navbtn[data-page="' + p + '"]').click();
+      await new Promise(r => setTimeout(r, 800)); const end = pl.getBoundingClientRect(), b = at('history');
+      return [span === want, Math.abs(end.top - b.top) < 1 && Math.abs(end.height - b.height) < 1, getComputedStyle(document.querySelector('.navbtn .lb')).mixBlendMode].join(); })()`);
+  check("rail pill stretches across the items it passes and lands on the last click", pill === "true,true,difference", pill);
+
   // 3. stress: 60 random switches with random gaps + back/forward
   const stress = await js(`(async () => { const P = ['solve','history','lab','upload','chat']; let s = 11; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647; const bad = [];
       const ok = async want => { await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); const el = document.querySelector('.page[data-page="' + want + '"]');
@@ -257,6 +267,16 @@ try {
     chk.length === 4 && /\| It is picoCTF\{made_up\}/.test(chk[0]) && /did not check out.* \| $/i.test(chk[1]) && /\| The file says picoCTF\{real_42\}\.$/.test(chk[2])
       && JSON.stringify(marks) === JSON.stringify(["fchk ok=picoCTF{real_42}|✓ correct flag", "fchk bad=picoCTF{made_up}|✗ wrong flag"]),
     JSON.stringify({chk, marks}));
+  await js("document.querySelector('#newChat').click()");
+  await js(`(() => { window.__ES = window.EventSource;
+    window.EventSource = class { constructor(){ setTimeout(() => this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Done.', turns: 1})}), 700); } close(){} }; })()`);
+  await typeMsg("answer while I look at Runs");
+  const ringOn = await js("document.querySelector('.navbtn[data-page=\"chat\"]').classList.contains('working') && document.querySelector('#brand').classList.contains('working')");
+  await js("document.querySelector('.navbtn[data-page=\"history\"]').click()");
+  const dotOn = await until("document.querySelector('.navbtn[data-page=\"chat\"]').classList.contains('note') && !document.querySelector('.navbtn.working') && !document.querySelector('#brand').classList.contains('working')", 3000);
+  await js("window.EventSource = window.__ES; document.querySelector('.navbtn[data-page=\"chat\"]').click()");
+  const dotOff = await until("!document.querySelector('.navbtn[data-page=\"chat\"]').classList.contains('note')", 1000);
+  check("rail: a reply running behind another page rings its item, leaves a dot when done, opening Ask clears it", ringOn && dotOn && dotOff, JSON.stringify({ringOn, dotOn, dotOff}));
   await noCJK("ask");
   const smallAsk = await js(SMALL); check("no small text on Ask", !smallAsk.length, smallAsk.join(" | "));
 
