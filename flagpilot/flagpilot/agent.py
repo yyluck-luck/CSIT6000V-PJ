@@ -140,8 +140,9 @@ _SCRIPT_HINTS = {
                "and brute force over large keyspaces.",
     "no_output": "the script finished but printed nothing. It must print the flag.",
     "hardcoded_no_material": "the script still printed the same flag after ./challenge/ "
-                             "was emptied, so the answer does not come from the files. "
-                             "It must read and process the actual challenge material.",
+                             "was emptied, or after the files were replaced with decoys "
+                             "of the same names. Opening a file is not enough: the answer "
+                             "has to be computed from what is read.",
 }
 
 
@@ -779,7 +780,11 @@ def run_attempt(
     summary["writeup"] = storage.artifact_path(run_dir / "writeup.md").name
     storage.seal_directory(workdir)
     storage.seal_directory(run_dir / "replay")
-    storage.seal_directory(run_dir / "replay-no-material")
+    # 两道材料检验各自留下的脚本副本。这里原来写的是 "replay-no-material"，
+    # 但 verify 实际建的是与 replay/ 同级的 no-material/，路径对不上，
+    # 于是这两个目录一直没被加密。
+    storage.seal_directory(run_dir / "no-material")
+    storage.seal_directory(run_dir / "decoy-material")
     tr.close(summary)
     writeup.generate(run_dir)
     # 读记忆受 cfg.memory 控制，写记忆永远执行：批跑也能攒经验，
