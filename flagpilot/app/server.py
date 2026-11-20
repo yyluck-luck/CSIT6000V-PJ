@@ -386,7 +386,7 @@ class Handler(BaseHTTPRequestHandler):
             rows = read_log(p) if sid and p.exists() else []
             return self._json(200, {"session_id": sid,
                                     "messages": [r for r in rows
-                                                 if r.get("type") in ("user", "reply")],
+                                                 if r.get("type") in ("user", "reply", "error")],
                                     "exists": bool(rows)})
         if path == "/api/memory":
             task = urllib.parse.parse_qs(self.path.split("?", 1)[-1]).get("task", [""])[0]
@@ -598,8 +598,11 @@ class Handler(BaseHTTPRequestHandler):
             storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
             rep = tacc_live.chat(message, history, task_name, use_tools,
                                  on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),
-                                 on_tool=lambda ev: q.put({**ev, "type": "chat_tool"}))
+                                 on_tool=lambda ev: q.put({**ev, "type": "chat_tool"}),
+                                 on_stage=lambda ev: q.put({**ev, "type": "chat_stage"}))
             if rep.get("error") and not rep.get("answer"):
+                # 失败也落盘：重开线程时能看到这条消息为什么没有回复（不参与上面的问答配对）
+                storage.append_record(path, {"ts": stamp(), "type": "error", "turn": turn, "error": str(rep["error"])[:400]})
                 q.put({"type": "error", "message": rep["error"]})
             else:
                 steps = rep.get("steps") or []
@@ -679,6 +682,7 @@ class Handler(BaseHTTPRequestHandler):
                        "total_steps": sess.total_steps,
                        "task": sess.task.name if sess.task else ""})
             except Exception as e:
+                sess.log_error(f"{type(e).__name__}: {e}")
                 q.put({"type": "error", "message": f"{type(e).__name__}: {e}",
                        "trace": traceback.format_exc()[-1200:]})
             finally:

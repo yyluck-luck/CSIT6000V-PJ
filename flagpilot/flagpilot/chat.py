@@ -220,6 +220,10 @@ class ChatSession:
         except OSError:
             pass      # 落盘失败不该让对话中断
 
+    def log_error(self, message: str) -> None:
+        """这一轮没答成：记一条 error，重开线程时看得到失败原因（不参与恢复上下文）。"""
+        self._log({"type": "error", "turn": self.turns + 1, "error": str(message)[:400]})
+
     def history(self) -> list[dict]:
         return read_log(self.path)
 

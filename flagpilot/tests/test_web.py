@@ -347,6 +347,19 @@ class TestWebAPI(unittest.TestCase):
         finally:
             self.post("/api/custom/delete", {"task": name})
 
+    def test_failed_chat_turn_is_recorded(self):
+        """这一轮没答成：线程里留一条 error，重开时看得到原因（以前只有一条没有回复的提问）。"""
+        from unittest import mock
+        from flagpilot import chat as chat_mod
+        with mock.patch.object(chat_mod.ChatSession, "ask", side_effect=RuntimeError("boom")):
+            sid = self.post("/api/chat", {"message": "will fail", "tools": False})["session_id"]
+            with self.assertRaises(AssertionError) as ctx:
+                self.stream_chat(sid, timeout=20)
+        self.assertIn("RuntimeError: boom", str(ctx.exception))
+        hist = json.loads(self.get(f"/api/chat/history?id={sid}"))
+        self.assertEqual(hist["messages"][-1]["type"], "error")
+        self.assertIn("RuntimeError: boom", hist["messages"][-1]["error"])
+
     def test_chat_requires_message(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/chat", {"message": "  "})

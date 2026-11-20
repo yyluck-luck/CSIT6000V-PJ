@@ -37,7 +37,7 @@ case "$1" in
              printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\nINFO:     Application startup complete.\r\n' ;;
       batch) printf '[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
              printf '@@ev {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1, "wall_s": 2.0}\n[fp] done: /x\n' ;;
-      chat) printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
+      chat) printf '[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
     esac ;;
   download) mkdir -p "${@: -1}/$(basename "${@: -2:1}")"; echo "download $*" >> "$st/record" ;;
   cancel) echo "cancel $3" >> "$st/record" ;;
@@ -87,8 +87,10 @@ class TaccLiveCase(unittest.TestCase):
         self.assertTrue(d.exists())
         self.assertIn("batch job=", self.record())
         self.assertIn("tasks=demo-001 events=1", self.record())          # one challenge, events on
-        deltas, tools = [], []
-        rep = tacc_live.chat("hi", [{"user": "a", "answer": "b"}], "", True, deltas.append, tools.append)
+        deltas, tools, stages = [], [], []
+        rep = tacc_live.chat("hi", [{"user": "a", "answer": "b"}], "", True, deltas.append, tools.append, stages.append)
+        self.assertEqual([s["stage"] for s in stages], ["uploading", "queued", "running"])   # 网页"三个点"展开后的阶段
+        self.assertEqual((stages[1]["job"], stages[2]["node"]), ("503", "10-0-9-9"))   # 501 服务、502 单题、503 答疑
         self.assertEqual("".join(deltas), "Hello from Qwen")
         self.assertEqual(rep["answer"], "Hello from Qwen")
         self.assertEqual(tools[0]["cmd"], "ls")
@@ -138,7 +140,11 @@ class TaccChatHTTP(unittest.TestCase):
         saved = config.RUNS_ROOT
         config.RUNS_ROOT = tmp
         try:
-            with mock.patch.object(tacc_live, "chat", lambda m, h, t, tools, on_delta, on_tool: (on_delta("Hi"), {"answer": "Hi there", "steps": []})[1]):
+            def fake_chat(m, h, t, tools, on_delta, on_tool, on_stage=None):
+                on_stage({"stage": "queued", "job": "7"})
+                on_delta("Hi")
+                return {"answer": "Hi there", "steps": []}
+            with mock.patch.object(tacc_live, "chat", fake_chat):
                 srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
                 threading.Thread(target=srv.serve_forever, daemon=True).start()
                 base = f"http://127.0.0.1:{srv.server_address[1]}"
@@ -156,10 +162,31 @@ class TaccChatHTTP(unittest.TestCase):
                                 break
                 srv.shutdown()
                 srv.server_close()
-            self.assertEqual(got, ["chat_delta", "chat_done"])
+            self.assertEqual(got, ["chat_stage", "chat_delta", "chat_done"])
             rows = [json.loads(l) for l in (tmp / "chat" / sid / "chat.jsonl").read_text().splitlines()]
             self.assertEqual([r["type"] for r in rows], ["meta", "user", "reply"])
             self.assertEqual(rows[-1]["answer"], "Hi there")
+            # 失败的一轮也落盘：重开线程能看到原因；之后的问答配对不受影响
+            with mock.patch.object(tacc_live, "chat", lambda *a, **k: {"error": "TACC submission failed", "answer": ""}):
+                srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+                base = f"http://127.0.0.1:{srv.server_address[1]}"
+                req = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "again", "backend": "tacc", "session_id": sid}).encode(),
+                                             headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=10).close()
+                last = {}
+                with urllib.request.urlopen(base + f"/api/stream?id={sid}", timeout=10) as r:
+                    for line in r:
+                        if line.startswith(b"data:"):
+                            last = json.loads(line[5:])
+                            if last.get("type") in ("chat_done", "error"):
+                                break
+                hist = json.loads(urllib.request.urlopen(base + f"/api/chat/history?id={sid}", timeout=10).read())
+                srv.shutdown()
+                srv.server_close()
+            self.assertEqual((last["type"], last["message"]), ("error", "TACC submission failed"))
+            self.assertEqual([m["type"] for m in hist["messages"]], ["user", "reply", "user", "error"])
+            self.assertEqual(hist["messages"][-1]["error"], "TACC submission failed")
         finally:
             config.RUNS_ROOT = saved
             shutil.rmtree(tmp, ignore_errors=True)

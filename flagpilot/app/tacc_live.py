@@ -230,12 +230,18 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
 
 
 def chat(message: str, history: list[dict], task: str, tools: bool,
-         on_delta: Callable[[str], None], on_tool: Callable[[dict], None]) -> dict:
-    """答疑一轮：小作业调用常驻服务；@@delta 逐段交给 on_delta，@@reply 是结果。"""
+         on_delta: Callable[[str], None], on_tool: Callable[[dict], None],
+         on_stage: Callable[[dict], None] | None = None) -> dict:
+    """答疑一轮：小作业调用常驻服务；@@delta 逐段交给 on_delta，@@reply 是结果。
+
+    on_stage 收到 uploading → queued（带作业号）→ running（带节点），网页在"三个点"展开后显示。
+    """
+    stage = on_stage or (lambda ev: None)
     err = _claim("a chat reply")
     if err:
         return {"error": err, "answer": ""}
     try:
+        stage({"stage": "uploading"})
         with tempfile.TemporaryDirectory(prefix="fp-chat-") as d:
             Path(d, "msg.txt").write_text(message, encoding="utf-8")
             Path(d, "history.json").write_text(json.dumps(history[-12:], ensure_ascii=False), encoding="utf-8")
@@ -244,10 +250,15 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
             jid = _submit("chat", env, url=S["url"])
         if not jid:
             return {"error": "TACC submission failed", "answer": ""}
-        sent, seen_tools, t_end = 0, 0, time.time() + 15 * 60
+        stage({"stage": "queued", "job": jid})
+        sent, seen_tools, running, t_end = 0, 0, False, time.time() + 15 * 60
         while time.time() < t_end:
             time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "3")))
             L = _sdk("cat", f"slurm_log/flagpilot-client-{jid}.log")
+            if not running and "[fp] job=" in L:
+                running = True
+                node = (re.search(r"\[fp\] job=\S+ node=(\S+)", L) or [None, ""])[1]
+                stage({"stage": "running", "job": jid, "node": node})
             deltas = [json.loads(l[8:]) for l in L.splitlines() if l.startswith("@@delta ")]
             for t in deltas[sent:]:
                 on_delta(str(t))
