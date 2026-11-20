@@ -62,6 +62,8 @@ class Policy:
     # 观察截断：保留头尾，中间折叠。None = 不截断（用作 baseline）
     truncate_head_chars: int | None = 1500
     truncate_tail_chars: int | None = 1500
+    # 截断时把中段里像 flag / 密钥的行原样留下（见 agent.salient_lines）；关掉就是纯头尾截断
+    keep_salient: bool = True
     # 单次观察的硬上限（字符），超长先截再入库，保证历史字节稳定
     hard_cap_chars: int = 12_000
     # 上下文压缩（compaction）阈值：messages 总字符超过它就折叠中段。

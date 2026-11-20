@@ -172,6 +172,22 @@ class TestTruncate(unittest.TestCase):
         self.assertTrue(cut)
         self.assertEqual(len(out), 5000)
 
+    def test_flag_in_the_cut_middle_is_kept(self):
+        """长输出中间的 flag 不再被头尾截断静默丢掉。"""
+        text = "a line of strings output\n" * 400 + "picoCTF{hidden_in_the_middle}\n" + "more noise here\n" * 400
+        out, cut = truncate(text, Policy(truncate_head_chars=1000, truncate_tail_chars=1000))
+        self.assertTrue(cut)
+        self.assertIn("picoCTF{hidden_in_the_middle}", out)
+        self.assertIn("kept 1 line(s)", out)
+        out2, _ = truncate(text, Policy(truncate_head_chars=1000, truncate_tail_chars=1000, keep_salient=False))
+        self.assertNotIn("hidden_in_the_middle", out2)
+
+    def test_kept_lines_are_capped(self):
+        text = "x" * 3000 + "".join(f"\nflag{{candidate_{i:03d}}}" for i in range(200)) + "\n" + "y" * 3000
+        out, _ = truncate(text, Policy(truncate_head_chars=1000, truncate_tail_chars=1000))
+        self.assertEqual(sum(1 for ln in out.splitlines() if ln.startswith("flag{candidate_")), 12)
+        self.assertLess(len(out), 1000 + 1000 + 1200 + 400)
+
     def test_deterministic(self):
         text = "H" * 3000 + "T" * 3000
         p = Policy()

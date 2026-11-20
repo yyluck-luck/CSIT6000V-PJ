@@ -232,6 +232,28 @@ def correction_message(kind: str, reason: str, max_tokens: int) -> str:
     return CORRECTION_TEMPLATE.format(reason=reason)
 
 
+# 头尾截断会把中段静默丢掉，而长 strings / 十六进制 dump / 日志里 flag 常常就在中间。
+# 截断时把中段里"像答案"的行原样留下（flag 形状、picoCTF、key / password / secret），有上限。
+_SALIENT = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}\n]{2,120}\}|picoctf|flag|passw|secret|\bkey\s*[:=]", re.I)
+SALIENT_MAX_LINES, SALIENT_MAX_CHARS = 12, 1200
+
+
+def salient_lines(mid: str) -> list[str]:
+    """中段里值得留下的行（去重、按出现顺序、每行最多 300 字符）。"""
+    out: list[str] = []
+    used = 0
+    for ln in mid.splitlines():
+        if not _SALIENT.search(ln):
+            continue
+        ln = ln.strip()[:300]
+        if ln and ln not in out:
+            out.append(ln)
+            used += len(ln)
+            if len(out) >= SALIENT_MAX_LINES or used >= SALIENT_MAX_CHARS:
+                break
+    return out
+
+
 def truncate(text: str, policy) -> tuple[str, bool]:
     """追加时截断。返回 (结果, 是否截断)。无策略时原样返回。
 
@@ -249,7 +271,12 @@ def truncate(text: str, policy) -> tuple[str, bool]:
         return text, False
     dropped = len(text) - head - tail
     n_lines = text.count("\n")
-    marker = f"\n...[truncated {dropped} chars / {n_lines} lines total]...\n"
+    keep = salient_lines(text[head:len(text) - tail]) if getattr(policy, "keep_salient", True) else []
+    if keep:
+        marker = (f"\n...[truncated {dropped} chars / {n_lines} lines total; kept {len(keep)} line(s) from the cut part"
+                  " that look like flags or secrets]...\n" + "\n".join(keep) + "\n...[end of kept lines]...\n")
+    else:
+        marker = f"\n...[truncated {dropped} chars / {n_lines} lines total]...\n"
     out = text[:head] + marker + (text[-tail:] if tail else "")
     if len(out) > policy.hard_cap_chars:
         out = out[: policy.hard_cap_chars]
