@@ -1974,7 +1974,8 @@ $('#taccStop').onclick = async () => { await fetch('/api/tacc/stop', {method: 'P
 /* ---------------- Qwen on TACC: one server kept up to an hour; runs and chats go to it as small jobs ---------------- */
 let QW = {phase: 'idle'}, qwT = 0, pendingRun = null;
 async function qwenPoll(){
-  try { QW = await (await fetch('/api/tacc/session', {cache: 'no-store'})).json(); } catch(_){ return; }
+  try { QW = await (await fetch('/api/tacc/session', {cache: 'no-store'})).json(); }
+  catch(_){ clearTimeout(qwT); if (QW.phase === 'starting' || QW.phase === 'ready') qwT = setTimeout(qwenPoll, 15000); return; }
   const ph = QW.phase, mins = Math.ceil((QW.remaining || 0) / 60);
   const label = ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}` : ph === 'failed' ? 'Qwen on TACC · retry' : 'Qwen on TACC · connect';
   for (const id of ['#qwenChip', '#qwenChipAsk']){ const c = $(id); c.classList.toggle('on', ph === 'ready'); c.classList.toggle('wait', ph === 'starting');
@@ -2179,7 +2180,12 @@ async function sendChat(){
   setStatus('Thinking', '', sel || 'concept question');
   const done = ok => { chatBusy = false; sb.disabled = false; ok ? sendPix.done() : sendPix.busy(false); pixLabel(sb, 'Send ↵'); loadThreads(); };
   let r;
+  /* Qwen still starting: hold the message and hand it to Qwen once the server is up, never to the demo model */
+  const waited = QW.phase === 'starting';
+  if (waited){ setStatus('Thinking', '', 'waiting for Qwen 27B on TACC to start');
+    await new Promise(res => { const t0 = Date.now(), tick = () => (QW.phase === 'starting' && Date.now() - t0 < 47 * 60000) ? setTimeout(tick, 1000) : res(); tick(); }); }
   const viaTacc = QW.phase === 'ready';
+  if (waited && !viaTacc){ bot.innerHTML = `<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Send again to use the demo model.</span>`; done(false); setStatus('Ready'); return; }
   if (viaTacc) setStatus('Thinking', '', 'Qwen 27B on TACC · queued');
   try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: sel || '', session_id: chatId, tools: $('#chatTools').checked, backend: viaTacc ? 'tacc' : ''})}); }
   catch(e){ bot.innerHTML = '<span class="bad">Request failed: ' + esc(e.message) + '</span>'; done(false); setStatus('Ready'); return; }

@@ -154,6 +154,17 @@ try {
   await js("document.querySelector('#newChat').click()");
   await js("document.querySelector('#threadList .thread').click()");
   check("opening a thread restores it", await until("document.querySelectorAll('#chatLog .bub').length >= 2", 5000));
+  // Qwen still starting: the message is held, then goes to TACC (this server has no session, so TACC says "not connected")
+  await js("document.querySelector('#newChat').click()");
+  await js("QW = {phase: 'starting'}");
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'wait for qwen'; t.dispatchEvent(new Event('input', {bubbles: true})); })()`);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await sleep(1500);
+  const held = await js("!!document.querySelector('#chatLog .bub.bot .dots') && !document.querySelector('#chatLog .bub.bot .md')");
+  await js("QW = {phase: 'ready', remaining: 600}");
+  const routed = await until("/not connected/.test((document.querySelector('#chatLog .bub.bot .bad') || {}).textContent || '')", 5000);
+  check("Ask holds the message while Qwen starts, then sends it to TACC", held && routed, held ? (routed ? "" : "not routed to TACC") : "answered before Qwen was ready");
+  await js("QW = {phase: 'idle'}");
   await noCJK("ask");
 
   // 10. narrow viewport + reduced motion
