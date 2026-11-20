@@ -10,7 +10,9 @@ set -euo pipefail
 test "$CONDA_PREFIX" = /mnt/home/public/course-envs/CSIT6000V/assignment1/mpi-gemm-v1
 printf 'SDK_BOOTSTRAP=%s\n' "$CONDA_PREFIX"
 source /mnt/home/public/course-envs/CSIT6000V/project/activate.sh
-trap 'rm -rf -- "$QWEN_RUN_DIR"' EXIT
+# 作业结束删掉本节点 /tmp 下的运行目录。答疑沙箱把题目附件设成只读，直接 rm 会删不掉：作业被判成 exit 1，
+# 共享节点的 /tmp 里还留下文件。先恢复写权限再删，并保留作业本身的退出码。
+trap 'rc=$?; if [[ -n "${QWEN_RUN_DIR:-}" && -d "$QWEN_RUN_DIR" ]]; then chmod -R u+w "$QWEN_RUN_DIR" 2>/dev/null || true; rm -rf -- "$QWEN_RUN_DIR" 2>/dev/null || true; fi; exit $rc' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 cd "$TACC_WORKDIR"
@@ -61,7 +63,7 @@ print("[fp] sandbox python3:", p, "->", out)
 echo "[fp] shims: xxd=$(command -v xxd || echo missing) exiftool=$(command -v exiftool || echo missing)"
 # 按沙箱的方式（干净环境 + 只给 FLAGPILOT_SANDBOX_PYTHONPATH）确认随包的库真能 import
 env -i PATH="$PATH" PYTHONPATH="${FLAGPILOT_SANDBOX_PYTHONPATH:-}" python3 -c \
-  'import Crypto, gmpy2; print("[fp] vendored: pycryptodome", Crypto.__version__, "gmpy2", gmpy2.version())' \
+  'import Crypto, gmpy2; print("[fp] vendored: pycryptodome", Crypto.__version__, "gmpy2", gmpy2.version())' 2>/dev/null \
   || echo "[fp] vendored: unavailable (tasks needing pycryptodome/gmpy2 will report the missing library)"
 resolve_base() {
   BASE="$(cat server-url.txt)"

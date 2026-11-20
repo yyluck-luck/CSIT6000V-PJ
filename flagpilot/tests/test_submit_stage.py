@@ -116,5 +116,40 @@ class TestSubmitStageCleanup(unittest.TestCase):
         self.assertNotIn("never_uploaded", "".join(f.read_text(errors="replace") for f in left[0].rglob("*") if f.is_file()))
 
 
+@unittest.skipUnless(shutil.which("bash"), "需要 bash")
+class TestJobCleanupTrap(unittest.TestCase):
+    """client/job.sh 退出时清本节点 /tmp 的运行目录：答疑沙箱把题目附件设成只读，旧的 trap 删不掉，
+    作业被判 exit 1（srun: error），共享节点 /tmp 里还留文件。这里原样取出 job.sh 里那行 trap 来跑。"""
+
+    JOB = ROOT / "deploy" / "tcloud" / "client" / "job.sh"
+    OLD = """trap 'rm -rf -- "$QWEN_RUN_DIR"' EXIT"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fp-job-trap-"))
+
+    def tearDown(self):
+        for d, _, _ in os.walk(self.tmp):
+            os.chmod(d, 0o700)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_with(self, trap_line, code):
+        run = self.tmp / f"run-{code}"
+        ro = run / "chat-work" / "challenge"
+        ro.mkdir(parents=True)
+        (ro / "trace.pcap").write_bytes(b"x")
+        ro.chmod(0o555)                                  # 沙箱给的只读附件
+        script = f"set -euo pipefail\nQWEN_RUN_DIR={run}\n{trap_line}\nexit {code}\n"
+        r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        return r.returncode, run.exists()
+
+    def test_trap_removes_read_only_copies_and_keeps_the_exit_code(self):
+        line = next(l for l in self.JOB.read_text(encoding="utf-8").splitlines() if l.startswith("trap ") and "EXIT" in l)
+        self.assertEqual(self.run_with(line, 0), (0, False))
+        self.assertEqual(self.run_with(line, 3), (3, False))
+
+    def test_old_trap_shows_the_bug(self):
+        self.assertEqual(self.run_with(self.OLD, 0), (1, True))     # 这就是作业日志里的 srun: error
+
+
 if __name__ == "__main__":
     unittest.main()
