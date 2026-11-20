@@ -98,6 +98,7 @@ try {
   // 5. live run
   await js("document.querySelector('#run').click()");
   check("run reaches a verdict", await until("document.querySelector('#verdict .verdict:not(.run)')", 20000));
+  check("verdict bar does not repeat the readouts", await js("!/turns|\\d+\\.\\d+ s/.test((document.querySelector('#verdict .vbar') || {}).textContent || 'x')") && await js("!!document.querySelector('#promptBtn')"));
   check("steps rendered", await js("document.querySelectorAll('#flow details.step').length >= 2"));
   check("scrubber has a tick per step", await js("!document.querySelector('#scrub').hidden && document.querySelectorAll('#scrub .tk').length === document.querySelectorAll('#flow details.step').length"));
   await js("(() => { const s = document.querySelector('#flow details.step'); s.open = true; })()");
@@ -109,11 +110,19 @@ try {
   check("Esc closes the drawer", await until("!document.querySelector('#insp').classList.contains('open')", 1000));
   await js("document.querySelector('#promptBtn').click()");
   check("copy prompt button completes", await until("/Copied|Copy failed/.test(document.querySelector('#promptBtn').textContent)", 3000), await js("document.querySelector('#promptBtn').textContent"));
+  // a TACC run that fails says why and stops the clock (it used to sit on RUNNING while the timer kept counting)
+  await js("QW = {phase: 'ready', remaining: 600}"); await js("document.querySelector('#runTacc').click()");
+  const taccErr = await until("/ERROR/.test((document.querySelector('#verdict .vcode') || {}).textContent || '') && /not connected/.test((document.querySelector('#verdict .vlabel') || {}).textContent || '')", 8000);
+  const clockA = await js("document.querySelector('#mE2e').dataset.s"); await sleep(1200);
+  const clockB = await js("document.querySelector('#mE2e').dataset.s"), clockLive = await js("document.querySelector('#mE2e').classList.contains('live')");
+  check("a TACC run that fails shows ERROR with the reason and stops the clock", taccErr && !clockLive && clockA === clockB && /^\d+\.\d$/.test(clockA), `${taccErr} live=${clockLive} ${clockA} ${clockB}`);
+  await js("QW = {phase: 'idle'}");
   await noCJK("solve");
 
   // 6. runs + replay
   await js("document.querySelector('.navbtn[data-page=\"history\"]').click()");
   check("runs list and stats render", await until("document.querySelectorAll('#histList .row').length >= 1 && /\\d/.test(document.querySelector('#hs-n').textContent)", 5000));
+  check("leaving Solve clears the finished verdict from the status pill", await until("document.querySelector('#status').textContent === 'Ready' && !document.querySelector('#islMore').textContent", 2000), await js("document.querySelector('#status').textContent + ' / ' + document.querySelector('#islMore').textContent"));
   await js("document.querySelector('#histList .row').click()");
   check("replay from Runs reaches a verdict", await until("document.querySelector('.page.on').dataset.page === 'solve' && document.querySelector('#verdict .verdict:not(.run)')", 10000));
 
@@ -150,7 +159,9 @@ try {
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   check("Enter sends; my bubble on the right", await until("document.querySelector('#chatLog .bub.me')", 2000));
   check("assistant reply lands on the left", await until("document.querySelector('#chatLog .bub.bot .md') && !document.querySelector('#chatLog .dots')", 15000));
+  check("sent and answered: solid bubble, no receipt left", await until("!document.querySelector('#chatLog .rcpt') && !document.querySelector('#chatLog .bub.me.hold') && getComputedStyle(document.querySelector('#chatLog .bub.me')).borderTopStyle === 'solid'", 3000));
   check("thread appears in the list", await until("document.querySelectorAll('#threadList .thread').length >= 1", 5000));
+  check("Send stays at the right edge of the composer", await js("(() => { const b = document.querySelector('#sendChat').getBoundingClientRect(), c = document.querySelector('#composer .cbar').getBoundingClientRect(); return Math.abs(b.right - c.right) < 2; })()"));
   await js("document.querySelector('#newChat').click()");
   await js("document.querySelector('#threadList .thread').click()");
   check("opening a thread restores it", await until("document.querySelectorAll('#chatLog .bub').length >= 2", 5000));
@@ -161,22 +172,27 @@ try {
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   await sleep(1500);
   const held = await js("!!document.querySelector('#chatLog .bub.bot .dots') && !document.querySelector('#chatLog .bub.bot .md')");
+  const heldLook = await js("(() => { const b = document.querySelector('#chatLog .bub.me'), r = document.querySelector('#chatLog .rcpt'); return !!(b && b.classList.contains('hold') && getComputedStyle(b).borderTopStyle === 'dashed' && r && /On hold · waiting for Qwen 27B on TACC to start/.test(r.textContent)); })()");
   await js("QW = {phase: 'ready', remaining: 600}");
   const routed = await until("/not connected/.test((document.querySelector('#chatLog .bub.bot .bad') || {}).textContent || '')", 5000);
   check("Ask holds the message while Qwen starts, then sends it to TACC", held && routed, held ? (routed ? "" : "not routed to TACC") : "answered before Qwen was ready");
+  const notSent = await until("document.querySelector('#chatLog .bub.me.fail') && /Not sent/.test(document.querySelector('#chatLog .rcpt.fail').textContent)", 3000);
+  check("on hold: dashed bubble and receipt while waiting; Not sent when it never went out", heldLook && notSent, JSON.stringify({heldLook, notSent}));
   await js("QW = {phase: 'idle'}");
   // a failed turn is kept in the thread: reopening it shows why there was no reply
   const failedSid = await js("chatId");
   await js("document.querySelector('#newChat').click()");
   await until(`document.querySelector('#threadList .thread[data-sid="${failedSid}"]')`, 3000);
   await js(`document.querySelector('#threadList .thread[data-sid="${failedSid}"]').click()`);
-  check("reopened thread shows why a turn got no reply", await until("/No reply: .*not connected/.test((document.querySelector('#chatLog .bub.bot .bad') || {}).textContent || '')", 3000));
+  check("reopened thread shows why a turn got no reply", await until("/Not sent: .*not connected/.test((document.querySelector('#chatLog .bub.bot .bad') || {}).textContent || '') && document.querySelector('#chatLog .bub.me.fail') && /Not sent/.test((document.querySelector('#chatLog .rcpt.fail') || {}).textContent || '')", 3000));
   // collapsing the thread list leaves an expand control where it was; the Threads chip shows the state
   await js("document.querySelector('#newChat').click()"); await js("document.querySelector('#threadsHide').click()");
   const railShown = await until("document.querySelector('#chatWrap').classList.contains('collapsed') && document.querySelector('#threadsShow').offsetParent && document.querySelector('#threadsBtn').getAttribute('aria-pressed') === 'false'", 2000);
   await js("document.querySelector('#threadsShow').click()");
   const railBack = await until("!document.querySelector('#chatWrap').classList.contains('collapsed') && document.querySelector('#threadList').offsetParent && document.querySelector('#threadsBtn').getAttribute('aria-pressed') === 'true'", 2000);
   check("collapsed threads keep an expand control that restores them", railShown && railBack, railShown ? (railBack ? "" : "did not expand") : "no expand control after collapsing");
+  const chipArrow = await js("(() => { const c = document.querySelector('#threadsBtn'), a1 = c.querySelector('.ar').textContent; c.click(); const a2 = c.querySelector('.ar').textContent; c.click(); return a1 + a2 + '|' + c.querySelector('.n').textContent; })()");
+  check("Threads button wears the sidebar toggle: arrow follows the list, count shown", /^‹›\|[1-9]\d*$/.test(chipArrow), chipArrow);
   // typing dots: folded by default; a tap opens the live panel (stage, elapsed); the choice is remembered; the reply replaces it
   const typeMsg = async text => { await js(`(() => { const t = document.querySelector('#chatInput'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input', {bubbles: true})); })()`); await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); };
   await js("localStorage.removeItem('fp.chat.live')"); await js("document.querySelector('#newChat').click()"); await js("QW = {phase: 'starting'}");
@@ -193,20 +209,25 @@ try {
   await js("localStorage.removeItem('fp.chat.live')");
   // the open panel follows the TACC stages and the text as it streams (synthetic events through a stubbed EventSource)
   await js("localStorage.setItem('fp.chat.live', '1')"); await js("document.querySelector('#newChat').click()");
-  await js(`(() => { window.__ES = window.EventSource; window.__seen = [];
-    const evs = [{type: 'chat_stage', stage: 'uploading'}, {type: 'chat_stage', stage: 'queued', job: '30120'},
+  await js(`(() => { window.__ES = window.EventSource; window.__seen = []; window.__me = [];
+    const evs = [{type: 'chat_stage', stage: 'uploading'}, {type: 'chat_stage', stage: 'queued', job: '30120', reason: 'QOSMaxJobsPerUserLimit'},
       {type: 'chat_stage', stage: 'running', job: '30120', node: '10-0-3-11'}, {type: 'chat_delta', text: 'Replay '},
       {type: 'chat_delta', text: 'runs solve.py again.'}, {type: 'chat_done', answer: 'Replay runs solve.py again.', turns: 1}];
     window.EventSource = class { constructor(){ let i = 0; const next = () => { if (i >= evs.length) return; this.onmessage && this.onmessage({data: JSON.stringify(evs[i++])});
         requestAnimationFrame(() => { const b = [...document.querySelectorAll('#chatLog .bub.bot')].pop(), ls = b && b.querySelector('.lstat');
-          window.__seen.push((ls ? ls.textContent : '') + ' | ' + ((b && b.querySelector('.md')) ? b.querySelector('.md').textContent : '')); setTimeout(next, 60); }); };
+          const me = [...document.querySelectorAll('#chatLog .bub.me')].pop(), nx = me && me.nextElementSibling, rc = nx && nx.classList.contains('rcpt') ? nx.textContent : '-';
+          window.__seen.push((ls ? ls.textContent : '') + ' | ' + ((b && b.querySelector('.md')) ? b.querySelector('.md').textContent : ''));
+          window.__me.push((me && me.classList.contains('hold') ? 'dashed' : 'solid') + ' | ' + rc); setTimeout(next, 60); }); };
       setTimeout(next, 60); } close(){} };
     QW = {phase: 'ready', remaining: 600}; })()`);
   await typeMsg("what does replay check?");
   const seen = (await until("window.__seen.length === 6", 6000)) ? await js("window.__seen") : await js("window.__seen");
   await js("window.EventSource = window.__ES; QW = {phase: 'idle'}; localStorage.removeItem('fp.chat.live')");
-  const want = [/^Uploading to TACC/, /^Queued on TACC · job 30120/, /^Running on 10-0-3-11 · job 30120/, /^Writing.*\| Replay $/, /^Writing.*\| Replay runs solve\.py again\.$/, /^ \| Replay runs solve\.py again\.$/];
+  const want = [/^Uploading to TACC/, /^Queued on TACC · job 30120 · your two-job limit is in use/, /^Running on 10-0-3-11 · job 30120/, /^Writing.*\| Replay $/, /^Writing.*\| Replay runs solve\.py again\.$/, /^ \| Replay runs solve\.py again\.$/];
   check("open panel follows TACC stages and streams the reply", seen.length === 6 && want.every((re, i) => re.test(seen[i])), JSON.stringify(seen));
+  const meSeen = await js("window.__me");
+  const meWant = [/^dashed \| On hold · uploading to TACC$/, /^solid \| On hold · queued on TACC · job 30120 · your two-job limit is in use$/, /^solid \| On hold · running on 10-0-3-11/, /^solid \| On hold · replying$/, /^solid \| On hold · replying$/, /^solid \| -$/];
+  check("my bubble: dashed until the job is queued, then solid; the hold receipt lasts until the reply", meSeen.length === 6 && meWant.every((re, i) => re.test(meSeen[i])), JSON.stringify(meSeen));
   await noCJK("ask");
 
   // 10. narrow viewport + reduced motion

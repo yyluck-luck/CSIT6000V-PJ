@@ -271,7 +271,7 @@ def _claim(what: str, on_wait: Callable[[str], None] | None = None, timeout: flo
         if on_wait and busy != told:
             on_wait(busy)
             told = busy
-        time.sleep(min(1.0, float(os.environ.get("FLAGPILOT_TACC_TICK", "3"))))
+        time.sleep(min(1.0, float(os.environ.get("FLAGPILOT_TACC_TICK", "2"))))
 
 
 def _release() -> None:
@@ -324,7 +324,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
         on_event({"type": "tacc", "stage": "queued", "job": jid})
         seen, t_end, started, last, finished = 0, time.time() + 30 * 60, False, {}, False
         while time.time() < t_end:
-            time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "4")))
+            time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "2")))
             gave_up = _waiting(jid, started, last, lambda why: on_event({"type": "tacc", "stage": "queued", "job": jid, "reason": why}))
             if gave_up:
                 on_event({"type": "error", "message": gave_up})
@@ -382,7 +382,7 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
         stage({"stage": "queued", "job": jid})
         sent, seen_tools, running, t_end, last = 0, 0, False, time.time() + 15 * 60, {}
         while time.time() < t_end:
-            time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "3")))
+            time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "2")))
             gave_up = _waiting(jid, running, last, lambda why: stage({"stage": "queued", "job": jid, "reason": why}))
             if gave_up:
                 return {"error": gave_up, "answer": ""}
