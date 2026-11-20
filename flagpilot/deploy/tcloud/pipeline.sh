@@ -14,7 +14,8 @@ EXCL=${2:-}
 mkdir -p "$OUT"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
-clean() { tr -d '\000\r' | grep -a -v -e 'post-quantum' -e 'store now, decrypt later' -e 'openssh.com/pq.html'; }
+# byte-wise on purpose: SDK output may carry non-UTF-8 bytes, and a UTF-8 locale makes tr abort on them
+clean() { LC_ALL=C tr -d '\000\r' | LC_ALL=C grep -a -v -e 'post-quantum' -e 'store now, decrypt later' -e 'openssh.com/pq.html'; }
 tc() { "$TC" "$@" 2>&1 | clean; }
 jobid() { sed -n 's/^Submitted batch job \([0-9][0-9]*\).*/\1/p' | tail -1; }
 

@@ -70,7 +70,9 @@ def start(batch: str, tiers: str, limit: int, runs_root: Path, on_done: Callable
             return {"error": "a TACC pipeline is already running"}
         out = Path(runs_root) / "tacc" / batch
         out.mkdir(parents=True, exist_ok=True)
-        env = {**os.environ, "FP_BATCH": batch, "FP_ABLATIONS": tiers, "FP_LIMIT": str(limit),
+        # 网页服务常由没有 LANG 的环境拉起；bash 在非 UTF-8 locale 下会把紧跟变量名的多字节字符读进变量名
+        env = {**os.environ, "LANG": os.environ.get("LANG") or "en_US.UTF-8",
+               "FP_BATCH": batch, "FP_ABLATIONS": tiers, "FP_LIMIT": str(limit),
                "POLL": os.environ.get("FLAGPILOT_TACC_POLL", "20")}
         if tasks:                       # 指定题目（Solve 页的 "Run on TACC"）：不受 dev 划分限制
             env.update({"FP_TASKS": tasks, "FP_SPLIT": "all", "FP_LIMIT": "0"})

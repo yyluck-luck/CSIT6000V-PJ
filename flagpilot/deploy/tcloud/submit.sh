@@ -67,7 +67,7 @@ for w in whls:
 print("[tcloud] 随包 Python 库：" + (", ".join("-".join(w.name.split("-")[:2]) for w in whls) or "无"))
 PY
     fi
-    [[ -f "$TASKS/index/tasks.jsonl" ]] || { echo "题库索引不存在：$TASKS（见 docs/DATASET.md）" >&2; exit 1; }
+    [[ -f "$TASKS/index/tasks.jsonl" ]] || { echo "题库索引不存在：${TASKS}（见 docs/DATASET.md）" >&2; exit 1; }
     # 代码 + 题库。答案表与题解目录一律不进包——和 deploy/upload.sh 同一条硬规则。
     tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' -cf - flagpilot | tar -C "$STAGE" -xf -
     mkdir -p "$STAGE/tasks"
@@ -93,10 +93,10 @@ PY
     ABL="${FP_ABLATIONS:-}"
     ABL="${ABL// /,}"
     if [[ -n "$ABL" && ! "$ABL" =~ ^B[0-3](,B[0-3])*$ ]]; then
-      echo "FP_ABLATIONS 格式不对：$ABL（例：B0,B1,B2,B3）" >&2; exit 1
+      echo "FP_ABLATIONS 格式不对：${ABL}（例：B0,B1,B2,B3）" >&2; exit 1
     fi
     T="${FP_TIME:-00:45:00}"
-    [[ "$T" =~ ^([0-9]{2}):([0-5][0-9]):([0-5][0-9])$ ]] || { echo "FP_TIME 格式不对：$T（HH:MM:SS）" >&2; exit 1; }
+    [[ "$T" =~ ^([0-9]{2}):([0-5][0-9]):([0-5][0-9])$ ]] || { echo "FP_TIME 格式不对：${T}（HH:MM:SS）" >&2; exit 1; }
     SECS=$(( 10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60 + 10#${BASH_REMATCH[3]} ))
     (( SECS <= 3600 )) || { echo "FP_TIME=$T 超过分区上限 1 小时" >&2; exit 1; }
     DL="${FP_DEADLINE_EPOCH:-0}"
@@ -119,17 +119,17 @@ PY
     echo "[tcloud] 包大小 $(du -sh "$STAGE" | cut -f1)；run.env：$(tr '\n' ' ' < "$STAGE/run.env")"
     ;;
   *)
-    echo "未知模式 $MODE（serve | doctor | batch）" >&2; exit 1 ;;
+    echo "未知模式 ${MODE}（serve | doctor | batch）" >&2; exit 1 ;;
 esac
 
 if [[ -n "${FP_EXCLUDE:-}" ]]; then
   [[ "$FP_EXCLUDE" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]] \
-    || { echo "FP_EXCLUDE 格式不对：$FP_EXCLUDE（例：10-0-1-10 或 a,b）" >&2; exit 1; }
+    || { echo "FP_EXCLUDE 格式不对：${FP_EXCLUDE}（例：10-0-1-10 或 a,b）" >&2; exit 1; }
   # SDK 把 job.general 的每一项原样转成 #SBATCH --<项>；general 是 tuxiv.conf 的最后一段。
   printf '    - exclude=%s\n' "$FP_EXCLUDE" >> "$STAGE/tuxiv.conf"
 fi
 
 if [[ "${FP_DRY_RUN:-0}" == "1" ]]; then echo "[tcloud] dry run，未提交：$STAGE"; exit 0; fi
-echo "[tcloud] 暂存目录 $STAGE，提交中…"
+echo "[tcloud] 暂存目录 ${STAGE}，提交中…"
 cd "$STAGE"
 tcloud submit
