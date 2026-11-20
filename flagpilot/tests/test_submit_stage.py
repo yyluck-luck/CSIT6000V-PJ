@@ -90,6 +90,31 @@ class TestSubmitStageCleanup(unittest.TestCase):
         self.assertTrue((staged / "t-001" / "a.txt").exists())
         self.assertEqual(list(staged.rglob("_private")) + list(staged.rglob("gold_private*")), [])
 
+    def test_uploaded_challenge_copy_is_accepted_by_the_real_script(self):
+        """tacc_live 给上传题造的数据集副本，真的 submit.sh 能按别名挑出来打包（中文标题也行）。"""
+        import sys
+        sys.path.insert(0, str(ROOT))
+        from app import tacc_live
+        from flagpilot import config, custom
+        saved = config.RUNS_ROOT
+        config.RUNS_ROOT = self.tmp / "runs"
+        try:
+            up = custom.create("未命名题目", "q", files=[("a.txt", b"x")], gold="picoCTF{never_uploaded}")
+            alias = tacc_live._stage_upload(up.name, self.tmp / "upload-root")
+        finally:
+            config.RUNS_ROOT = saved
+        chat = self.tmp / "chatdir"
+        chat.mkdir()
+        (chat / "msg.txt").write_text("你好", encoding="utf-8")
+        r, left = self.submit("chat", "http://10-0-0-1:8000/v1", FP_DRY_RUN="1", FP_SPLIT="all", FP_VENDOR="0",
+                              FP_CHAT_DIR=str(chat), FP_CHAT_TASK=alias, FLAGPILOT_TASKS=str(self.tmp / "upload-root"))
+        self.assertEqual((r.returncode, len(left)), (0, 1), r.stderr[-400:])
+        staged = left[0] / "flagpilot-client" / "tasks"
+        rows = [json.loads(x) for x in (staged / "index" / "tasks.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([x["name"] for x in rows], [alias])
+        self.assertTrue((staged / "tasks" / alias / "a.txt").exists())
+        self.assertNotIn("never_uploaded", "".join(f.read_text(errors="replace") for f in left[0].rglob("*") if f.is_file()))
+
 
 if __name__ == "__main__":
     unittest.main()

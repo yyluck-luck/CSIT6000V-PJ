@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -22,7 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import tacc_live  # noqa: E402
 
 SUBMIT = r"""#!/usr/bin/env bash
-st="$FAKE_STATE"; n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
+st="$FAKE_STATE"
+if [[ -n "${FAKE_SUBMIT_FAIL:-}" ]]; then echo "[tcloud] staging"; echo "$FAKE_SUBMIT_FAIL" >&2; exit 1; fi
+if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
+n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
 echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-} excl=${FP_EXCLUDE:-}" >> "$st/record"
 printf 'Submitted batch job %s\n' "$n"
 """
@@ -57,6 +61,7 @@ class TaccLiveCase(unittest.TestCase):
             "FLAGPILOT_TACC_SUBMIT": str(self.tmp / "submit.sh"), "TCLOUD_BIN": str(self.tmp / "tcloud"),
             "FAKE_STATE": str(self.tmp / "state"), "FLAGPILOT_TACC_POLL": "0.02", "FLAGPILOT_TACC_TICK": "0.02"})
         self.env.start()
+        os.environ.pop("FLAGPILOT_TASKS", None)          # 只看 tacc_live 自己给的题库（verify.sh 会设这个变量）
         tacc_live.S.update(phase="idle", serve=None, node=None, url="", t0=0.0, ready=0.0, log=[], busy="", error="")
 
     def tearDown(self):
@@ -116,6 +121,45 @@ class TaccLiveCase(unittest.TestCase):
         self.assertEqual([l.split()[1] for l in rec], ["job=501", "job=502"])
         self.assertTrue(rec[1].endswith(",10-0-1-12"))                 # 第二次提交排除了占卡节点
         self.assertGreater(tacc_live.status()["t0"], t_before + 0.015)  # 时钟按第二次提交重算
+
+    def test_uploaded_challenge_goes_up_as_a_dataset_copy(self):
+        """上传的题（中文标题 → 中文名字）以前交不上去，看起来像"发中文就出错"。现在包成 ASCII 别名的数据集副本。"""
+        from flagpilot import config, custom
+        saved = config.RUNS_ROOT
+        config.RUNS_ROOT = self.tmp / "runs"
+        try:
+            t = custom.create("未命名题目", "decode it", files=[("note.txt", b"cGljb0NURnt4fQ==\n")],
+                              gold="picoCTF{upload_gold_9}")
+            self.assertIn("未命名题目", t.name)
+            self.ready()
+            rep = tacc_live.chat("这是什么？", [], t.name, True, lambda d: None, lambda e: None)
+            self.assertEqual(rep["answer"], "Hello from Qwen")
+            self.assertIsNotNone(tacc_live.run_task(t.name, "B3", self.tmp / "runs", lambda e: None))
+        finally:
+            config.RUNS_ROOT = saved
+        rec, staged = self.record(), (self.tmp / "state" / "staged").read_text(encoding="utf-8")
+        alias = re.search(r"chat=(upload-[0-9a-f]{10})", rec).group(1)
+        self.assertIn(f"tasks={alias} ", rec)                              # 单题求解也走别名
+        row = next(json.loads(l) for l in staged.splitlines() if l.startswith("{") and f'"{alias}"' in l)
+        self.assertEqual((row["name"], row["upload"], row["assets"], row["assets_dir"]),
+                         (alias, t.name, ["note.txt"], f"tasks/{alias}"))
+        self.assertEqual(row["gold_sha256"], t.gold_sha256)
+        self.assertIn(f"tasks/{alias}/note.txt", staged)
+        self.assertNotIn("picoCTF{upload_gold_9}", staged)                 # 明文答案绝不出本机
+
+    def test_submit_failure_reason_reaches_the_page(self):
+        import contextlib
+        import io
+        self.ready()
+        os.environ["FAKE_SUBMIT_FAIL"] = "unknown challenge(s): nope"
+        with contextlib.redirect_stdout(io.StringIO()) as log:          # 完整输出进服务器日志
+            rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None)
+        self.assertIn("unknown challenge(s): nope", log.getvalue())
+        self.assertEqual(rep["error"], "TACC submission failed: unknown challenge(s): nope")
+        os.environ["FAKE_SUBMIT_FAIL"] = "题库索引不存在"
+        with contextlib.redirect_stdout(io.StringIO()):
+            rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None)
+        self.assertEqual(rep["error"], "TACC submission failed")            # 页面上不出现中文
 
     def test_not_connected_and_one_job_at_a_time(self):
         evs = []

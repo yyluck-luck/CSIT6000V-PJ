@@ -561,6 +561,9 @@ def cmd_chat_once(args) -> int:
     task = None
     if args.task:
         task = next((t for t in load_index() if t.name == args.task), None)
+        if task is None:      # 以前静默当成"没挂题"来答，上传题交不上去时就是这样被掩盖的
+            print(f"[fp] warn: challenge {args.task} is not in the staged task set; answering without it",
+                  file=sys.stderr, flush=True)
     workdir = Path(args.workdir) if args.workdir else Path.cwd() / "chat-work"
     reply = chat_once(cfg, message, history, task=task, use_tools=not args.no_tools, workdir=workdir)
     return 0 if not reply.get("error") else 1

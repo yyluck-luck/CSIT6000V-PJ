@@ -7,9 +7,11 @@ Slurm 日志（flagpilot/remote.py：@@ev / @@delta / @@reply），这里每隔�
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -47,16 +49,55 @@ def _sdk(*args: str, timeout: float = 120) -> str:
     return _clean((r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace"))
 
 
-def _submit(mode: str, env_extra: dict, url: str = "") -> str:
+def _submit(mode: str, env_extra: dict, url: str = "") -> tuple[str, str]:
+    """交一个作业。返回 (作业号, 失败原因)；成功时原因为空。
+
+    原因取 submit.sh 输出的最后一行，网页直接显示（以前只有一句 "TACC submission failed"，
+    看不出是题名不合法还是题目不存在）。含中文的原因不上页面，完整输出打进服务器日志。
+    """
     env = {**os.environ, "LANG": os.environ.get("LANG") or "en_US.UTF-8", **env_extra}
     try:
         r = subprocess.run(["bash", str(_submit_path()), mode, *([url] if url else [])], capture_output=True,
                            timeout=600, cwd=str(ROOT), env=env)
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "", type(e).__name__
     out = _clean((r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace"))
     m = re.findall(r"Submitted batch job (\d+)", out)
-    return m[-1] if m else ""
+    if m:
+        return m[-1], ""
+    print(f"[tacc] {mode} submission failed:\n{out[-1500:]}", flush=True)
+    lines = [l.strip() for l in out.splitlines() if l.strip() and not l.startswith("[tcloud]")]
+    why = lines[-1][:200] if lines else ""
+    return "", ("" if re.search(r"[\u3000-\u9fff]", why) else why)
+
+
+def _stage_upload(task: str, root: Path) -> str:
+    """上传的题目（runs/custom/<名字>）不在课程平台的题库里：在本机按数据集格式包成一道题，换成 ASCII 别名。
+
+    以前直接把名字交给 submit.sh：名字带中文（标题是中文时就会这样）过不了名字校验，纯英文的又报
+    unknown challenge，网页上只看到 "TACC submission failed"——看起来像"发中文就出错"。
+    只带 gold 的哈希，从不带明文答案。不是上传题就原样返回名字。
+    """
+    from flagpilot import custom
+    t = custom.get(task) if task.startswith("custom-") else None
+    if t is None:
+        return task
+    alias = "upload-" + hashlib.sha1(task.encode("utf-8")).hexdigest()[:10]
+    src, dst = Path(t.assets_dir).resolve(), root / "tasks" / alias
+    dst.mkdir(parents=True, exist_ok=True)
+    assets = []
+    for a in t.assets:
+        f = (src / a).resolve()
+        if f.is_file() and f.is_relative_to(src):
+            (dst / a).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dst / a)
+            assets.append(a)
+    row = {"task_id": t.task_id, "name": alias, "category": t.category, "title": t.brief_override or t.title,
+           "query": t.query, "gold_sha256": t.gold_sha256, "assets": assets, "assets_dir": f"tasks/{alias}",
+           "suggested_tools": [], "scope": "custom", "upload": task}
+    (root / "index").mkdir(parents=True, exist_ok=True)
+    (root / "index" / "tasks.jsonl").write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    return alias
 
 
 def _log(msg: str) -> None:
@@ -92,9 +133,9 @@ def _serve_loop() -> None:
     poll = float(os.environ.get("FLAGPILOT_TACC_POLL", "15"))
     for attempt in range(1, 5):
         t_sub = time.time()
-        jid = _submit("serve", {"FP_EXCLUDE": excl})
+        jid, why = _submit("serve", {"FP_EXCLUDE": excl})
         if not jid:
-            return _fail("serve submission failed")
+            return _fail("serve submission failed" + (f": {why}" if why else ""))
         # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
         # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
         with _L:
@@ -200,9 +241,13 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
                "FP_BATCH": batch, "FP_DEADLINE_EPOCH": str(int(S["t0"] + SESSION_S - 60)), "FP_EXCLUDE": S["node"] or "",
                "FP_TIME": "00:30:00"}
         on_event({"type": "tacc", "stage": "uploading"})
-        jid = _submit("batch", env, url=S["url"])
+        with tempfile.TemporaryDirectory(prefix="fp-task-") as d:
+            name = _stage_upload(task, Path(d))
+            if name != task:                       # 上传的题：交它的数据集格式副本
+                env.update(FP_TASKS=name, FLAGPILOT_TASKS=d)
+            jid, why = _submit("batch", env, url=S["url"])
         if not jid:
-            on_event({"type": "error", "message": "TACC submission failed"})
+            on_event({"type": "error", "message": "TACC submission failed" + (f": {why}" if why else "")})
             return None
         on_event({"type": "tacc", "stage": "queued", "job": jid})
         seen, t_end, started = 0, time.time() + 30 * 60, False
@@ -245,11 +290,14 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
         with tempfile.TemporaryDirectory(prefix="fp-chat-") as d:
             Path(d, "msg.txt").write_text(message, encoding="utf-8")
             Path(d, "history.json").write_text(json.dumps(history[-12:], ensure_ascii=False), encoding="utf-8")
-            env = {"FP_CHAT_DIR": d, "FP_CHAT_TASK": task or "", "FP_CHAT_TOOLS": "1" if tools else "0",
+            name = _stage_upload(task, Path(d) / "tasks") if task else ""
+            env = {"FP_CHAT_DIR": d, "FP_CHAT_TASK": name, "FP_CHAT_TOOLS": "1" if tools else "0",
                    "FP_EXCLUDE": S["node"] or "", "FP_TIME": "00:15:00", "FP_SPLIT": "all"}
-            jid = _submit("chat", env, url=S["url"])
+            if task and name != task:              # 上传的题：交它的数据集格式副本
+                env["FLAGPILOT_TASKS"] = str(Path(d) / "tasks")
+            jid, why = _submit("chat", env, url=S["url"])
         if not jid:
-            return {"error": "TACC submission failed", "answer": ""}
+            return {"error": "TACC submission failed" + (f": {why}" if why else ""), "answer": ""}
         stage({"stage": "queued", "job": jid})
         sent, seen_tools, running, t_end = 0, 0, False, time.time() + 15 * 60
         while time.time() < t_end:
