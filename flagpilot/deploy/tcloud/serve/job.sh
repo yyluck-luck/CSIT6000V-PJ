@@ -16,12 +16,12 @@ if command -v nvidia-smi >/dev/null; then
   nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader | sed 's/^/PRECHECK app /' || true
   busy=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | awk '$1 > 1024' | wc -l)
   if (( busy > 0 )); then
-    echo "PRECHECK_FAIL node=$(hostname): ${busy} 张卡开服前已被占用显存，换节点（FP_EXCLUDE=$(hostname)）" >&2
+    echo "PRECHECK_FAIL node=$(hostname): ${busy} GPU(s) already hold memory before start; exclude this node (FP_EXCLUDE=$(hostname))" >&2
     exit 1
   fi
 fi
 if (exec 3<>/dev/tcp/127.0.0.1/8000) 2>/dev/null; then
-  echo "PRECHECK_FAIL node=$(hostname): 8000 端口已被占用，换节点（FP_EXCLUDE=$(hostname)）" >&2
+  echo "PRECHECK_FAIL node=$(hostname): port 8000 is already in use; exclude this node (FP_EXCLUDE=$(hostname))" >&2
   exit 1
 fi
 source /mnt/home/public/course-envs/CSIT6000V/project/activate.sh
