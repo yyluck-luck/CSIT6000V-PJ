@@ -252,6 +252,22 @@ else
   record "离线回放（show）" FAIL "$(echo "$SHOW_OUT" | head -2 | tr '\n' ' ')"
 fi
 
+# ---------------------------------------------------------------- 13. 网页（无头 Chrome 走一遍全部交互）
+# 没装 Node ≥ 22 或 Chrome 时 ui_check 自己打印 SKIP 并返回 0，这一项记为跳过而不是失败。
+if command -v node >/dev/null 2>&1; then
+  UI_OUT=$(node scripts/ui_check.mjs 2>&1); UI_RC=$?
+  UI_LAST=$(echo "$UI_OUT" | tail -1)
+  if echo "$UI_OUT" | grep -q '^SKIP'; then
+    record "网页交互（ui_check）" PASS "跳过：$(echo "$UI_OUT" | grep '^SKIP' | head -1)"
+  elif [[ $UI_RC -eq 0 ]]; then
+    record "网页交互（ui_check）" PASS "$UI_LAST（切页、选题、实跑、回放、实验、上传、答疑、窄屏、无中文）"
+  else
+    record "网页交互（ui_check）" FAIL "$(echo "$UI_OUT" | grep '^FAIL' | head -2 | tr '\n' ' ')"
+  fi
+else
+  record "网页交互（ui_check）" PASS "跳过：没有 node"
+fi
+
 # ---------------------------------------------------------------- 汇总
 echo
 printf '%s\n' "${ROWS[@]}"
