@@ -1,0 +1,77 @@
+{
+  "seed": 0,
+  "test_frac": 0.5,
+  "index_sha256": "b467958bea9f248aef59dc950a83d0720ab585e55ed0fc10d001865546116b3b",
+  "counts": {
+    "Cryptography": {
+      "dev": 8,
+      "test": 8
+    },
+    "Forensics": {
+      "dev": 6,
+      "test": 6
+    },
+    "General Skills": {
+      "dev": 13,
+      "test": 12
+    }
+  },
+  "dev": [
+    "crypto-005",
+    "crypto-058",
+    "crypto-072",
+    "crypto-074",
+    "crypto-079",
+    "crypto-092",
+    "crypto-093",
+    "crypto-097",
+    "forensics-003",
+    "forensics-008",
+    "forensics-059",
+    "forensics-065",
+    "forensics-071",
+    "forensics-094",
+    "general-004",
+    "general-019",
+    "general-022",
+    "general-024",
+    "general-025",
+    "general-026",
+    "general-027",
+    "general-030",
+    "general-031",
+    "general-033",
+    "general-034",
+    "general-036",
+    "general-037"
+  ],
+  "test": [
+    "crypto-012",
+    "crypto-055",
+    "crypto-056",
+    "crypto-069",
+    "crypto-080",
+    "crypto-086",
+    "crypto-090",
+    "crypto-096",
+    "forensics-002",
+    "forensics-014",
+    "forensics-061",
+    "forensics-064",
+    "forensics-067",
+    "forensics-070",
+    "general-006",
+    "general-007",
+    "general-011",
+    "general-017",
+    "general-018",
+    "general-021",
+    "general-023",
+    "general-032",
+    "general-038",
+    "general-040",
+    "general-060",
+    "general-063"
+  ],
+  "status": "frozen"
+}

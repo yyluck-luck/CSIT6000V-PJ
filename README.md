@@ -292,7 +292,7 @@ python3 -m flagpilot list --scope extra-gs    # 10 supplementary General Skills 
 ```
 
 The builder drops reference solutions, removes network-dependent tasks, and replaces plaintext flags
-with `gold_sha256`. Our evaluated set contains **53 tasks** (General Skills 25 / Cryptography 16 /
+with `gold_sha256`. The frozen dataset contains **53 tasks** (General Skills 25 / Cryptography 16 /
 Forensics 12), of which 43 are `scope=core` and 10 are `scope=extra-gs`; `list` shows the core set by
 default. There are no reverse-engineering tasks, which matters for one known bias discussed in
 [Limitations](#7-known-limitations-and-expected-variation).
@@ -349,7 +349,10 @@ cache-hit, cache-miss, and output tokens separately.
 Each experiment writes a Markdown summary and a `runs.jsonl` ledger under `runs/<batch>/`.
 Measured rates and their current status are tabulated in `flagpilot/docs/STATUS.md`
 (§二 commitments, §四 recorded verification); design rationale is in `flagpilot/docs/DESIGN.md`.
-The commands below regenerate every number those tables cite.
+DeepSeek Flash B3 attempted 43 of 53 frozen tasks. It returned 25 correct flags (58.1%) and verified
+22 solves by replay (51.2%). The [evaluation baseline](flagpilot/docs/EVALUATION_BASELINE.md) records
+the frozen split, per-split results, and run conditions. The commands below describe the formal
+experiment configurations.
 
 **E1 — ablation ladder (B0 → B3).** Each rung adds exactly one capability: `B0` bare loop,
 `B1` + context truncation, `B2` + structured tool schema, `B3` + full system prompt.
