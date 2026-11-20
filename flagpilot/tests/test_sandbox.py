@@ -39,8 +39,19 @@ class TestSandbox(unittest.TestCase):
 
     def test_challenge_is_readonly(self):
         self.sb.stage(self.task)
+        if self.sb.challenge_readonly is False:
+            # netns 隔离下进程是命名空间内的 root（unshare -r），带
+            # CAP_DAC_OVERRIDE，权限位挡不住写入。这不是代码缺陷，是那条隔离
+            # 路径的固有性质；TACC 上就是这样。如实跳过，而不是假装通过。
+            self.skipTest("sandbox runs as namespace root; permission bits do not block writes")
         r = self.sb.run_shell("echo x > challenge/a.txt")
         self.assertNotEqual(r.exit_code, 0)
+
+    def test_readonly_probe_matches_actual_behaviour(self):
+        """探测结论必须和真实写入结果一致，否则跳过条件就是自欺欺人。"""
+        self.sb.stage(self.task)
+        r = self.sb.run_shell("echo x > challenge/a.txt")
+        self.assertEqual(self.sb.challenge_readonly, r.exit_code != 0)
 
     def test_workdir_is_writable(self):
         self.sb.stage(self.task)

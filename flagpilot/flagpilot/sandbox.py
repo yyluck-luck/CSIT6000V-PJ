@@ -272,6 +272,9 @@ class Sandbox:
         # 只有探测确认了容器 + 本地镜像，才真的走容器。否则保持进程级，
         # 免得每条动作都先失败一次再回退。
         self.use_container = bool(use_container and self.caps.isolation == "container")
+        # stage() 之后填入：chmod 是否**真的**挡住了写入。None 表示还没测。
+        # 不能假设为 True——见 _probe_readonly 的说明。
+        self.challenge_readonly: bool | None = None
         _ensure_dir(self.workdir)
         _ensure_dir(self.workdir / ".tmp")
 
@@ -284,7 +287,42 @@ class Sandbox:
             self._rmtree_force(dest)
         n = stage_assets(task, dest, root=self.tasks_root)
         self._lock_readonly(dest)
+        self.challenge_readonly = self._probe_readonly()
         return dest
+
+    def _probe_readonly(self) -> bool:
+        """实测 chmod 444/555 是否真的挡住了写入。
+
+        必须实测，因为有一条路径会让它失效：`unshare -rn` 把当前用户映射成
+        命名空间内的 root，root 带 CAP_DAC_OVERRIDE，权限位形同虚设。本机没有
+        unshare 所以看不出来，TACC 计算节点上有，`test_challenge_is_readonly`
+        在那里就是这么失败的。
+
+        探测在 challenge/ 之外的同级目录里做，不动真正的题目材料。
+        """
+        probe = self.workdir / ".probe-readonly"
+        try:
+            if probe.exists():
+                self._rmtree_force(probe)
+            probe.mkdir(parents=True, exist_ok=True)
+            f = probe / "f.txt"
+            f.write_text("probe\n", encoding="utf-8")
+            f.chmod(0o444)
+            probe.chmod(0o555)
+            res = self._exec(["/bin/sh", "-c", "echo x >> .probe-readonly/f.txt"],
+                             display="probe-readonly", timeout=10)
+            return res.exit_code != 0
+        except Exception:
+            return False
+        finally:
+            try:
+                probe.chmod(0o755)
+            except Exception:
+                pass
+            try:
+                self._rmtree_force(probe)
+            except Exception:
+                pass
 
     @staticmethod
     def _lock_readonly(root: Path) -> None:

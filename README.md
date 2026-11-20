@@ -539,10 +539,14 @@ prints one line per check.
 ### 7. Known limitations and expected variation
 
 1. **The sandbox is not a security boundary.** It runs as the same uid, without `chroot`, `seccomp`,
-   or cgroups. `challenge/` is read-only by permission bits, which the agent can undo. The real
-   defences are that the flag never enters the sandbox and that the replay uses a fresh copy of the
-   task files, not the process isolation. `doctor` prints the achieved level (`process` or
-   `container`) so a report never overstates it.
+   or cgroups. `challenge/` is read-only by permission bits, and under the user-namespace isolation
+   path it is not read-only at all: `unshare -r` maps the process to root inside the namespace, which
+   carries `CAP_DAC_OVERRIDE`, so `chmod 444` does not block writes. This is the path used on the
+   cluster, and it is why one sandbox test skips there instead of passing. `Sandbox.challenge_readonly`
+   records what was actually measured, never what was assumed. The real defences are that the flag
+   never enters the sandbox and that the replay uses a fresh copy of the task files, not the process
+   isolation. `doctor` prints the achieved level (`process` or `container`) so a report never
+   overstates it.
 2. **Container isolation is implemented but unexercised.** The backend probes
    apptainer/singularity/docker/podman and uses one when a local image exists, falling back to
    process isolation otherwise. No machine we have access to provides a runtime, so
