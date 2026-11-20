@@ -79,8 +79,10 @@ def _api_key() -> str:
     return key or "EMPTY"
 
 
-# Gemini 的模型表里有语音、图片、音乐、转写模型，答疑和解题用不上
-_NOT_CHAT = ("tts", "image", "embedding", "transcribe", "lyria", "banana", "imagen", "veo", "aqa")
+# Gemini 的模型表里还有语音、图片、实时音频、电脑操控、深度研究等专用模型，答疑和解题用不上：
+# 只留 gemini- / gemma- 开头的，再去掉这些专用的
+_NOT_CHAT = ("tts", "image", "audio", "live", "embedding", "transcribe", "computer-use", "robotics",
+             "lyria", "banana", "imagen", "veo", "aqa", "omni", "customtools")
 
 
 def list_models() -> list[str]:
@@ -99,7 +101,7 @@ def list_models() -> list[str]:
         ids = [str(m.get("id")) for m in (data.get("data") or []) if m.get("id")]
         if is_gemini(base):          # Google 给的是 "models/gemini-…"；只留能对话的
             ids = [i.removeprefix("models/") for i in ids]
-            ids = [i for i in ids if not any(k in i for k in _NOT_CHAT)]
+            ids = [i for i in ids if i.startswith(("gemini-", "gemma-")) and not any(k in i for k in _NOT_CHAT)]
         if ids:
             return sorted(set(ids) | {SETTINGS["model"]})
     except Exception:

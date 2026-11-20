@@ -122,7 +122,9 @@ class TestGemini(unittest.TestCase):
 
     def test_model_list_strips_prefix_and_drops_non_chat_models(self):
         listing = {"data": [{"id": "models/gemini-3.8-flash"}, {"id": "models/gemini-2.5-flash-preview-tts"},
-                            {"id": "models/gemini-3-pro-image"}, {"id": "models/gemini-flash-lite-latest"}]}
+                            {"id": "models/gemini-3-pro-image"}, {"id": "models/gemini-flash-lite-latest"},
+                            {"id": "models/antigravity-preview-latest"}, {"id": "models/deep-research-preview-04-2026"},
+                            {"id": "models/gemini-2.5-flash-native-audio-latest"}, {"id": "models/gemini-2.5-computer-use-preview-10-2025"}]}
         with patch.dict(os.environ, {"GEMINI_API_KEY": "gkey"}, clear=False), patch.dict(
                 server.SETTINGS, {"model": "gemini-flash-lite-latest", "base_url": ""}), patch(
                 "urllib.request.urlopen", return_value=io.BytesIO(json.dumps(listing).encode())) as request:
