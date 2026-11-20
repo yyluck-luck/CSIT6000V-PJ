@@ -411,7 +411,11 @@ def cmd_batch(args) -> int:
     _p(f"[batch] {cfg.batch}: {len(tasks)} 题 × {cfg.seeds} seeds, "
        f"model={cfg.model.name}, ablation={cfg.ablation.name}（{cfg.ablation.desc}）")
     runner = BatchRunner(cfg, config.RUNS_ROOT / cfg.batch, workers=args.workers)
-    runner.run(tasks, resume=not args.no_resume, order=args.order)
+    hook = None
+    if getattr(args, "events_stdout", False):        # 网页经 TACC 跑题时，按行把事件打进 Slurm 日志
+        from .remote import events_printer
+        hook = events_printer
+    runner.run(tasks, resume=not args.no_resume, order=args.order, hook=hook)
     results = runner.load_results()
     _p("")
     _p(metrics.render(metrics.summarize(results)))
@@ -548,6 +552,19 @@ def cmd_probe(args) -> int:
 
 
 # ---------------------------------------------------------------- web
+
+def cmd_chat_once(args) -> int:
+    from .remote import chat_once
+    cfg = _build_cfg(args)
+    message = Path(args.message_file).read_text(encoding="utf-8")
+    history = json.loads(Path(args.history_file).read_text(encoding="utf-8")) if args.history_file else []
+    task = None
+    if args.task:
+        task = next((t for t in load_index() if t.name == args.task), None)
+    workdir = Path(args.workdir) if args.workdir else Path.cwd() / "chat-work"
+    reply = chat_once(cfg, message, history, task=task, use_tools=not args.no_tools, workdir=workdir)
+    return 0 if not reply.get("error") else 1
+
 
 def cmd_web(args) -> int:
     from app.server import serve
@@ -771,6 +788,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--workers", type=int, default=4)
     b.add_argument("--seeds", type=int, default=1)
     b.add_argument("--no-resume", action="store_true")
+    b.add_argument("--events-stdout", action="store_true",
+                   help="把 trace 事件按行（@@ev）打印到标准输出：网页经 TACC 跑题时用来跟进度")
     b.add_argument("--order", default="lpt", choices=["lpt", "fifo"],
                    help="开跑顺序：lpt=预计最慢的先跑（默认，缩短整批墙钟）；fifo=题号顺序")
     b.add_argument("--split", default="all", choices=["all", "dev", "test"],
@@ -812,6 +831,15 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--limit", type=int)
     pb.add_argument("--workers", type=int, default=4)
     pb.set_defaults(func=cmd_probe)
+
+    co = sub.add_parser("chat-once", help="答疑一轮（网页经 TACC 提问时由作业调用）：打印 @@reply")
+    add_common(co)
+    co.add_argument("--message-file", required=True)
+    co.add_argument("--history-file", default="")
+    co.add_argument("--task", default="")
+    co.add_argument("--no-tools", action="store_true")
+    co.add_argument("--workdir", default="")
+    co.set_defaults(func=cmd_chat_once)
 
     w = sub.add_parser("web", help="演示页面")
     w.add_argument("--host", default="127.0.0.1")

@@ -39,7 +39,7 @@ from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
-from app import httpcache, runs_index, tacc
+from app import httpcache, runs_index, tacc, tacc_live
 
 STATIC = Path(__file__).resolve().parent / "index.html"
 _STATIC = httpcache.StaticFile(STATIC)
@@ -373,6 +373,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "done": bool(st.get("summary"))})
         if path == "/api/tacc":
             return self._json(200, tacc.status(config.RUNS_ROOT))
+        if path == "/api/tacc/session":
+            return self._json(200, tacc_live.status())
         if path == "/api/chat/sessions":
             return self._json(200, {"sessions": runs_index.list_chats(config.RUNS_ROOT / "chat")})
         if path == "/api/chat/history":
@@ -428,7 +430,8 @@ class Handler(BaseHTTPRequestHandler):
         global RUNNING
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
-                  "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop")
+                  "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
+                  "/api/tacc/session/start", "/api/tacc/session/stop")
         if path not in routes:
             return self._json(404, {"error": "not found"})
         if not self._json_content_type():
@@ -443,8 +446,14 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return self._json(400, {"error": "bad json"})
 
+        if path == "/api/tacc/session/start":
+            return self._json(200, tacc_live.start())
+        if path == "/api/tacc/session/stop":
+            return self._json(200, tacc_live.stop())
         if path == "/api/upload":
             return self._upload(payload)
+        if path == "/api/chat" and payload.get("backend") == "tacc":
+            return self._chat_tacc(payload)
         if path == "/api/chat":
             return self._chat(payload)
         if path == "/api/custom/delete":
@@ -483,7 +492,8 @@ class Handler(BaseHTTPRequestHandler):
                           "t0": time.time(),     # 端到端计时起点（收到 POST 那一刻）
                           "ablate": ablate or SETTINGS["ablation"]}
         try:
-            threading.Thread(target=_worker, args=(rid, task, ablate), daemon=True).start()
+            target = _tacc_worker if payload.get("backend") == "tacc" else _worker
+            threading.Thread(target=target, args=(rid, task, ablate), daemon=True).start()
         except Exception:
             with LOCK:
                 RUNNING = max(0, RUNNING - 1)
@@ -555,6 +565,55 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200 if ok else 404, {"deleted": ok})
 
     # ---------- 答疑 ----------
+
+    def _chat_tacc(self, payload: dict) -> None:
+        """答疑一轮交给 TACC 上常驻的 Qwen：本机只记会话日志（左侧线程照常可用），回答由作业打回。"""
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            return self._json(400, {"error": "message required"})
+        sid = str(payload.get("session_id") or "") or uuid.uuid4().hex[:12]
+        if not _SID_RE.match(sid):
+            return self._json(400, {"error": "bad session id"})
+        task_name, use_tools = str(payload.get("task") or ""), bool(payload.get("tools", True))
+        path = config.RUNS_ROOT / "chat" / sid / "chat.jsonl"
+        rows = read_log(path) if path.exists() else []
+        history, pending = [], None
+        for r in rows:
+            if r.get("type") == "user":
+                pending = r.get("text") or ""
+            elif r.get("type") == "reply" and pending:
+                history.append({"user": pending, "answer": r.get("answer") or ""})
+                pending = None
+        q: queue.Queue = queue.Queue()
+        with LOCK:
+            STATE[sid] = {"q": q, "summary": None, "kind": "chat"}
+
+        def work() -> None:
+            stamp = lambda: time.strftime("%Y-%m-%dT%H:%M:%S")      # noqa: E731
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not rows:
+                storage.append_record(path, {"ts": stamp(), "type": "meta", "task": task_name,
+                                             "model": "qwen3.8-27b (TACC)", "tools": use_tools})
+            turn = sum(1 for r in rows if r.get("type") == "user") + 1
+            storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
+            rep = tacc_live.chat(message, history, task_name, use_tools,
+                                 on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),
+                                 on_tool=lambda ev: q.put({**ev, "type": "chat_tool"}))
+            if rep.get("error") and not rep.get("answer"):
+                q.put({"type": "error", "message": rep["error"]})
+            else:
+                steps = rep.get("steps") or []
+                storage.append_record(path, {"ts": stamp(), "type": "reply", "turn": turn,
+                                             "answer": (rep.get("answer") or "")[:4000], "rounds": rep.get("rounds", 0),
+                                             "steps": [[str(x.get("cmd", ""))[:200], x.get("exit_code"), bool(x.get("cached"))] for x in steps],
+                                             "prompt_tokens": rep.get("prompt_tokens", 0), "completion_tokens": rep.get("completion_tokens", 0),
+                                             "wall_s": rep.get("wall_s", 0), "error": rep.get("error", "")})
+                q.put({"type": "chat_done", "answer": rep.get("answer") or "", "turns": turn, "session_id": sid,
+                       "total_steps": len(steps)})
+            q.put(None)
+
+        threading.Thread(target=work, daemon=True).start()
+        return self._json(200, {"session_id": sid, "backend": "tacc"})
 
     def _chat(self, payload: dict) -> None:
         message = str(payload.get("message") or "").strip()
@@ -783,6 +842,46 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
                       "events": evs, "kind": "replay"}
         mounted.append((rid, d.name, f"{summary.get('verdict')}/{summary.get('reason')}"))
     return mounted
+
+
+def _tacc_worker(run_id: str, task_name: str, ablate: str | None) -> None:
+    """单题交给 TACC 上常驻的 Qwen：作业日志里的 @@ev 事件原样推进 SSE，跑完下载运行目录并挂成回放。"""
+    global RUNNING
+    st = STATE[run_id]
+    cond, events = st["cond"], st["events"]
+    tier = str(ablate or SETTINGS["ablation"] or "B3").upper()
+    summary: dict = {}
+
+    def push(ev: dict) -> None:
+        with cond:
+            events.append(ev)
+            cond.notify_all()
+
+    def on_event(ev: dict) -> None:
+        if ev.get("type") == "summary":
+            summary.update(ev)
+        push(ev)
+
+    try:
+        d = tacc_live.run_task(task_name, tier, config.RUNS_ROOT, on_event)
+        res = dict(summary) or {"verdict": "error", "reason": "the TACC job returned no result", "turns": 0}
+        res.pop("type", None)
+        done = {"type": "done", **res, "ablation": tier, "model": "qwen3.8-27b (TACC)", "task": task_name,
+                "e2e_s": round(time.time() - st.get("t0", time.time()), 2)}
+        if d is not None and d.exists():
+            _mount_replay(str(d))
+        if not any(e.get("type") == "error" for e in events[-3:]) or summary:
+            push(done)
+        st["summary"] = done
+        _wake(cond)
+    except Exception as e:
+        push({"type": "error", "message": f"{type(e).__name__}: {e}"})
+        st["summary"] = {"verdict": "error", "reason": f"{type(e).__name__}: {e}"}
+        _wake(cond)
+    finally:
+        st["q"].put(None)
+        with LOCK:
+            RUNNING = max(0, RUNNING - 1)
 
 
 def _mount_tacc(out: Path) -> int:

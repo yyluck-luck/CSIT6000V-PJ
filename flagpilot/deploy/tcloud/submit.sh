@@ -35,7 +35,7 @@ case "$MODE" in
   serve)
     cp "$HERE"/serve/tuxiv.conf "$HERE"/serve/job.sh "$HERE"/serve/main.py "$STAGE"/
     ;;
-  doctor|batch)
+  doctor|batch|chat)
     cp "$HERE"/client/tuxiv.conf "$HERE"/client/job.sh "$HERE"/client/run_flagpilot.py "$STAGE"/
     # 课程运行时（PRoot Ubuntu 22 rootfs）没有 xxd / exiftool：带上纯 Python 替身（tests/test_tacc_shims.py）
     mkdir -p "$STAGE/bin"
@@ -43,7 +43,9 @@ case "$MODE" in
     chmod 755 "$STAGE"/bin/*
     # pycryptodome / gmpy2：课程 Python 3.12 没装、计算节点也不一定能上网。在本机下好 manylinux
     # wheel（缓存复用），解进 vendor/py，作业里经 FLAGPILOT_SANDBOX_PYTHONPATH 交给沙箱（动作与重放一致）。
-    if [[ "${FP_VENDOR:-1}" == "1" ]]; then
+    # 答疑作业不挂题时用不上 pycryptodome / gmpy2：默认不带，包小、提交快
+    VENDOR_DEFAULT=1; [[ "$MODE" == "chat" && -z "${FP_CHAT_TASK:-}" ]] && VENDOR_DEFAULT=0
+    if [[ "${FP_VENDOR:-$VENDOR_DEFAULT}" == "1" ]]; then
       WH="${FP_WHEEL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/flagpilot/wheels-cp312-manylinux}"
       mkdir -p "$WH"
       if ! ls "$WH"/pycryptodome-*.whl "$WH"/gmpy2-*.whl >/dev/null 2>&1; then
@@ -68,18 +70,46 @@ for w in whls:
 print("[tcloud] 随包 Python 库：" + (", ".join("-".join(w.name.split("-")[:2]) for w in whls) or "无"))
 PY
     fi
-    [[ -f "$TASKS/index/tasks.jsonl" ]] || { echo "题库索引不存在：${TASKS}（见 docs/DATASET.md）" >&2; exit 1; }
     # 代码 + 题库。答案表与题解目录一律不进包——和 deploy/upload.sh 同一条硬规则。
     tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' -cf - flagpilot | tar -C "$STAGE" -xf -
-    mkdir -p "$STAGE/tasks"
-    tar -C "$TASKS" --exclude='_private' --exclude='with-solutions' --exclude='solution' \
-        --exclude='__pycache__' --exclude='.DS_Store' -cf - . | tar -C "$STAGE/tasks" -xf -
+    ONLY="${FP_TASKS:-}"; [[ "$MODE" == "chat" ]] && ONLY="${FP_CHAT_TASK:-}"
+    if [[ "$MODE" == "chat" && -z "$ONLY" ]]; then
+      :   # 不挂题的答疑：不带题库
+    elif [[ -n "$ONLY" && "${FP_SPLIT:-dev}" == "all" ]]; then
+      # 只跑点名的几道题：只带这几道题的目录与过滤后的索引，包从 ~90M 降到几 M，提交快得多
+      [[ "$ONLY" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]] || { echo "FP_TASKS / FP_CHAT_TASK: names separated by commas" >&2; exit 1; }
+      mkdir -p "$STAGE/tasks/index"
+      python3 - "$TASKS" "$STAGE/tasks" "$ONLY" <<'PY'
+import json, shutil, sys
+from pathlib import Path
+src, dst, want = Path(sys.argv[1]), Path(sys.argv[2]), set(sys.argv[3].split(","))
+rows = [json.loads(l) for l in (src / "index" / "tasks.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+keep = [r for r in rows if r.get("name") in want]
+if len(keep) != len(want):
+    sys.exit("unknown challenge(s): " + ", ".join(sorted(want - {r.get("name") for r in keep})))
+(dst / "index" / "tasks.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in keep), encoding="utf-8")
+for r in keep:
+    d = r.get("assets_dir") or r["name"]
+    shutil.copytree(src / d, dst / d, ignore=shutil.ignore_patterns("_private", "with-solutions", "solution", "__pycache__", ".DS_Store"))
+PY
+    else
+      [[ -f "$TASKS/index/tasks.jsonl" ]] || { echo "题库索引不存在：${TASKS}（见 docs/DATASET.md）" >&2; exit 1; }
+      mkdir -p "$STAGE/tasks"
+      tar -C "$TASKS" --exclude='_private' --exclude='with-solutions' --exclude='solution' \
+          --exclude='__pycache__' --exclude='.DS_Store' -cf - . | tar -C "$STAGE/tasks" -xf -
+    fi
+    if [[ "$MODE" == "chat" ]]; then
+      # 这一轮的提问与历史问答（本机网页写好放在 FP_CHAT_DIR）
+      [[ -f "${FP_CHAT_DIR:-}/msg.txt" ]] || { echo "chat mode needs FP_CHAT_DIR with msg.txt" >&2; exit 1; }
+      mkdir -p "$STAGE/chat"; cp "${FP_CHAT_DIR}/msg.txt" "$STAGE/chat/"
+      [[ -f "${FP_CHAT_DIR}/history.json" ]] && cp "${FP_CHAT_DIR}/history.json" "$STAGE/chat/" || printf '[]' > "$STAGE/chat/history.json"
+    fi
     if find "$STAGE" \( -name '_private' -o -name 'with-solutions' -o -name 'solution' \
                         -o -name 'gold_private*' \) | grep -q .; then
       echo "✗ 暂存目录里出现答案相关路径，已中止：$STAGE" >&2; exit 1
     fi
     SPLIT="${FP_SPLIT:-dev}"
-    if [[ "$SPLIT" != "all" && ! -f "$STAGE/tasks/index/splits.json" ]]; then
+    if [[ "$MODE" != "chat" && "$SPLIT" != "all" && ! -f "$STAGE/tasks/index/splits.json" ]]; then
       # 题库里没有划分文件（团队尚未冻结）：用同一个确定性生成器现场生成 proposed 划分。
       python3 "$ROOT/scripts/make_split.py" --root "$STAGE/tasks" --seed 0 \
         --out "$STAGE/tasks/index/splits.json" >/dev/null
@@ -91,6 +121,10 @@ PY
     ARGS="--split ${SPLIT} --workers ${WORKERS} --turns ${FP_TURNS:-20} --seeds ${FP_SEEDS:-1} --order ${ORDER}"
     if [[ -n "${FP_LIMIT:-}" && "${FP_LIMIT}" != "0" ]]; then ARGS="$ARGS --limit ${FP_LIMIT}"; fi
     if [[ -n "${FP_TASKS:-}" ]]; then ARGS="$ARGS --tasks ${FP_TASKS}"; fi
+    if [[ "${FP_EVENTS:-0}" == "1" ]]; then ARGS="$ARGS --events-stdout"; fi
+    CHAT_ARGS=""
+    if [[ -n "${FP_CHAT_TASK:-}" ]]; then CHAT_ARGS="--task ${FP_CHAT_TASK}"; fi
+    if [[ "${FP_CHAT_TOOLS:-1}" != "1" ]]; then CHAT_ARGS="$CHAT_ARGS --no-tools"; fi
     if [[ -n "${FP_MAX_TOKENS:-}" ]]; then
       [[ "$FP_MAX_TOKENS" =~ ^[0-9]{3,5}$ ]] || { echo "FP_MAX_TOKENS must be a number such as 4096" >&2; exit 1; }
       ARGS="$ARGS --max-tokens ${FP_MAX_TOKENS}"
@@ -106,9 +140,9 @@ PY
     (( SECS <= 3600 )) || { echo "FP_TIME=$T 超过分区上限 1 小时" >&2; exit 1; }
     DL="${FP_DEADLINE_EPOCH:-0}"
     [[ "$DL" =~ ^[0-9]+$ ]] || { echo "FP_DEADLINE_EPOCH 必须是整数秒：$DL" >&2; exit 1; }
-    printf 'FP_MODE=%q\nFP_BATCH=%q\nFP_ARGS=%q\nFP_ABLATIONS=%q\nFP_CLIENT_SECONDS=%q\nFP_DEADLINE_EPOCH=%q\n' \
-      "$MODE" "${FP_BATCH:-tacc-smoke}" "$ARGS" "$ABL" "$SECS" "$DL" > "$STAGE/run.env"
-    if [[ "$MODE" == "batch" ]]; then
+    printf 'FP_MODE=%q\nFP_BATCH=%q\nFP_ARGS=%q\nFP_ABLATIONS=%q\nFP_CLIENT_SECONDS=%q\nFP_DEADLINE_EPOCH=%q\nFP_CHAT_ARGS=%q\n' \
+      "$MODE" "${FP_BATCH:-tacc-smoke}" "$ARGS" "$ABL" "$SECS" "$DL" "$CHAT_ARGS" > "$STAGE/run.env"
+    if [[ "$MODE" == "batch" || "$MODE" == "chat" ]]; then
       URL="${2:?batch 需要服务地址，例如 http://10-0-1-10:8000/v1（见服务日志的 SERVICE_BASE_URL）}"
       # tcloud cat 按 CRLF 输出，从里面截出来的地址带 \r（作业 29311 因此在 /models 检查处 InvalidURL）。
       URL="${URL//[$'\r\n\t ']/}"; URL="${URL%/}"

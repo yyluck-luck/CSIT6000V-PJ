@@ -63,26 +63,40 @@ echo "[fp] shims: xxd=$(command -v xxd || echo missing) exiftool=$(command -v ex
 env -i PATH="$PATH" PYTHONPATH="${FLAGPILOT_SANDBOX_PYTHONPATH:-}" python3 -c \
   'import Crypto, gmpy2; print("[fp] vendored: pycryptodome", Crypto.__version__, "gmpy2", gmpy2.version())' \
   || echo "[fp] vendored: unavailable (tasks needing pycryptodome/gmpy2 will report the missing library)"
+resolve_base() {
+  BASE="$(cat server-url.txt)"
+  case "$BASE" in *NODE*|'') echo "[fp] server-url.txt does not hold this service address" >&2; exit 1;; esac
+  # PRoot 只绑了宿主机的 /etc/resolv.conf，没绑 /etc/hosts：节点名（10-0-3-11）进了 PRoot 就解析不了
+  # （作业 29314：Temporary failure in name resolution）。在宿主机上先换成 IP。
+  # 宿主机 hosts 也不全（作业 29319：10-0-1-10 上 getent 解析不了 10-0-4-11），再按本集群的命名规则
+  # 换：节点名就是 IP 把点换成横线（作业 29316：getent 把 10-0-1-11 解析为 10.0.1.11）。
+  SVC_HOST=${BASE#*://}; SVC_HOST=${SVC_HOST%%[:/]*}
+  SVC_IP=$(getent ahostsv4 "$SVC_HOST" | awk 'NR==1{print $1}') || SVC_IP=""
+  if [[ -z "$SVC_IP" && "$SVC_HOST" =~ ^[0-9]{1,3}(-[0-9]{1,3}){3}$ ]]; then
+    SVC_IP=${SVC_HOST//-/.}
+  fi
+  if [[ -n "$SVC_IP" ]]; then
+    BASE=${BASE/"$SVC_HOST"/"$SVC_IP"}
+  fi
+  echo "[fp] service=${BASE} (${SVC_HOST})"
+}
+
+# 答疑一轮（网页经 TACC 提问）：不做自检，直接调 Qwen 服务回答，结果以 @@reply 打进日志
+if [[ "${FP_MODE}" == "chat" ]]; then
+  resolve_base
+  # shellcheck disable=SC2086
+  fp chat-once --track L --model qwen3.8-27b --base-url "${BASE}" --message-file chat/msg.txt \
+    --history-file chat/history.json --workdir "$QWEN_RUN_DIR/chat-work" ${FP_CHAT_ARGS:-} || true
+  echo "[fp] done: chat"
+  exit 0
+fi
+
 echo "[fp] doctor"
 fp doctor || true          # 自检结果进日志；不在这里拦作业，判定看下面的批次
 
 [[ "${FP_MODE}" == "doctor" ]] && exit 0
 
-BASE="$(cat server-url.txt)"
-case "$BASE" in *NODE*|'') echo "[fp] server-url.txt does not hold this service address" >&2; exit 1;; esac
-# PRoot 只绑了宿主机的 /etc/resolv.conf，没绑 /etc/hosts：节点名（10-0-3-11）进了 PRoot 就解析不了
-# （作业 29314：Temporary failure in name resolution）。在宿主机上先换成 IP。
-# 宿主机 hosts 也不全（作业 29319：10-0-1-10 上 getent 解析不了 10-0-4-11），再按本集群的命名规则
-# 换：节点名就是 IP 把点换成横线（作业 29316：getent 把 10-0-1-11 解析为 10.0.1.11）。
-SVC_HOST=${BASE#*://}; SVC_HOST=${SVC_HOST%%[:/]*}
-SVC_IP=$(getent ahostsv4 "$SVC_HOST" | awk 'NR==1{print $1}') || SVC_IP=""
-if [[ -z "$SVC_IP" && "$SVC_HOST" =~ ^[0-9]{1,3}(-[0-9]{1,3}){3}$ ]]; then
-  SVC_IP=${SVC_HOST//-/.}
-fi
-if [[ -n "$SVC_IP" ]]; then
-  BASE=${BASE/"$SVC_HOST"/"$SVC_IP"}
-fi
-echo "[fp] service=${BASE} (${SVC_HOST})"
+resolve_base
 # 先确认服务就绪，连不上立刻失败，别空跑一批 error。
 qwen-python -c '
 import json, sys, urllib.request

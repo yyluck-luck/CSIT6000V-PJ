@@ -529,6 +529,7 @@
   .chip{position:relative;display:inline-flex;align-items:center;gap:8px;border:1.5px solid var(--rule);height:36px;padding:0 12px;font:600 14px var(--font);cursor:pointer;background:var(--white);color:var(--ink);transition:border-color .12s,background .12s}
   .chip:hover{border-color:var(--ink)}
   .chip .tn{font-family:var(--mono);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip.qwen.on{border-color:var(--blue);color:var(--blue);background:var(--blue-t)} .chip.qwen.wait{border-color:var(--yellow);background:var(--yellow-t)}
   .chip.toggle input{position:absolute;opacity:0;pointer-events:none}
   .chip.toggle:has(input:checked){border-color:var(--blue);color:var(--blue);background:var(--blue-t)}
   .chip.toggle .tick{width:14px;height:14px;border:2px solid currentColor;display:inline-grid;place-items:center}
@@ -634,7 +635,8 @@
         <div class="meta" id="sgMeta"><span class="g ring" id="sgG"></span><span id="sgId"></span></div>
         <div class="actions">
           <button class="btn primary" id="run" disabled hidden><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg><svg class="chk" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Run<span class="arr">↵</span></button>
-          <button class="btn" id="runTacc" hidden data-tip="Solve this challenge with Qwen 27B on TACC (starts its own GPU server, about 7 minutes)">Run on TACC<span class="arr">→</span></button>
+          <button class="btn" id="runTacc" hidden data-tip="Solve this challenge with Qwen 27B on TACC">Run on TACC<span class="arr">→</span></button>
+          <button class="chip qwen" id="qwenChip" data-tip="One Qwen 27B server on two TACC GPUs, up to one hour; runs and chats are sent to it as small jobs"><span class="g ring"></span><span class="tn">Qwen on TACC · connect</span></button>
           <button class="btn" data-taskpill id="pickBtn">Change<span class="arr">→</span></button>
           <span class="grow"></span>
           <button class="ibtn" id="inspBtn" aria-label="Agent flow" data-tip="Agent flow · call chain · solve.py">
@@ -766,6 +768,7 @@
             <button class="chip" data-taskpill id="mountChip"><span class="g ring"></span><span class="tn">Attach a challenge</span></button>
             <label class="chip toggle"><input type="checkbox" id="chatTools" checked><span class="tick"></span>Allow commands</label>
             <button class="chip" id="threadsBtn">Threads</button>
+            <button class="chip qwen" id="qwenChipAsk" data-tip="Replies come from Qwen 27B on TACC when connected (30–90 s each); otherwise from the offline demo model"><span class="g ring"></span><span class="tn">Demo model · connect Qwen</span></button>
             <span class="grow"></span>
             <button class="pixbtn sendb" id="sendChat" aria-label="Send (Enter)"><canvas></canvas><span class="pl">Send ↵</span></button>
           </div>
@@ -1580,6 +1583,8 @@ function onEvent(ev){
   switch (ev.type){
     case 'meta': if (ev.budget && ev.budget.max_turns) run.maxTurns = ev.budget.max_turns; break;
     case 'model_partial': if (!R.bulk && !run.byKey.has('t' + ev.turn)) renderLive(ev.turn, ev.text || ''); break;
+    case 'tacc': { const msg = {uploading: 'uploading the job', queued: 'queued on TACC', running: 'running on TACC'}[ev.stage] || ev.stage;
+      setStatus('Running', '', `${sel || ''} · ${msg}${ev.job ? ' · job ' + ev.job : ''}`); const vl = $('#verdict .vlabel'); if (vl && $('#verdict .verdict.run')) vl.textContent = `Qwen 27B on TACC · ${msg}`; break; }
     case 'model': { dropLive();
       const o = parseModel(ev.text), key = 't' + ev.turn;
       const t = {key, n: ev.turn, ptok: ev.prompt_tokens, ctok: ev.completion_tokens, ttft: ev.ttft_ms, ms: ev.latency_ms, raw: ev.text || '',
@@ -1715,17 +1720,17 @@ async function recoverRun(run_id, onEvent, onReset, budgetMs){
   throw new Error('Connection lost and the result could not be recovered (retried for 10 minutes)');
 }
 const onEventRef = onEvent;
-function runOne(task, ablate, onEvent, onReset){
+function runOne(task, ablate, onEvent, onReset, backend){
   return new Promise(async (resolve, reject) => {
     let r;
-    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate})}); } catch(e){ return reject(e); }
+    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || ''})}); } catch(e){ return reject(e); }
     if (!r.ok){ let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch(_){} return reject(new Error('Submission failed: ' + m)); }
     const {run_id} = await r.json(); if (!run_id) return reject(new Error('The server returned no run id'));
     let settled = false, es = null, lastEv = Date.now();
     const finish = v => { if (!settled){ settled = true; try { es && es.close(); } catch(_){} resolve(v); } };
     const die = e => { if (!settled){ settled = true; try { es && es.close(); } catch(_){} reject(e); } };
     const rescue = () => { if (!settled) recoverRun(run_id, onEvent, onReset).then(finish).catch(die); };
-    const wd = setInterval(() => { if (settled){ clearInterval(wd); return; } if (Date.now() - lastEv > 150000){ clearInterval(wd); try { es.close(); } catch(_){} rescue(); } }, 5000);
+    const wd = setInterval(() => { if (settled){ clearInterval(wd); return; } if (Date.now() - lastEv > (backend === 'tacc' ? 900000 : 150000)){ clearInterval(wd); try { es.close(); } catch(_){} rescue(); } }, 5000);
     es = new EventSource('/api/stream?id=' + run_id);
     es.onmessage = e => { lastEv = Date.now(); let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
       if (onEvent) onEvent(ev); if (ev.type === 'done') finish(ev); else if (ev.type === 'error') finish({verdict: 'error', reason: ev.message || 'server error', ...ev}); };
@@ -1966,9 +1971,38 @@ async function startTacc(opt){
 }
 $('#taccStart').onclick = () => startTacc({tiers: qs('[data-tier]').filter(x => x.checked).map(x => x.dataset.tier).join(','), limit: taccLimit});
 $('#taccStop').onclick = async () => { await fetch('/api/tacc/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); toast('Stopping: the GPU server job is being cancelled'); taccPoll(); };
+/* ---------------- Qwen on TACC: one server kept up to an hour; runs and chats go to it as small jobs ---------------- */
+let QW = {phase: 'idle'}, qwT = 0, pendingRun = null;
+async function qwenPoll(){
+  try { QW = await (await fetch('/api/tacc/session', {cache: 'no-store'})).json(); } catch(_){ return; }
+  const ph = QW.phase, mins = Math.ceil((QW.remaining || 0) / 60);
+  const label = ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}` : ph === 'failed' ? 'Qwen on TACC · retry' : 'Qwen on TACC · connect';
+  for (const id of ['#qwenChip', '#qwenChipAsk']){ const c = $(id); c.classList.toggle('on', ph === 'ready'); c.classList.toggle('wait', ph === 'starting');
+    c.querySelector('.g').className = 'g ' + (ph === 'ready' ? 'c blue' : ph === 'starting' ? 'spin' : ph === 'failed' ? 'red' : 'ring');
+    c.querySelector('.tn').textContent = id === '#qwenChipAsk' && ph !== 'ready' && ph !== 'starting' ? 'Demo model · connect Qwen' : label;
+    c.dataset.tip = (QW.log && QW.log.length ? QW.log[QW.log.length - 1] + ' — ' : '') + (ph === 'ready' ? 'click to disconnect and free the GPUs' : 'click to start Qwen 27B on two TACC GPUs (about 5 minutes)'); }
+  if (ph === 'ready' && pendingRun && !busy){ const t = pendingRun; pendingRun = null; if (sel === t) runOnTacc(); }
+  if (ph === 'failed' && pendingRun){ pendingRun = null; toast('Could not start Qwen on TACC: ' + (QW.error || 'see the log')); }
+  clearTimeout(qwT); if (ph === 'starting' || ph === 'ready') qwT = setTimeout(qwenPoll, ph === 'starting' ? 5000 : 15000);
+}
+async function qwenToggle(){
+  if (QW.phase === 'ready'){ if (!confirm('Disconnect and free the TACC GPUs?')) return; await fetch('/api/tacc/session/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
+  else if (QW.phase !== 'starting'){ await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); toast('Starting Qwen 27B on TACC — about 5 minutes'); }
+  qwenPoll();
+}
+$('#qwenChip').addEventListener('click', qwenToggle); $('#qwenChipAsk').addEventListener('click', qwenToggle);
+async function runOnTacc(){
+  if (!sel || busy) return;
+  clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation} · Qwen 27B on TACC`);
+  setStatus('Running', '', `${sel} · TACC`);
+  try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, 'tacc'); loadHistory(true); }
+  catch(e){ stopClock(); $('#verdict').innerHTML = verdictHTML('ERROR', e.message, 'bad'); setStatus('Error', 'bad', e.message); hair(null, 'off'); }
+  finally { lockRun(false); }
+}
 $('#runTacc').onclick = async () => { if (!sel) return;
-  if (await startTacc({tiers: ablation, limit: 0, tasks: sel, batch: 'web-' + sel + '-' + Date.now().toString(36).slice(-5)})){
-    go('lab'); const b = document.querySelector('#labSeg button[data-lab="tacc"]'); if (b) b.click(); } };
+  if (QW.phase === 'ready') return runOnTacc();
+  pendingRun = sel; if (QW.phase !== 'starting'){ await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
+  toast('Starting Qwen 27B on TACC (about 5 minutes); the run starts by itself'); runningVerdict('Waiting for Qwen 27B on TACC …'); qwenPoll(); };
 pageHooks.lab = () => { if (!$('.labp[data-lab="tacc"]').hidden) taccPoll(); };
 
 /* ---------------- upload ---------------- */
@@ -2145,7 +2179,9 @@ async function sendChat(){
   setStatus('Thinking', '', sel || 'concept question');
   const done = ok => { chatBusy = false; sb.disabled = false; ok ? sendPix.done() : sendPix.busy(false); pixLabel(sb, 'Send ↵'); loadThreads(); };
   let r;
-  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: sel || '', session_id: chatId, tools: $('#chatTools').checked})}); }
+  const viaTacc = QW.phase === 'ready';
+  if (viaTacc) setStatus('Thinking', '', 'Qwen 27B on TACC · queued');
+  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: sel || '', session_id: chatId, tools: $('#chatTools').checked, backend: viaTacc ? 'tacc' : ''})}); }
   catch(e){ bot.innerHTML = '<span class="bad">Request failed: ' + esc(e.message) + '</span>'; done(false); setStatus('Ready'); return; }
   if (!r.ok){ const d = await r.json().catch(() => ({})); bot.innerHTML = `<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`; done(false); setStatus('Ready'); return; }
   const d = await r.json(); saveChatId(d.session_id);
@@ -2209,7 +2245,7 @@ tilt($('#verdict'), '.verdict', 4);
 
 /* ---------------- boot: deep links ?run= / ?task=&auto=1 / ?mode=chat / #/page ---------------- */
 const boot = loadTasks().catch(() => null);
-loadModels(); renderArms();
+loadModels(); renderArms(); qwenPoll();
 (function(){
   const q = new URLSearchParams(location.search);
   let start = routeOf(location.hash); if (q.get('mode') === 'chat') start = 'chat';
