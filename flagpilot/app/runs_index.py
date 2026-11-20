@@ -120,6 +120,15 @@ _CHAT_CACHE: dict = {}
 _SID = re.compile(r"^[a-f0-9]{8,32}$")
 
 
+def thread_model(rows: list[dict]) -> str:
+    """线程现在用的模型：最后一次换模型 / 最后一条回答的模型，都没有就用建线程时的。"""
+    model = ""
+    for r in rows:
+        if r.get("type") in ("meta", "model", "reply") and r.get("model"):
+            model = str(r["model"])
+    return model
+
+
 def list_chats(chat_root: Path, limit: int = 60) -> list[dict]:
     """答疑页左侧的会话列表：runs/chat/<sid>/chat.jsonl，按最后修改时间倒序。
 
@@ -152,7 +161,7 @@ def list_chats(chat_root: Path, limit: int = 60) -> list[dict]:
             meta = next((r for r in rows if r.get("type") == "meta"), {})
             title = " ".join(str(users[0].get("text") or "").split())[:80]
             hit = (key, {"id": d.name, "title": title or "(empty)", "turns": len(users),
-                         "task": meta.get("task") or "", "ts": st.st_mtime})
+                         "task": meta.get("task") or "", "model": thread_model(rows), "ts": st.st_mtime})
             _CHAT_CACHE[d.name] = hit
         items.append(hit[1])
     items.sort(key=lambda x: x["ts"], reverse=True)

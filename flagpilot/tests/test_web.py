@@ -360,6 +360,45 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(hist["messages"][-1]["type"], "error")
         self.assertIn("RuntimeError: boom", hist["messages"][-1]["error"])
 
+    def test_each_thread_keeps_its_own_model(self):
+        """Ask：每个线程用自己的模型，线程中途也能换；回答、历史、线程列表都标出是哪个模型答的。"""
+        from unittest import mock
+        from flagpilot import chat as chat_mod
+        from flagpilot.client import Completion, ServerMetrics
+
+        class Echo:
+            def __init__(self, spec):
+                self.spec = spec
+
+            def scrape_metrics(self):
+                return ServerMetrics(error="not configured")
+
+            def complete(self, messages, max_tokens=None, on_delta=None):
+                return Completion(text=f"answered by {self.spec.name}", prompt_tokens=1, completion_tokens=1,
+                                  ttft_ms=1, latency_ms=1, finish_reason="stop", usage_source="estimated")
+
+        with mock.patch.object(chat_mod, "build_client", side_effect=lambda spec: Echo(spec)):
+            a = self.post("/api/chat", {"message": "hi", "tools": False, "model": "gemini-flash-lite-latest"})["session_id"]
+            da = self.stream_chat(a)
+            b = self.post("/api/chat", {"message": "hi", "tools": False, "model": "mock"})["session_id"]
+            db = self.stream_chat(b)
+            self.assertEqual((da["model"], db["model"]), ("gemini-flash-lite-latest", "mock"))
+            self.assertIn("answered by gemini-flash-lite-latest", da["answer"])
+            self.post("/api/chat", {"message": "again", "tools": False, "session_id": a, "model": "mock"})
+            da2 = self.stream_chat(a)
+            self.assertEqual(da2["model"], "mock")
+            self.assertIn("answered by mock", da2["answer"])
+        hist = json.loads(self.get(f"/api/chat/history?id={a}"))
+        self.assertEqual(hist["model"], "mock")
+        self.assertEqual([m.get("model") for m in hist["messages"] if m["type"] == "reply"],
+                         ["gemini-flash-lite-latest", "mock"])
+        rows = {t["id"]: t for t in json.loads(self.get("/api/chat/sessions"))["sessions"]}
+        self.assertEqual((rows[a]["model"], rows[b]["model"]), ("mock", "mock"))
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.post("/api/chat", {"message": "x", "model": "bad model; rm -rf /"})
+        self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
+
     def test_chat_requires_message(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/chat", {"message": "  "})

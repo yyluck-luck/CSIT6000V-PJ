@@ -214,7 +214,7 @@ try {
   check("collapsed threads keep an expand control that restores them", railShown && railBack, railShown ? (railBack ? "" : "did not expand") : "no expand control after collapsing");
   check("wide screens: no Threads button under the composer (the sidebar has its own toggle)", await js("getComputedStyle(document.querySelector('#threadsBtn')).display === 'none'"));
   // typing dots: folded by default; a tap opens the live panel (stage, elapsed); the choice is remembered; the reply replaces it
-  const typeMsg = async text => { await js(`(() => { const t = document.querySelector('#chatInput'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input', {bubbles: true})); })()`); await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); };
+  const typeMsg = async text => { await js(`(() => { const t = document.querySelector('#chatInput'); t.focus(); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input', {bubbles: true})); })()`); await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }); };
   await js("localStorage.removeItem('fp.chat.live')"); await js("document.querySelector('#newChat').click()"); await js("QW = {phase: 'starting'}");
   await typeMsg("watch the reply");
   const folded = await until("document.querySelector('#chatLog .bub.bot .typing[aria-expanded=\"false\"]') && document.querySelector('#chatLog .bub.bot .peek').hidden", 2000);
@@ -277,8 +277,51 @@ try {
   await js("window.EventSource = window.__ES; document.querySelector('.navbtn[data-page=\"chat\"]').click()");
   const dotOff = await until("!document.querySelector('.navbtn[data-page=\"chat\"]').classList.contains('note')", 1000);
   check("rail: a reply running behind another page rings its item, leaves a dot when done, opening Ask clears it", ringOn && dotOn && dotOff, JSON.stringify({ringOn, dotOn, dotOff}));
+  // who answers is chosen per conversation: a menu on the chip; a message held for Qwen can go to another model at once
+  await js("document.querySelector('#newChat').click(); localStorage.removeItem('fp.ask.pick'); localStorage.removeItem('fp.ask.threads'); useThreadPick(newPick())");
+  await sleep(300);                                   // let the page's own focus-the-input frame pass first
+  await js("document.querySelector('#qwenChipAsk').click()");
+  const menu = await until("document.querySelector('#modelMenu') && document.querySelector('#qwenChipAsk').getAttribute('aria-expanded') === 'true'", 2000);
+  const mrows = await js("[...document.querySelectorAll('#modelMenu button .nm')].map(x => x.textContent)");
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  const menuClosed = await until("!document.querySelector('#modelMenu') && document.activeElement === document.querySelector('#qwenChipAsk')", 1500);
+  await js("QW = {phase: 'starting'}");
+  await typeMsg("held, then switched");
+  const heldNow = await until("document.querySelector('#chatLog .rcpt .now')", 2000);
+  const nowText = heldNow ? await js("document.querySelector('#chatLog .rcpt .now').textContent") : "";
+  if (heldNow) await js("document.querySelector('#chatLog .rcpt .now').click()");
+  const released = await until("document.querySelector('#chatLog .bub.bot .md') && /Demo model/.test((document.querySelector('#chatLog .bub.bot .who') || {}).textContent || '') && /Demo model/.test(document.querySelector('#qwenChipAsk').textContent)", 8000);
+  await js("QW = {phase: 'idle'}");
+  const sidA = await js("chatId");
+  await js("document.querySelector('#newChat').click()"); await sleep(300);
+  await js(`(() => { MODELS = ['mock', 'gemini-flash-lite-latest']; window.__F = window.fetch; window.__sent = [];
+    window.fetch = (u, o) => { if (u === '/api/chat' && o && o.method === 'POST'){ window.__sent.push(JSON.parse(o.body)); return Promise.resolve(new Response(JSON.stringify({session_id: 'bbbbbbbbbbbb'}), {headers: {'Content-Type': 'application/json'}})); } return window.__F(u, o); };
+    window.__ES = window.EventSource; window.EventSource = class { constructor(){ setTimeout(() => this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Hi.', turns: 1, model: 'gemini-flash-lite-latest'})}), 50); } close(){} }; })()`);
+  await js("document.querySelector('#modelMenu') || document.querySelector('#qwenChipAsk').click()"); await until("document.querySelector('#modelMenu')", 1500);
+  await js("([...document.querySelectorAll('#modelMenu button')].find(b => /Gemini Flash-Lite/.test(b.textContent)) || {click(){}}).click()");
+  const chipG = await js("document.querySelector('#qwenChipAsk .tn').textContent");
+  await typeMsg("hello gemini");
+  await until("window.__sent.length === 1 && document.querySelector('#chatLog .bub.bot .who')", 3000);
+  const sentModel = await js("(window.__sent[0] || {}).model");
+  await js("window.fetch = window.__F; window.EventSource = window.__ES");
+  const hasA = !!sidA && await until(`document.querySelector('#threadList .thread[data-sid="${sidA}"]')`, 3000);
+  if (hasA) await js(`document.querySelector('#threadList .thread[data-sid="${sidA}"]').click()`);
+  const chipA = hasA && await until("/Demo model/.test(document.querySelector('#qwenChipAsk .tn').textContent)", 3000);
+  const chipB = await js("(useThreadPick(pickForThread('bbbbbbbbbbbb')), document.querySelector('#qwenChipAsk .tn').textContent)");
+  await js("localStorage.removeItem('fp.ask.pick'); localStorage.removeItem('fp.ask.threads'); MODELS = ['mock']; useThreadPick(newPick())");
+  check("Ask: each conversation keeps its own model; a held message can go to another model at once",
+    menu && mrows.includes("Demo model") && mrows.includes("Qwen 27B on TACC") && menuClosed && /^Use Demo model now$/.test(nowText) && released
+      && chipG === "Gemini Flash-Lite" && sentModel === "gemini-flash-lite-latest" && chipA && chipB === "Gemini Flash-Lite",
+    JSON.stringify({menu, mrows, menuClosed, nowText, released, chipG, sentModel, chipA, chipB}));
+  check("Ask composer: one focus frame (no outline inside it)", await js("(() => { const t = document.querySelector('#chatInput'); t.focus(); return getComputedStyle(t).outlineStyle === 'none'; })()"));
   await noCJK("ask");
   const smallAsk = await js(SMALL); check("no small text on Ask", !smallAsk.length, smallAsk.join(" | "));
+
+  // the logo goes home: Solve's landing even when a challenge is open
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
+  const hadWork = await js("!document.querySelector('#work').hidden");
+  await js("document.querySelector('#brand').click()");
+  check("logo returns to the landing", hadWork && await until("document.querySelector('.page.on').dataset.page === 'solve' && !document.querySelector('#landing').hidden && document.activeElement !== document.querySelector('#brand')", 2000), "work view open before: " + hadWork);
 
   // 10. narrow viewport + reduced motion
   await vp(390, 844); await nav(base + "/#/history"); await sleep(300);

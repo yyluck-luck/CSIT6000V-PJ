@@ -28,7 +28,7 @@ import json
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
@@ -263,6 +263,14 @@ class ChatSession:
         except OSError:
             pass      # 落盘失败不该让对话中断
 
+    def set_model(self, spec) -> None:
+        """同一线程换模型：历史不变，之后的回答由新模型给出；日志记一笔，线程列表和历史都看得到。"""
+        if spec.name == self.cfg.model.name:
+            return
+        self.cfg = replace(self.cfg, model=spec)
+        self.client = build_client(spec)
+        self._log({"type": "model", "model": spec.name})
+
     def log_error(self, message: str) -> None:
         """这一轮没答成：记一条 error，重开线程时看得到失败原因（不参与恢复上下文）。"""
         self._log({"type": "error", "turn": self.turns + 1, "error": str(message)[:400]})
@@ -351,7 +359,7 @@ class ChatSession:
         # 命令只记"命令 + 退出码 + 是否复用"，输出本身不进日志——
         # 里面有可能是 flag，答疑日志不该成为第二个答案库。
         self._log({"type": "reply", "turn": self.turns,
-                   "answer": reply.answer[:4000], "rounds": reply.rounds,
+                   "answer": reply.answer[:4000], "rounds": reply.rounds, "model": self.cfg.model.name,
                    "steps": [[s.cmd[:200], s.exit_code, bool(s.cached)] for s in reply.steps],
                    "prompt_tokens": reply.prompt_tokens,
                    "completion_tokens": reply.completion_tokens,

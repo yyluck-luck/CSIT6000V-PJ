@@ -71,12 +71,24 @@ def _base_url() -> str:
     return GEMINI["base_url"] if str(SETTINGS["model"]).lower().startswith("gemini") else "http://127.0.0.1:8000/v1"
 
 
-def _api_key() -> str:
+def _api_key(base: str | None = None) -> str:
     """服务端用的密钥：FLAGPILOT_API_KEY；对 Gemini 端点没设时用 GEMINI_API_KEY（环境变量或根目录 .env）。"""
     key = os.environ.get("FLAGPILOT_API_KEY", "")
-    if (not key or key == "EMPTY") and is_gemini(_base_url()):
+    if (not key or key == "EMPTY") and is_gemini(base or _base_url()):
         key = gemini_api_key()
     return key or "EMPTY"
+
+
+def _base_for(model: str) -> str:
+    """某一个模型的端点（答疑每个线程可以用不同模型）：gemini-* / gemma-* 走 Google，其余走配置的端点。"""
+    if model.lower().startswith(("gemini-", "gemma-")):
+        return SETTINGS["base_url"] if is_gemini(SETTINGS["base_url"] or "") else GEMINI["base_url"]
+    return SETTINGS["base_url"] or "http://127.0.0.1:8000/v1"
+
+
+# 线程里选的模型名（来自浏览器）：只认这些字符，挡住拼进 URL / 日志的怪东西
+_MODEL_RE = re.compile(r"^[A-Za-z0-9][\w.:/@-]{0,99}$")
+TACC_MODEL = "qwen3.8-27b (TACC)"
 
 
 # Gemini 的模型表里还有语音、图片、实时音频、电脑操控、深度研究等专用模型，答疑和解题用不上：
@@ -123,8 +135,10 @@ def resolve_task(name: str) -> Task | None:
     return custom.get(str(name))
 
 
-def _make_cfg(task_batch: str, ablate: str | None = None) -> RunConfig:
-    base = _base_url()
+def _make_cfg(task_batch: str, ablate: str | None = None, model: str | None = None) -> RunConfig:
+    """model 给了就用它（答疑线程各自的模型），否则用全局设置的模型。"""
+    name = model or SETTINGS["model"]
+    base = _base_for(name) if model else _base_url()
     abl = get_ablation(ablate or SETTINGS["ablation"])
     policy = Policy()
     if not abl.truncate:
@@ -136,8 +150,8 @@ def _make_cfg(task_batch: str, ablate: str | None = None) -> RunConfig:
         track=SETTINGS["track"],
         # 必须和 CLI 走同一个构造函数：之前这里直接 new ModelSpec，
         # 漏掉 soft_no_think，Qwen3 的思维链把每轮预算吃光，表现为"空回复"。
-        model=make_model_spec(SETTINGS["model"], base,
-                              api_key=_api_key(),
+        model=make_model_spec(name, base,
+                              api_key=_api_key(base),
                               metrics_url=SETTINGS.get("metrics_url") or ""),
         budget=Budget(max_turns=20),
         policy=policy,
@@ -411,6 +425,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"session_id": sid,
                                     "messages": [r for r in rows
                                                  if r.get("type") in ("user", "reply", "error")],
+                                    "model": runs_index.thread_model(rows),
                                     "exists": bool(rows)})
         if path == "/api/memory":
             task = urllib.parse.parse_qs(self.path.split("?", 1)[-1]).get("task", [""])[0]
@@ -617,7 +632,7 @@ class Handler(BaseHTTPRequestHandler):
             path.parent.mkdir(parents=True, exist_ok=True)
             if not rows:
                 storage.append_record(path, {"ts": stamp(), "type": "meta", "task": task_name,
-                                             "model": "qwen3.8-27b (TACC)", "tools": use_tools})
+                                             "model": TACC_MODEL, "tools": use_tools})
             turn = sum(1 for r in rows if r.get("type") == "user") + 1
             storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
             rep = tacc_live.chat(message, history, task_name, use_tools,
@@ -634,10 +649,10 @@ class Handler(BaseHTTPRequestHandler):
                                              "answer": (rep.get("answer") or "")[:4000], "rounds": rep.get("rounds", 0),
                                              "steps": [[str(x.get("cmd", ""))[:200], x.get("exit_code"), bool(x.get("cached"))] for x in steps],
                                              "prompt_tokens": rep.get("prompt_tokens", 0), "completion_tokens": rep.get("completion_tokens", 0),
-                                             "wall_s": rep.get("wall_s", 0), "error": rep.get("error", ""),
+                                             "wall_s": rep.get("wall_s", 0), "error": rep.get("error", ""), "model": TACC_MODEL,
                                              "flag_checks": [[str(c.get("flag", ""))[:120], c.get("status")] for c in rep.get("flag_checks") or []]})
                 q.put({"type": "chat_done", "answer": rep.get("answer") or "", "turns": turn, "session_id": sid,
-                       "total_steps": len(steps), "flag_checks": rep.get("flag_checks") or []})
+                       "total_steps": len(steps), "flag_checks": rep.get("flag_checks") or [], "model": TACC_MODEL})
             q.put(None)
 
         threading.Thread(target=work, daemon=True).start()
@@ -652,6 +667,10 @@ class Handler(BaseHTTPRequestHandler):
         if sid and not _SID_RE.match(sid):
             return self._json(400, {"error": "bad session id"})
         use_tools = bool(payload.get("tools", True))
+        # 每个线程可以用自己的模型：浏览器把这个线程选的模型带过来；不带就用全局设置
+        want = str(payload.get("model") or "").strip() or None
+        if want and not _MODEL_RE.match(want):
+            return self._json(400, {"error": "bad model name"})
 
         with LOCK:
             sess = CHATS.get(sid)
@@ -666,7 +685,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     prev = resolve_task(task_name) if task_name else None
                     sess = ChatSession.resume(
-                        _make_cfg("web-chat"), prev,
+                        _make_cfg("web-chat", model=want), prev,
                         config.RUNS_ROOT / "chat" / sid, use_tools=use_tools)
                 except Exception:
                     sess = None
@@ -684,7 +703,7 @@ class Handler(BaseHTTPRequestHandler):
                 sid = uuid.uuid4().hex[:12]
                 try:
                     sess = ChatSession(
-                        _make_cfg("web-chat"),
+                        _make_cfg("web-chat", model=want),
                         task=task,
                         workdir=config.RUNS_ROOT / "chat" / sid,
                         use_tools=use_tools,
@@ -693,6 +712,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(500, {"error": f"{type(e).__name__}: {e}"})
                 CHATS[sid] = sess
                 STATE[sid] = {"q": queue.Queue(), "summary": None, "kind": "chat"}
+            if want and sess.cfg.model.name != want:
+                sess.set_model(_make_cfg("web-chat", model=want).model)     # 同一线程中途换模型
             q = STATE[sid]["q"]
 
         def worker() -> None:
@@ -703,7 +724,7 @@ class Handler(BaseHTTPRequestHandler):
                     hook=q.put,
                 )
                 q.put({"type": "chat_done", **reply.as_dict(),
-                       "session_id": sid, "turns": sess.turns,
+                       "session_id": sid, "turns": sess.turns, "model": sess.cfg.model.name,
                        "total_steps": sess.total_steps,
                        "task": sess.task.name if sess.task else ""})
             except Exception as e:

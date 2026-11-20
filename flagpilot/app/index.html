@@ -59,17 +59,20 @@
   /* ---------- rail ---------- */
   #rail{position:fixed;left:0;top:0;bottom:0;width:var(--rail);z-index:30;background:var(--white);border-right:1px solid var(--rule);display:flex;flex-direction:column;padding:24px 0 18px}
   .brand{display:flex;gap:12px;align-items:center;padding:10px 22px;margin:-10px 0 18px;cursor:pointer;outline-offset:-3px}
-  .brand svg{width:30px;height:30px;display:block;flex:0 0 30px;overflow:visible}
-  .brand svg .m{transform-box:fill-box;transform-origin:center;transition:transform .6s var(--spring)}
-  /* the four blocks: hover turns them one quadrant clockwise (staggered); while anything runs they keep turning */
-  .brand:hover svg .q1{transform:translate(26px,0)} .brand:hover svg .q2{transform:translate(0,26px);transition-delay:.04s}
-  .brand:hover svg .q3{transform:translate(-26px,0);transition-delay:.08s} .brand:hover svg .q4{transform:translate(0,-26px);transition-delay:.12s}
-  .brand.working svg .m{animation:q1 4.8s var(--ease-io) infinite} .brand.working svg .q2{animation-name:q2} .brand.working svg .q3{animation-name:q3} .brand.working svg .q4{animation-name:q4}
+  #rail{-webkit-user-select:none;user-select:none}
+  .brand svg{width:30px;height:30px;display:block;flex:0 0 30px;overflow:visible;transition:transform .5s var(--spring)}
+  .brand:hover svg{transform:rotate(-12deg) scale(1.1)}
+  /* the four blocks keep turning one quadrant clockwise, slightly staggered; they speed up while a run or a reply is going (playbackRate, no jump) */
+  .brand svg .m{transform-box:fill-box;transform-origin:center;animation:q1 6s var(--ease-io) infinite}
+  .brand svg .q2{animation-name:q2;animation-delay:.07s} .brand svg .q3{animation-name:q3;animation-delay:.14s} .brand svg .q4{animation-name:q4;animation-delay:.21s}
   @keyframes q1{0%,18%{transform:none}25%,43%{transform:translate(26px,0)}50%,68%{transform:translate(26px,26px)}75%,93%{transform:translate(0,26px)}100%{transform:none}}
   @keyframes q2{0%,18%{transform:none}25%,43%{transform:translate(0,26px)}50%,68%{transform:translate(-26px,26px)}75%,93%{transform:translate(-26px,0)}100%{transform:none}}
   @keyframes q3{0%,18%{transform:none}25%,43%{transform:translate(-26px,0)}50%,68%{transform:translate(-26px,-26px)}75%,93%{transform:translate(0,-26px)}100%{transform:none}}
   @keyframes q4{0%,18%{transform:none}25%,43%{transform:translate(0,-26px)}50%,68%{transform:translate(26px,-26px)}75%,93%{transform:translate(26px,0)}100%{transform:none}}
-  .brand b{font:800 16px/1 var(--font);letter-spacing:.02em}
+  .brand b{display:inline-flex;font:800 16px/1 var(--font);letter-spacing:.02em}
+  /* the wordmark keeps scrambling and decoding back to FlagPilot; slots are width-locked so nothing shifts */
+  .brand .bw{display:inline-block;text-align:center;white-space:pre}
+  .brand .bw.hx{color:var(--blue)} .brand .bw.hx:nth-child(3n){color:var(--red)} .brand .bw.hx:nth-child(3n+2){color:#a87800}
   #navs{position:relative;border-top:1px solid var(--rule)}
   #navs [data-page=solve]{--pc:var(--blue)} #navs [data-page=history],#navs [data-page=chat]{--pc:var(--ink)} #navs [data-page=lab]{--pc:var(--yellow)} #navs [data-page=upload]{--pc:var(--red)}
   /* the active pill stretches to the next item, then its tail catches up; a lighter block follows the pointer */
@@ -526,7 +529,7 @@
   .thread b{display:block;font:600 15px var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .thread span{display:block;font:13px var(--mono);color:var(--ink3);margin-top:3px}
   .thread.on span{color:rgba(255,255,255,.6)}
-  .conv{position:relative;display:flex;flex-direction:column;min-height:0;padding:84px 44px 26px;overflow:hidden}
+  .conv{position:relative;display:flex;flex-direction:column;min-height:0;padding:84px max(44px,calc((100% - 1040px) / 2)) 26px;overflow:hidden}
   #matrix{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:0}
   .conv.started #matrix{display:none}
   .chat-hero{position:relative;z-index:1;margin:auto 0 30px}
@@ -569,7 +572,19 @@
   #composer{position:relative;z-index:1;border:1.5px solid var(--ink);background:var(--white);padding:14px 14px 12px 20px;box-shadow:5px 5px 0 var(--ink);transition:box-shadow .12s ease,transform .12s ease}
   #composer:focus-within{box-shadow:7px 7px 0 var(--blue);transform:translate(-2px,-2px)}
   #composer textarea{display:block;border:0;box-shadow:none;min-height:30px;max-height:200px;padding:4px 0;resize:none;font-size:17px}
-  #composer textarea:focus{box-shadow:none}
+  #composer textarea:focus{box-shadow:none} #composer textarea:focus-visible{outline:none}
+  /* who answers: a menu on the composer chip, one choice per conversation */
+  .mmenu{position:fixed;z-index:70;width:min(420px,calc(100vw - 24px));background:var(--white);border:1.5px solid var(--ink);box-shadow:6px 6px 0 var(--ink);padding:8px 0}
+  .mmenu .mh{margin:6px 18px 8px;font:700 15px var(--font);color:var(--ink2)}
+  .mmenu button{display:flex;align-items:center;gap:12px;width:100%;border:0;background:transparent;padding:11px 18px;text-align:left;font:600 16px var(--font);color:var(--ink);cursor:pointer;transition:background .12s}
+  .mmenu button:hover,.mmenu button:focus-visible{background:var(--hover);outline:none}
+  .mmenu .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .mmenu .sub{margin-left:auto;padding-left:12px;font:500 15px var(--mono);color:var(--ink2);white-space:nowrap}
+  .mmenu .ck{width:14px;flex:0 0 14px;font-weight:800;color:var(--blue);opacity:0} .mmenu [aria-checked=true] .ck{opacity:1} .mmenu [aria-checked=true] .nm{color:var(--blue)}
+  .mmenu hr{border:0;border-top:1px solid var(--rule);margin:6px 0} .mmenu .danger{color:var(--red)}
+  .chip.qwen .cv{margin-left:2px;transition:transform .2s var(--ease)} .chip.qwen[aria-expanded=true] .cv{transform:rotate(180deg)}
+  .rcpt .now{margin-left:12px;border:0;background:none;padding:0;font:inherit;color:var(--blue);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+  .bub .who{margin:10px 0 0;font:500 15px var(--mono);color:var(--ink3)}
+  .thread b .g{width:9px;height:9px;margin-right:9px;vertical-align:1px} .thread.on b .g.ink{background:#fff}
   .phl{position:absolute;left:20px;top:18px;right:20px;pointer-events:none;color:var(--ink3);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .phl span{display:inline-block;animation:phin .25s var(--ease) both}
   .phl.out span{animation:phout .16s ease both}
@@ -638,14 +653,14 @@
 </defs></svg>
 
 <nav id="rail" aria-label="Pages">
-  <div class="brand" id="brand" role="link" tabindex="0" aria-label="FlagPilot home" data-tip="FlagPilot · replay-verified CTF agent">
+  <div class="brand" id="brand" role="link" tabindex="0" aria-label="FlagPilot home" data-tip="Home">
     <svg viewBox="0 0 48 48" aria-hidden="true">
       <rect class="m q1" x="0" y="0" width="22" height="22" fill="var(--blue)"/>
       <circle class="m q2" cx="36" cy="11" r="11" fill="var(--red)"/>
       <rect class="m q3" x="26" y="26" width="22" height="22" fill="var(--ink)"/>
       <polygon class="m q4" points="0,48 22,26 22,48" fill="var(--yellow)"/>
     </svg>
-    <b>FlagPilot</b>
+    <b aria-hidden="true">FlagPilot</b>
   </div>
   <div id="navs">
     <span id="navHover" aria-hidden="true"></span><span id="navPill"></span>
@@ -825,7 +840,7 @@
             <button class="chip" data-taskpill id="mountChip"><span class="g ring"></span><span class="tn">Attach a challenge</span></button>
             <label class="chip toggle"><input type="checkbox" id="chatTools" checked><span class="tick"></span>Allow commands</label>
             <button class="chip thr" id="threadsBtn" aria-pressed="true" aria-label="Show or hide threads"><span class="ar">‹</span><b>Threads</b><span class="n"></span></button>
-            <button class="chip qwen" id="qwenChipAsk" data-tip="Replies come from Qwen 27B on TACC when connected (30–90 s each); otherwise from the local model"><span class="g ring"></span><span class="tn">Demo model · connect Qwen</span></button>
+            <button class="chip qwen" id="qwenChipAsk" aria-haspopup="menu" aria-expanded="false" data-tip="Who answers in this conversation — click to change"><span class="g ring"></span><span class="tn">Demo model</span><span class="cv" aria-hidden="true">▾</span></button>
             <span class="grow"></span>
             <button class="pixbtn sendb" id="sendChat" aria-label="Send (Enter)"><canvas></canvas><span class="pl">Send ↵</span></button>
           </div>
@@ -1175,7 +1190,9 @@ function popGlyph(p){ const g = document.querySelector(`.navbtn[data-page="${p}"
 function railMark(p, st){ const b = document.querySelector(`.navbtn[data-page="${p}"]`); if (!b) return;
   b.classList.toggle('working', st === 'working');
   if (st === 'ok' || st === 'bad'){ if (p !== page){ b.classList.add('note'); b.classList.toggle('note-bad', st === 'bad'); } }
-  $('#brand').classList.toggle('working', !!document.querySelector('.navbtn.working')); }
+  const w = !!document.querySelector('.navbtn.working'), br = $('#brand'); if (br.classList.contains('working') === w) return;
+  br.classList.toggle('working', w);
+  qs('#brand .m').forEach(m => m.getAnimations().forEach(a => a.updatePlaybackRate ? a.updatePlaybackRate(w ? 2.4 : 1) : (a.playbackRate = w ? 2.4 : 1))); }
 function setSeg(seg, idx){ seg.style.setProperty('--i', Math.max(0, idx)); [...seg.querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', i === idx)); }
 function showPage(p){
   qs('.page').forEach(s => { const on = s.dataset.page === p; s.inert = !on; s.classList.toggle('on', on); });
@@ -1202,8 +1219,12 @@ function go(p, opt = {}){
   el.animate([{transform: `translateX(${dir * 12}px)`}, {transform: 'none'}], {duration: 220, easing: EASE});
 }
 qs('.navbtn').forEach(b => b.addEventListener('click', () => go(b.dataset.page)));
-$('#brand').addEventListener('click', () => go('solve'));
-$('#brand').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go('solve'); } });
+/* the logo is the way home: Solve's landing (a run in progress stays on screen instead) */
+function goHome(){ go('solve'); if (busy){ toast('A run is in progress; it stays on screen until it finishes'); return; }
+  if (sel || run){ clearRunParam(); run = null; pick(null); } const pg = document.querySelector('.page[data-page="solve"]'); if (pg) pg.scrollTop = 0; }
+$('#brand').addEventListener('mousedown', e => e.preventDefault());      // a click neither focuses nor selects; Tab still focuses
+$('#brand').addEventListener('click', goHome);
+$('#brand').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); goHome(); } });
 /* hover block: slides between items, appears in place when the pointer first enters */
 (function(){ const hv = $('#navHover'), navs = $('#navs'); let shown = false;
   navs.addEventListener('pointerover', e => { const b = e.target.closest('.navbtn'); if (!b || railFlat()) return; if (!NAVPOS[b.dataset.page]) measureNav();
@@ -1211,6 +1232,27 @@ $('#brand').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key ==
     if (!shown){ hv.classList.add('jump'); getComputedStyle(hv).transform; hv.classList.remove('jump'); }
     hv.classList.add('on'); shown = true; }, {passive: true});
   navs.addEventListener('pointerleave', () => { hv.classList.remove('on'); shown = false; }, {passive: true});
+})();
+/* wordmark: garbled glyphs decode left to right into FlagPilot, again every few seconds (more often while work runs) */
+(function(){
+  const el = $('#brand b'), WORD = el.textContent, WIDE = '#$%&*+=<>?/\\{}[]_^~01', THIN = '!|:;1il.';
+  el.innerHTML = [...WORD].map(c => `<span class="bw">${esc(c)}</span>`).join('');
+  const slots = [...el.children]; let T = 0;
+  const lock = () => slots.forEach(sl => { sl.style.width = ''; sl.style.width = sl.getBoundingClientRect().width.toFixed(2) + 'px'; sl._thin = sl.getBoundingClientRect().width < 7.5; });
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => requestAnimationFrame(lock));
+  const later = () => { clearTimeout(T); T = setTimeout(play, $('#brand').classList.contains('working') ? 2400 : 5200 + Math.random() * 2600); };
+  function play(){
+    if (reduced() || document.hidden || railFlat()) return later();
+    const t0 = performance.now();
+    const tick = now => { const t = now - t0; let live = false;
+      slots.forEach((sl, i) => { const a = i * 40, b = 420 + i * 70;
+        if (t < a) { live = true; return; }
+        if (t >= b){ if (sl.classList.contains('hx')){ sl.textContent = WORD[i]; sl.classList.remove('hx'); } return; }
+        live = true; if (!sl._t || now - sl._t > 60){ sl._t = now; const set = sl._thin ? THIN : WIDE; sl.textContent = set[(Math.random() * set.length) | 0]; sl.classList.add('hx'); } });
+      live ? requestAnimationFrame(tick) : later(); };
+    requestAnimationFrame(tick);
+  }
+  T = setTimeout(play, 1200);
 })();
 /* first paint: the logo assembles and the items slide in */
 (function(){ if (reduced()) return;
@@ -1258,7 +1300,7 @@ function renderAblations(list){
 $('#ablSeg').addEventListener('click', e => { const b = e.target.closest('button[data-name]'); if (b) setAblation(b.dataset.name); });
 async function loadModels(){
   try {
-    const m = await getJSON('/api/models', 'models'), s = $('#modelSel');
+    const m = await getJSON('/api/models', 'models'), s = $('#modelSel'); MODELS = m.models || [m.current];
     s.innerHTML = (m.models || [m.current]).map(n => `<option value="${esc(n)}"${n === m.current ? ' selected' : ''}>${esc(n)}</option>`).join('');
     s.onchange = async () => {
       const d = await (await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: s.value})})).json();
@@ -1281,7 +1323,7 @@ async function loadTasks(){
   rb.dataset.tip = mock ? 'Offline mock model: a demo of the pipeline, not a real agent' : 'Run with ' + d.model;
   renderTaskList();
   if (sel){ const t = taskByName(sel); if (t) selTask = t; else pick(null); }
-  showMount(); renderArms();
+  showMount(); renderArms(); syncAskChip();
   return d;
 }
 function catOf(c){
@@ -2091,7 +2133,8 @@ async function qwenPoll(){
   const ph = QW.phase, mins = Math.ceil((QW.remaining || 0) / 60);
   const label = ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}${QW.queue ? ' · ' + (QSHORT[QW.queue] || QW.queue) : ''}`
     : ph === 'failed' ? 'Qwen on TACC · retry' : 'Qwen on TACC · connect';
-  for (const id of ['#qwenChip', '#qwenChipAsk']){ const c = $(id); c.classList.toggle('on', ph === 'ready'); c.classList.toggle('wait', ph === 'starting');
+  syncAskChip();
+  for (const id of ['#qwenChip']){ const c = $(id); c.classList.toggle('on', ph === 'ready'); c.classList.toggle('wait', ph === 'starting');
     c.querySelector('.g').className = 'g ' + (ph === 'ready' ? 'c blue' : ph === 'starting' ? 'spin' : ph === 'failed' ? 'red' : 'ring');
     c.querySelector('.tn').textContent = id === '#qwenChipAsk' && ph !== 'ready' && ph !== 'starting' ? `${/^mock/i.test(LOCALMODEL) ? 'Demo' : LOCALMODEL} · connect Qwen` : label;
     c.dataset.tip = (ph === 'starting' && QW.queue ? 'Queued: ' + queueWhy(QW.queue) + ' — ' : '') + (QW.log && QW.log.length ? QW.log[QW.log.length - 1] + ' — ' : '')
@@ -2102,10 +2145,70 @@ async function qwenPoll(){
 }
 async function qwenToggle(){
   if (QW.phase === 'ready'){ if (!confirm('Disconnect and free the TACC GPUs?')) return; await fetch('/api/tacc/session/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
+  else if (QW.phase === 'starting'){ if (!confirm('Stop starting Qwen 27B on TACC?')) return; pendingRun = null; await fetch('/api/tacc/session/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
   else if (QW.phase !== 'starting'){ await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); toast('Starting Qwen 27B on TACC — about 5 minutes'); }
   qwenPoll();
 }
-$('#qwenChip').addEventListener('click', qwenToggle); $('#qwenChipAsk').addEventListener('click', qwenToggle);
+$('#qwenChip').addEventListener('click', qwenToggle);
+/* ---------------- Ask: each conversation picks who answers (a hosted or local model, or Qwen 27B on TACC) ---------------- */
+const TACC_LABEL = 'qwen3.8-27b (TACC)', PICK_KEY = 'fp.ask.pick', PICKS_KEY = 'fp.ask.threads';
+let MODELS = [];
+const isTaccName = m => /\(TACC\)$/.test(m || '');
+const prettyModel = m => !m ? '' : isTaccName(m) ? 'Qwen 27B on TACC' : /^mock/i.test(m) ? 'Demo model'
+  : String(m).replace(/^models\//, '').replace(/-latest$/, '').split('-').map(w => /^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ').replace('Flash Lite', 'Flash-Lite');
+const modelKind = m => isTaccName(m) ? 'tacc' : /^mock/i.test(m || '') ? 'demo' : /^(gemini|gemma)-/i.test(m || '') ? 'hosted' : 'local';
+const modelGlyph = m => ({tacc: 'c blue', demo: 'ring', hosted: 'ink', local: 't yellow'})[modelKind(m)];
+/* 'auto' = never picked: Qwen while its session is up or starting, otherwise the local model (the behaviour before picks) */
+const askRouteOf = pk => pk.route === 'auto' ? ((QW.phase === 'ready' || QW.phase === 'starting') ? 'tacc' : 'local') : pk.route;
+const modelOf = pk => pk.route === 'local' && pk.model ? pk.model : LOCALMODEL;
+function readPicks(){ try { return JSON.parse(localStorage.getItem(PICKS_KEY) || '{}') || {}; } catch(_){ return {}; } }
+function rememberPick(sid, pk){ const v = {route: pk.route, model: pk.model || ''};
+  try { localStorage.setItem(PICK_KEY, JSON.stringify(v)); if (sid){ const m = readPicks(); delete m[sid]; m[sid] = v; const ks = Object.keys(m); while (ks.length > 300) delete m[ks.shift()]; localStorage.setItem(PICKS_KEY, JSON.stringify(m)); } } catch(_){} }
+function newPick(){ try { const d = JSON.parse(localStorage.getItem(PICK_KEY) || 'null'); if (d && (d.route === 'local' || d.route === 'tacc')) return {route: d.route, model: d.model || ''}; } catch(_){} return {route: 'auto', model: ''}; }
+function pickForThread(sid, serverModel){ const m = readPicks()[sid]; if (m && (m.route === 'local' || m.route === 'tacc')) return {route: m.route, model: m.model || ''};
+  return serverModel ? (isTaccName(serverModel) ? {route: 'tacc', model: ''} : {route: 'local', model: serverModel}) : newPick(); }
+let threadPick = newPick();
+function useThreadPick(pk){ threadPick = pk; syncAskChip(); }
+function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; const ph = QW.phase, r = askRouteOf(threadPick), mins = Math.ceil((QW.remaining || 0) / 60);
+  c.classList.toggle('on', r === 'tacc' && ph === 'ready'); c.classList.toggle('wait', r === 'tacc' && ph === 'starting');
+  c.querySelector('.g').className = 'g ' + (r === 'tacc' ? (ph === 'ready' ? 'c blue' : ph === 'starting' ? 'spin' : 'ring') : modelGlyph(modelOf(threadPick)));
+  c.querySelector('.tn').textContent = r === 'tacc' ? (ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}` : 'Qwen on TACC · starts when you send')
+    : prettyModel(modelOf(threadPick)); }
+function openModelMenu(anchor){
+  closeModelMenu(); const ph = QW.phase, r = askRouteOf(threadPick), cur = modelOf(threadPick), mins = Math.ceil((QW.remaining || 0) / 60);
+  const list = [...new Set([...MODELS, LOCALMODEL].filter(Boolean))], SUB = {hosted: 'hosted · seconds', demo: 'offline demo', local: 'local endpoint'};
+  const row = (act, name, sub, on, cls) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-act="${esc(act)}"${cls ? ` class="${cls}"` : ''}><span class="ck">✓</span><span class="nm">${esc(name)}</span><span class="sub">${esc(sub)}</span></button>`;
+  const m = document.createElement('div'); m.className = 'mmenu'; m.id = 'modelMenu'; m.setAttribute('role', 'menu'); m.setAttribute('aria-label', 'Who answers this conversation');
+  m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), SUB[modelKind(n)], r === 'local' && n === cur)).join('')
+    + '<hr>' + row('tacc', 'Qwen 27B on TACC', ph === 'ready' ? `connected · ${mins} min left` : ph === 'starting' ? `starting · ${fmtClock(QW.elapsed)}` : 'starts in about 5 min', r === 'tacc')
+    + (ph === 'starting' ? row('stop', 'Stop starting Qwen', '', false, 'danger') : ph === 'ready' ? row('stop', 'Disconnect TACC', 'frees the GPUs', false, 'danger') : '');
+  document.body.appendChild(m);
+  const a = anchor.getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth, up = a.top - h - 10 >= 8;
+  m.style.top = (up ? a.top - h - 10 : Math.min(innerHeight - h - 8, a.bottom + 10)) + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - w - 8, a.left)) + 'px';
+  m.style.transformOrigin = up ? '20% 100%' : '20% 0'; anchor.setAttribute('aria-expanded', 'true');
+  if (!reduced()) m.animate([{opacity: 0, transform: `translateY(${up ? 8 : -8}px) scale(.96)`}, {opacity: 1, transform: 'none'}], {duration: 200, easing: EASE});
+  m.addEventListener('click', e => { const b = e.target.closest('button[data-act]'); if (b) pickModel(b.dataset.act); });
+  m.addEventListener('keydown', e => { const items = [...m.querySelectorAll('button')], i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
+    else if (e.key === 'Escape' || e.key === 'Tab'){ e.preventDefault(); closeModelMenu(true); } });
+  (m.querySelector('[aria-checked="true"]') || m.querySelector('button')).focus({preventScroll: true});
+  setTimeout(() => document.addEventListener('pointerdown', menuOutside, true), 0);
+}
+function menuOutside(e){ const m = $('#modelMenu'); if (m && !m.contains(e.target) && !e.target.closest('#qwenChipAsk')) closeModelMenu(); }
+function closeModelMenu(refocus){ document.removeEventListener('pointerdown', menuOutside, true); const m = $('#modelMenu'); if (!m) return; m.remove();
+  const c = $('#qwenChipAsk'); c.setAttribute('aria-expanded', 'false'); if (refocus) c.focus({preventScroll: true}); }
+/* the pick is changed in place, so a message on hold in this conversation follows the switch at once */
+async function pickModel(act){
+  closeModelMenu(true); const pk = threadPick, post = path => fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {});
+  if (act === 'stop'){ const was = QW.phase; if (was === 'ready' && !confirm('Disconnect and free the TACC GPUs?')) return;
+    if (askRouteOf(pk) === 'tacc'){ pk.route = 'local'; pk.model = pk.model || LOCALMODEL; rememberPick(chatId, pk); }
+    await post('/api/tacc/session/stop'); toast(was === 'starting' ? 'Stopped starting Qwen; ' + prettyModel(modelOf(pk)) + ' answers here' : 'Disconnected from TACC'); qwenPoll(); syncAskChip(); return; }
+  if (act === 'tacc'){ pk.route = 'tacc'; pk.model = ''; rememberPick(chatId, pk); syncAskChip();
+    if (QW.phase !== 'ready' && QW.phase !== 'starting'){ await post('/api/tacc/session/start'); toast('Starting Qwen 27B on TACC (about 5 minutes); messages here wait for it'); }
+    qwenPoll(); return; }
+  pk.route = 'local'; pk.model = act.slice(6); rememberPick(chatId, pk); syncAskChip(); toast(prettyModel(pk.model) + ' answers in this conversation');
+}
+$('#qwenChipAsk').addEventListener('click', e => { $('#modelMenu') ? closeModelMenu() : openModelMenu(e.currentTarget); });
 async function runOnTacc(){
   if (!sel || busy) return;
   clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation} · Qwen 27B on TACC`);
@@ -2190,7 +2293,7 @@ function saveChatId(id){ chatId = id || null; try { id ? localStorage.setItem(CH
 let THREADS = [];
 async function loadThreads(){
   try { THREADS = (await (await fetch('/api/chat/sessions', {cache: 'no-store'})).json()).sessions || []; } catch(_){ THREADS = []; }
-  $('#threadList').innerHTML = THREADS.length ? THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}" data-sid="${esc(t.id)}"><b>${esc(t.title)}</b><span>${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}</span></button>`).join('')
+  $('#threadList').innerHTML = THREADS.length ? THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}" data-sid="${esc(t.id)}"${t.model ? ` data-tip="${esc(prettyModel(t.model))}"` : ''}><b>${t.model ? `<i class="g ${modelGlyph(t.model)}"></i>` : ''}${esc(t.title)}</b><span>${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}</span></button>`).join('')
     : '<p class="hint" style="padding:20px 22px">No threads yet.</p>';
   $('#threadsShow .n').textContent = $('#threadsBtn .n').textContent = THREADS.length || '';
 }
@@ -2208,9 +2311,9 @@ async function openThread(sid){
         else if (!nx || nx.type === 'user'){ const rc = document.createElement('div'); rc.className = 'rcpt fail'; rc.textContent = 'No reply'; b.after(rc); } }
       else if (m.type === 'error') bubble('bot', `<span class="bad">${NOT_SENT.test(m.error || '') ? 'Not sent' : 'No reply'}: ${esc(en(m.error || 'the request failed'))}</span>`, false);
       else { const steps = (m.steps || []).map(s => termBlock(s[0], null, {exit: s[1], note: s[2] ? 'reused' : ''})).join('');
-        bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>`, false); chatTurns++; chatSteps += (m.steps || []).length; }
+        bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + (m.model ? `<p class="who">${esc(prettyModel(m.model))}</p>` : ''), false); chatTurns++; chatSteps += (m.steps || []).length; }
     }
-    saveChatId(sid); scrollChat(true);
+    saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true);
   } catch(_){}
   qs('#threadList .thread').forEach(b => b.classList.toggle('on', b.dataset.sid === chatId));
   $('#chatWrap').classList.remove('showthreads'); syncThreadsChip();
@@ -2342,19 +2445,27 @@ async function sendChat(){
   setStatus('Thinking', '', sel || 'concept question');
   const done = ok => { chatBusy = false; sb.disabled = false; ok ? sendPix.done() : sendPix.busy(false); pixLabel(sb, 'Send ↵'); railMark('chat', ok ? 'ok' : 'bad'); loadThreads(); };
   let r;
-  /* Qwen still starting: hold the message and hand it to Qwen once the server is up, never to the demo model */
-  const waited = QW.phase === 'starting';
-  stage(waited ? 'Waiting for Qwen 27B on TACC to start' : QW.phase === 'ready' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
-  onHold(waited ? 'waiting for Qwen 27B on TACC to start' : QW.phase === 'ready' ? 'sending to Qwen 27B on TACC' : 'sending');
+  /* this conversation's pick decides who answers. Qwen still starting: hold the message until it is up, unless this conversation is switched to another model */
+  const pick = threadPick;
+  if (pick.route === 'tacc' && QW.phase !== 'ready' && QW.phase !== 'starting'){
+    await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {}); await qwenPoll(); }
+  const waited = askRouteOf(pick) === 'tacc' && QW.phase === 'starting';
+  stage(waited ? 'Waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
+  onHold(waited ? 'waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'sending to Qwen 27B on TACC' : 'sending');
   if (waited){ setStatus('Thinking', '', 'waiting for Qwen 27B on TACC to start');
-    await new Promise(res => { const t0 = Date.now(), tick = () => (QW.phase === 'starting' && Date.now() - t0 < 47 * 60000) ? setTimeout(tick, 1000) : res(); tick(); }); }
-  const viaTacc = QW.phase === 'ready';
-  if (waited && !viaTacc){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Send again to use the demo model.</span>`, 'Qwen on TACC did not start'); done(false); setStatus('Ready'); return; }
+    const now = document.createElement('button'); now.type = 'button'; now.className = 'now'; now.textContent = 'Use ' + prettyModel(pick.model || LOCALMODEL) + ' now';
+    now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(chatId, pick); if (pick === threadPick) syncAskChip(); };
+    rc.appendChild(now);
+    await new Promise(res => { const t0 = Date.now(), tick = () => (QW.phase === 'starting' && askRouteOf(pick) === 'tacc' && Date.now() - t0 < 47 * 60000) ? setTimeout(tick, 300) : res(); tick(); }); }
+  const viaTacc = askRouteOf(pick) === 'tacc' && QW.phase === 'ready', switched = waited && pick.route === 'local';
+  if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); setStatus('Ready'); return; }
   if (viaTacc){ setStatus('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
-  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: sel || '', session_id: chatId, tools: $('#chatTools').checked, backend: viaTacc ? 'tacc' : ''})}); }
+  else if (switched){ stage('Sending to ' + prettyModel(modelOf(pick))); onHold('sending to ' + prettyModel(modelOf(pick))); }
+  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: sel || '', session_id: chatId, tools: $('#chatTools').checked,
+    backend: viaTacc ? 'tacc' : '', ...(viaTacc ? {} : {model: modelOf(pick)})})}); }
   catch(e){ fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); setStatus('Ready'); return; }
   if (!r.ok){ const d = await r.json().catch(() => ({})); fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); setStatus('Ready'); return; }
-  const d = await r.json(); saveChatId(d.session_id);
+  const d = await r.json(); saveChatId(d.session_id); if (pick.route !== 'auto') rememberPick(d.session_id, pick);
   if (viaTacc) onHold('uploading to TACC'); else { sent(); onHold('replying'); }
   const es = new EventSource('/api/stream?id=' + chatId);
   let acc = '', shown = 0, closed = false, raf = 0, attached = false;
@@ -2374,7 +2485,7 @@ async function sendChat(){
     else if (ev.type === 'chat_tool'){ const holder = document.createElement('div'); holder.className = 'toolcall';
       holder.innerHTML = termBlock(ev.cmd, en(ev.output || '(no output)'), ev.cached ? {note: 'reused'} : {exit: ev.exit_code, ms: ev.duration_ms, note: ev.timed_out ? 'timed out' : ''});
       live.insertBefore(holder, attached ? body : null); stage('Ran ' + String(ev.cmd || '').slice(0, 48)); sent(); onHold('running commands'); chatSteps += 1; scrollChat(); }
-    else if (ev.type === 'chat_done'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = markFlags(mdLite(ev.answer || '(no content)'), ev.flag_checks); finish(); settle(true);
+    else if (ev.type === 'chat_done'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = markFlags(mdLite(ev.answer || '(no content)'), ev.flag_checks); if (ev.model) body.insertAdjacentHTML('afterend', `<p class="who">${esc(prettyModel(ev.model))}</p>`); finish(); settle(true);
       chatTurns = ev.turns || (chatTurns + 1); chatSteps = ev.total_steps || chatSteps; if (ev.session_id) saveChatId(ev.session_id);
       setStatus('Ready'); closed = true; es.close(); done(true); scrollChat(); }
     else if (ev.type === 'error'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = `<span class="bad">${esc(en(ev.message))}</span>`; finish(); settle(false, ev.message);
@@ -2384,7 +2495,7 @@ async function sendChat(){
 }
 $('#sendChat').onclick = sendChat;
 $('#chatTools').onchange = showMount;
-$('#newChat').onclick = () => { if (chatBusy) return; chatId = null; chatTurns = 0; chatSteps = 0; saveChatId(null); $('#chatLog').innerHTML = ''; started(false); loadThreads(); $('#chatInput').focus(); };
+$('#newChat').onclick = () => { if (chatBusy) return; chatId = null; chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); $('#chatLog').innerHTML = ''; started(false); loadThreads(); $('#chatInput').focus(); };
 
 /* ---------------- keyboard: / to search, Enter to run or send, Esc to close ---------------- */
 document.addEventListener('keydown', e => {
