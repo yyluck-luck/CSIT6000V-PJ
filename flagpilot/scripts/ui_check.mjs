@@ -238,6 +238,25 @@ try {
   const meSeen = await js("window.__me");
   const meWant = [/^dashed \| On hold · uploading to TACC$/, /^solid \| On hold · queued on TACC · job 30120 · your two-job limit is in use$/, /^solid \| On hold · running on 10-0-3-11/, /^solid \| On hold · replying$/, /^solid \| On hold · replying$/, /^solid \| -$/];
   check("my bubble: dashed until the job is queued, then solid; the hold receipt lasts until the reply", meSeen.length === 6 && meWant.every((re, i) => re.test(meSeen[i])), JSON.stringify(meSeen));
+  // flags the tutor states come back checked: a wrong one triggers a retry that clears the draft; the final reply marks each flag
+  await js("document.querySelector('#newChat').click()");
+  await js(`(() => { window.__ES = window.EventSource; window.__chk = [];
+    const evs = [{type: 'chat_delta', text: 'It is picoCTF{made_up}.'}, {type: 'chat_check', flags: [{flag: 'picoCTF{made_up}', status: 'wrong'}], retry: true},
+      {type: 'chat_delta', text: 'The file says picoCTF{real_42}.'},
+      {type: 'chat_done', answer: 'The file says picoCTF{real_42}; not picoCTF{made_up}.', turns: 1,
+       flag_checks: [{flag: 'picoCTF{real_42}', status: 'correct'}, {flag: 'picoCTF{made_up}', status: 'wrong'}]}];
+    window.EventSource = class { constructor(){ let i = 0; const next = () => { if (i >= evs.length) return; this.onmessage && this.onmessage({data: JSON.stringify(evs[i++])});
+        requestAnimationFrame(() => { const b = [...document.querySelectorAll('#chatLog .bub.bot')].pop(); window.__chk.push(b ? ((b.querySelector('.lstat') || {}).textContent || '') + ' | ' + ((b.querySelector('.md') || {}).textContent || '') : ''); setTimeout(next, 60); }); };
+      setTimeout(next, 60); } close(){} };
+    QW = {phase: 'idle'}; })()`);
+  await typeMsg("what is the flag?");
+  await until("window.__chk.length === 4", 6000);
+  const chk = await js("window.__chk"), marks = await js("[...document.querySelectorAll('#chatLog .bub.bot:last-child .fchk')].map(e => e.className + '=' + e.textContent + '|' + ((e.nextElementSibling && e.nextElementSibling.classList.contains('fbadge')) ? e.nextElementSibling.textContent : ''))");
+  await js("window.EventSource = window.__ES");
+  check("tutor flags: a wrong one is withdrawn and retried; the reply marks correct and wrong flags",
+    chk.length === 4 && /\| It is picoCTF\{made_up\}/.test(chk[0]) && /did not check out.* \| $/i.test(chk[1]) && /\| The file says picoCTF\{real_42\}\.$/.test(chk[2])
+      && JSON.stringify(marks) === JSON.stringify(["fchk ok=picoCTF{real_42}|✓ correct flag", "fchk bad=picoCTF{made_up}|✗ wrong flag"]),
+    JSON.stringify({chk, marks}));
   await noCJK("ask");
   const smallAsk = await js(SMALL); check("no small text on Ask", !smallAsk.length, smallAsk.join(" | "));
 

@@ -56,7 +56,7 @@ def chat_once(cfg, message: str, history: list[dict], task=None, use_tools: bool
             sess.messages.append({"role": "assistant", "content": a})
             sess.turns += 1
     reply = sess.ask(message, on_delta=lambda d: _emit("@@delta", d),
-                     hook=lambda ev: _emit("@@ev", _compact(ev)) if ev.get("type") == "chat_tool" else None)
+                     hook=lambda ev: _emit("@@ev", _compact(ev)) if ev.get("type") in ("chat_tool", "chat_check") else None)
     out = reply.as_dict()
     _emit("@@reply", out)
     return out

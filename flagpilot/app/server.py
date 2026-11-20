@@ -622,7 +622,7 @@ class Handler(BaseHTTPRequestHandler):
             storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
             rep = tacc_live.chat(message, history, task_name, use_tools,
                                  on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),
-                                 on_tool=lambda ev: q.put({**ev, "type": "chat_tool"}),
+                                 on_tool=lambda ev: q.put(ev if ev.get("type") == "chat_check" else {**ev, "type": "chat_tool"}),
                                  on_stage=lambda ev: q.put({**ev, "type": "chat_stage"}))
             if rep.get("error") and not rep.get("answer"):
                 # 失败也落盘：重开线程时能看到这条消息为什么没有回复（不参与上面的问答配对）
@@ -634,9 +634,10 @@ class Handler(BaseHTTPRequestHandler):
                                              "answer": (rep.get("answer") or "")[:4000], "rounds": rep.get("rounds", 0),
                                              "steps": [[str(x.get("cmd", ""))[:200], x.get("exit_code"), bool(x.get("cached"))] for x in steps],
                                              "prompt_tokens": rep.get("prompt_tokens", 0), "completion_tokens": rep.get("completion_tokens", 0),
-                                             "wall_s": rep.get("wall_s", 0), "error": rep.get("error", "")})
+                                             "wall_s": rep.get("wall_s", 0), "error": rep.get("error", ""),
+                                             "flag_checks": [[str(c.get("flag", ""))[:120], c.get("status")] for c in rep.get("flag_checks") or []]})
                 q.put({"type": "chat_done", "answer": rep.get("answer") or "", "turns": turn, "session_id": sid,
-                       "total_steps": len(steps)})
+                       "total_steps": len(steps), "flag_checks": rep.get("flag_checks") or []})
             q.put(None)
 
         threading.Thread(target=work, daemon=True).start()

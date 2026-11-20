@@ -175,5 +175,105 @@ class TestChatSession(unittest.TestCase):
         self.assertIn("第一问的回答", blob)
 
 
+class TestFlagCheck(unittest.TestCase):
+    """导师报的 flag 要核验：答错/来路不明 → 追加一轮让它用命令推出来；结果随回复带给页面。"""
+
+    GOLD = "picoCTF{real_answer_42}"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fp-chat-check-"))
+        self.cfg = RunConfig(model=make_model_spec("mock"), limits=SandboxLimits(action_timeout_s=15))
+
+    def tearDown(self):
+        import shutil
+
+        for p in self.tmp.rglob("*"):
+            try:
+                p.chmod(0o755)
+            except Exception:
+                pass
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _session(self, replies, gold=GOLD, task=True, name="s"):
+        fake = FakeClient(replies)
+        old = chat.build_client
+        chat.build_client = lambda spec: fake
+        self.addCleanup(lambda: setattr(chat, "build_client", old))
+        t = custom.create(title="check", query="the flag is in flag.txt",
+                          files=[("flag.txt", (self.GOLD + "\n").encode())],
+                          gold=gold, root=self.tmp / "custom") if task else None
+        events = []
+        sess = chat.ChatSession(self.cfg, task=t, workdir=self.tmp / "work" / name)
+        return sess, fake, events
+
+    def test_claims_skip_placeholders_and_mask(self):
+        text = ("Flags look like picoCTF{...} or flag{<flag>} or picoCTF{your_flag}. "
+                f"Mine: picoCTF{{abc_123}} and again picoCTF{{abc_123}}. {chat.MASK}")
+        self.assertEqual(chat.flag_claims(text), ["picoCTF{abc_123}"])
+
+    def test_wrong_flag_triggers_one_retry_that_derives_it(self):
+        sess, fake, events = self._session([
+            "The flag is picoCTF{made_up}.",
+            "<run>cat challenge/flag.txt</run>\nLet me read it.",
+            f"The file says {self.GOLD}.",
+        ])
+        reply = sess.ask("what is the flag?", hook=events.append)
+        self.assertEqual(reply.flag_checks, [{"flag": self.GOLD, "status": "correct"}])
+        self.assertIn(self.GOLD, reply.answer)
+        self.assertNotIn("made_up", reply.answer, "the wrong answer must not survive into the final reply")
+        checks = [e for e in events if e["type"] == "chat_check"]
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["flags"], [{"flag": "picoCTF{made_up}", "status": "wrong"}])
+        note = fake.seen[1][-1]["content"]
+        self.assertTrue(note.startswith("CHECK by FlagPilot"), note)
+        self.assertNotIn(self.GOLD, note, "the correction must never leak the answer")
+        self.assertEqual(len(reply.steps), 1)
+
+    def test_still_wrong_after_retry_is_reported_not_looped(self):
+        sess, fake, _ = self._session(["The flag is picoCTF{made_up}."])
+        reply = sess.ask("what is the flag?")
+        self.assertEqual(fake.calls, 2, "exactly one correction round")
+        self.assertEqual(reply.flag_checks, [{"flag": "picoCTF{made_up}", "status": "wrong"}])
+
+    def test_correct_flag_needs_no_retry(self):
+        sess, fake, events = self._session([f"It is {self.GOLD}."])
+        reply = sess.ask("flag?", hook=events.append)
+        self.assertEqual(fake.calls, 1)
+        self.assertEqual(reply.flag_checks, [{"flag": self.GOLD, "status": "correct"}])
+        self.assertFalse(any(e["type"] == "chat_check" for e in events))
+
+    def test_without_gold_flags_are_judged_by_where_they_came_from(self):
+        sess, fake, _ = self._session([
+            "<run>cat challenge/flag.txt</run>\nReading.",
+            f"Found {self.GOLD}.",
+        ], gold="")
+        reply = sess.ask("flag?")
+        self.assertEqual(reply.flag_checks, [{"flag": self.GOLD, "status": "derived"}])
+        self.assertEqual(fake.calls, 2, "a derived flag is not retried")
+
+        sess2, fake2, _ = self._session(["Probably picoCTF{guess}."], gold="", name="s2")
+        reply2 = sess2.ask("flag?")
+        self.assertEqual(reply2.flag_checks, [{"flag": "picoCTF{guess}", "status": "unverified"}])
+        self.assertEqual(fake2.calls, 2)
+
+    def test_no_check_without_task_or_in_hint_mode(self):
+        sess, fake, _ = self._session(["Flags look like picoCTF{example}."], task=False)
+        reply = sess.ask("what does a flag look like?")
+        self.assertEqual((reply.flag_checks, fake.calls), ([], 1))
+
+        sess2, fake2, _ = self._session(["Try reading the file; picoCTF{nope}."], name="s2")
+        reply2 = sess2.ask("don't give me the answer, just a hint")
+        self.assertEqual((reply2.flag_checks, fake2.calls), ([], 1))
+
+    def test_checks_reach_the_reply_dict_and_the_log(self):
+        import json
+
+        sess, _, _ = self._session([f"It is {self.GOLD}."])
+        reply = sess.ask("flag?")
+        self.assertEqual(reply.as_dict()["flag_checks"], [{"flag": self.GOLD, "status": "correct"}])
+        rows = [json.loads(x) for x in sess.path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(rows[-1]["flag_checks"], [[self.GOLD, "correct"]])
+
+
 if __name__ == "__main__":
     unittest.main()

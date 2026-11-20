@@ -520,6 +520,11 @@
   /* on hold: a dashed, hollow bubble until the message has actually gone out; then it fills in */
   .bub.me.hold{background:transparent;color:var(--ink);border-style:dashed} .bub.me.hold::after{opacity:.3}
   .bub.me.fail{background:transparent;color:var(--red);border:1.5px dashed var(--red)} .bub.me.fail::after{background:var(--red);opacity:.5}
+  /* every flag the tutor states is checked: the gold hash when the challenge has one, otherwise where it came from */
+  .fchk{font-family:var(--mono);padding:0 3px} .fchk.ok{background:var(--blue-t);color:var(--blue)}
+  .fchk.bad{background:rgba(226,48,45,.1);color:var(--red);text-decoration:line-through} .fchk.warn{background:var(--yellow-t)}
+  .fbadge{display:inline-block;margin-left:6px;padding:0 7px;border:1.5px solid currentColor;font:700 15px/1.5 var(--mono);white-space:nowrap;vertical-align:1px}
+  .fbadge.ok{color:var(--blue)} .fbadge.bad{color:var(--red)} .fbadge.warn{color:#7a5600;background:var(--yellow-t)}
   .rcpt{align-self:flex-end;margin:-8px 12px 2px 0;font:600 12px var(--mono);color:var(--ink3)} .rcpt.fail{color:var(--red)}
   .rcpt .dot{display:inline-block;width:6px;height:6px;margin-right:6px;background:var(--yellow);vertical-align:1px;animation:blink 1s steps(2) infinite}
   .bub.me::after{content:'';position:absolute;right:-9px;bottom:0;width:10px;height:12px;background:var(--ink);clip-path:polygon(0 0,0 100%,100% 100%)}
@@ -2141,7 +2146,7 @@ async function openThread(sid){
         else if (!nx || nx.type === 'user'){ const rc = document.createElement('div'); rc.className = 'rcpt fail'; rc.textContent = 'No reply'; b.after(rc); } }
       else if (m.type === 'error') bubble('bot', `<span class="bad">${NOT_SENT.test(m.error || '') ? 'Not sent' : 'No reply'}: ${esc(en(m.error || 'the request failed'))}</span>`, false);
       else { const steps = (m.steps || []).map(s => termBlock(s[0], null, {exit: s[1], note: s[2] ? 'reused' : ''})).join('');
-        bubble('bot', steps + `<div class="md">${mdLite(m.answer || '(no content)')}</div>`, false); chatTurns++; chatSteps += (m.steps || []).length; }
+        bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>`, false); chatTurns++; chatSteps += (m.steps || []).length; }
     }
     saveChatId(sid); scrollChat(true);
   } catch(_){}
@@ -2159,6 +2164,13 @@ const queueWhy = r => r ? (QWHY[r] || r) : '';
 /* errors that mean the message never reached the model ("Not sent"); any other failure means it went out but no reply came back */
 const NOT_SENT = /^(TACC submission failed|Qwen on TACC is not connected|Qwen on TACC did not start|TACC stayed busy|Request failed|HTTP \d|the TACC session ended before the job started)/i;
 const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+/* the tutor's flags, as checked by the server: badge the first mention, mark every mention */
+const FCHK = {correct: ['ok', '✓ correct flag'], wrong: ['bad', '✗ wrong flag'], derived: ['ok', '✓ from command output'], unverified: ['warn', '? not verified']};
+function markFlags(html, checks){
+  for (const c of checks || []){ const f = Array.isArray(c) ? c[0] : c.flag, m = FCHK[Array.isArray(c) ? c[1] : c.status]; if (!f || !m) continue;
+    const e = esc(f), parts = html.split(e); if (parts.length < 2) continue;
+    html = parts.map((p, i) => i === 0 ? p : `<span class="fchk ${m[0]}">${e}</span>` + (i === 1 ? `<span class="fbadge ${m[0]}">${m[1]}</span>` : '') + p).join(''); }
+  return html; }
 function taccStage(ev){ const why = queueWhy(ev.reason);
   return ev.stage === 'hold' ? `waiting for ${ev.busy || 'the current job'} to finish`
     : ev.stage === 'uploading' ? 'uploading to TACC'
@@ -2295,10 +2307,12 @@ async function sendChat(){
     if (ev.type === 'chat_delta'){ if (!acc){ stage('Writing'); sent(); onHold('replying'); } acc += ev.text || ''; if (!raf) raf = requestAnimationFrame(paint); }
     else if (ev.type === 'chat_stage'){ const msg = taccStage(ev); stage(cap(msg)); onHold(msg); if (ev.stage === 'queued' || ev.stage === 'running') sent(); }
     else if (ev.type === 'chat_coach'){ if (ev.on) bot.insertAdjacentHTML('afterbegin', '<p class="note">Hint mode: flags are hidden in this reply.</p>'); }
+    else if (ev.type === 'chat_check'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } acc = ''; shown = 0; body.innerHTML = '';
+      stage('That flag did not check out; deriving it'); onHold('checking the flag'); }
     else if (ev.type === 'chat_tool'){ const holder = document.createElement('div'); holder.className = 'toolcall';
       holder.innerHTML = termBlock(ev.cmd, en(ev.output || '(no output)'), ev.cached ? {note: 'reused'} : {exit: ev.exit_code, ms: ev.duration_ms, note: ev.timed_out ? 'timed out' : ''});
       live.insertBefore(holder, attached ? body : null); stage('Ran ' + String(ev.cmd || '').slice(0, 48)); sent(); onHold('running commands'); chatSteps += 1; scrollChat(); }
-    else if (ev.type === 'chat_done'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = mdLite(ev.answer || '(no content)'); finish(); settle(true);
+    else if (ev.type === 'chat_done'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = markFlags(mdLite(ev.answer || '(no content)'), ev.flag_checks); finish(); settle(true);
       chatTurns = ev.turns || (chatTurns + 1); chatSteps = ev.total_steps || chatSteps; if (ev.session_id) saveChatId(ev.session_id);
       setStatus('Ready'); closed = true; es.close(); done(true); scrollChat(); }
     else if (ev.type === 'error'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = `<span class="bad">${esc(en(ev.message))}</span>`; finish(); settle(false, ev.message);

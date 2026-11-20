@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from . import storage
 
+import hashlib
 import json
 import re
 import threading
@@ -60,6 +61,45 @@ MASK = "picoCTF{***hidden in hint mode***}"
 
 def mask_flags(text: str) -> str:
     return FLAG_MASK.sub(MASK, text or "")
+
+
+# 讲解里常见的占位写法（picoCTF{...}、flag{<flag>}），不是在"报答案"，不核验
+_PLACEHOLDER = re.compile(r"\{\s*(\.\.\.|…|\*+|_+|x+|<[^>]*>|your[_ ]?flag|flag|\?+)\s*\}", re.I)
+
+
+def flag_claims(text: str) -> list[str]:
+    """回答里报出来的 flag（去重；占位符和提示模式的遮蔽串不算）。"""
+    out: list[str] = []
+    for m in FLAG_MASK.finditer(text or ""):
+        f = m.group(0)
+        if f != MASK and not _PLACEHOLDER.search(f) and f not in out:
+            out.append(f)
+    return out
+
+
+def check_claims(claims: list[str], task: "Task | None", seen: str) -> list[dict]:
+    """导师报的 flag 逐个核验——和求解一样"说了不算，要验"。
+
+    有 gold：按哈希判 correct / wrong（明文 gold 从不需要）。
+    没 gold（上传的题）：只能看出处——本会话哪条命令的真实输出里出现过就是 derived，否则 unverified。
+    """
+    gold = (task.gold_sha256 or "").strip() if task is not None else ""
+    out = []
+    for f in claims:
+        if gold:
+            status = "correct" if hashlib.sha256(f.strip().encode()).hexdigest() == gold else "wrong"
+        else:
+            status = "derived" if f in seen else "unverified"
+        out.append({"flag": f, "status": status})
+    return out
+
+
+def _check_note(bad: list[dict], tools: bool) -> str:
+    said = "; ".join(f"{c['flag']} " + ("does not match this challenge's answer" if c["status"] == "wrong"
+                                        else "did not appear in any command output") for c in bad)
+    how = ("Run the commands needed to derive it, then state only a flag that appears in their output."
+           if tools else "Commands are off in this chat, so explain how to derive it instead of stating a flag.")
+    return f"CHECK by FlagPilot: {said}. Do not guess flags. {how}"
 
 
 _COACH_RULE = (
@@ -132,6 +172,8 @@ class ChatReply:
     completion_tokens: int = 0
     wall_s: float = 0.0
     error: str = ""
+    # 回答里报出的每个 flag 的核验结果：correct / wrong（按 gold 哈希）、derived / unverified（按出处）
+    flag_checks: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -142,6 +184,7 @@ class ChatReply:
             "completion_tokens": self.completion_tokens,
             "wall_s": self.wall_s,
             "error": self.error,
+            "flag_checks": self.flag_checks,
         }
 
 
@@ -285,9 +328,46 @@ class ChatSession:
                               "content": text + (_COACH_RULE if coach else "") + nt})
         self._log({"type": "user", "turn": self.turns, "text": text[:4000],
                    "coach": coach})
+        self._rounds(reply, coach, nt, on_delta, hook)
 
+        # 导师报出的 flag 要核验：答错或来路不明时追加一轮，让它用命令推出来，而不是猜（2026-11-20 实测编过 flag）
+        if self.task is not None and not coach and not reply.error:
+            reply.flag_checks = check_claims(flag_claims(reply.answer), self.task, self._seen(text))
+            bad = [c for c in reply.flag_checks if c["status"] in ("wrong", "unverified")]
+            if bad:
+                if hook:
+                    hook({"type": "chat_check", "flags": bad, "retry": True})
+                self.messages.append({"role": "user", "content": _check_note(bad, self.use_tools) + nt})
+                reply.answer = ""
+                self._rounds(reply, coach, nt, on_delta, hook)
+                reply.flag_checks = check_claims(flag_claims(reply.answer), self.task, self._seen(text))
+
+        reply.wall_s = round(time.monotonic() - t0, 2)
+        if not reply.answer:
+            reply.answer = "(no content)"
+        if coach:
+            reply.answer = mask_flags(reply.answer)
+        # 答案落盘时保留完整文本（提示模式的脱敏已在上面做完）；
+        # 命令只记"命令 + 退出码 + 是否复用"，输出本身不进日志——
+        # 里面有可能是 flag，答疑日志不该成为第二个答案库。
+        self._log({"type": "reply", "turn": self.turns,
+                   "answer": reply.answer[:4000], "rounds": reply.rounds,
+                   "steps": [[s.cmd[:200], s.exit_code, bool(s.cached)] for s in reply.steps],
+                   "prompt_tokens": reply.prompt_tokens,
+                   "completion_tokens": reply.completion_tokens,
+                   "wall_s": reply.wall_s, "error": reply.error,
+                   "flag_checks": [[c["flag"][:120], c["status"]] for c in reply.flag_checks]})
+        return reply
+
+    def _seen(self, text: str) -> str:
+        """本会话里 flag 可能的出处：命令的真实输出，以及用户自己说过的话。"""
+        return "\n".join(self._ran.values()) + "\n" + text
+
+    def _rounds(self, reply: ChatReply, coach: bool, nt: str,
+                on_delta: Callable[[str], None] | None, hook: Callable[[dict], None] | None) -> None:
+        """模型 ↔ 命令的往返，最多 max_rounds 轮命令；最后一句不带命令的话就是回答。"""
         for rnd in range(self.max_rounds + 1):
-            reply.rounds = rnd + 1
+            reply.rounds += 1
             comp = self.client.complete(self.messages, on_delta=on_delta)
             reply.prompt_tokens += comp.prompt_tokens
             reply.completion_tokens += comp.completion_tokens
@@ -315,12 +395,12 @@ class ChatSession:
             for cmd in cmds[:MAX_CMDS_PER_ROUND]:
                 if cmd in self._ran:
                     out = self._ran[cmd]
-                    step = ToolStep(round=rnd + 1, cmd=cmd, exit_code=0,
+                    step = ToolStep(round=reply.rounds, cmd=cmd, exit_code=0,
                                     duration_ms=0, timed_out=False,
                                     output=out[:MAX_OBS_CHARS], cached=True)
                     reply.steps.append(step)
                     if hook:
-                        hook({"type": "chat_tool", "round": rnd + 1, "cmd": cmd,
+                        hook({"type": "chat_tool", "round": reply.rounds, "cmd": cmd,
                               "exit_code": 0, "timed_out": False, "duration_ms": 0,
                               "cached": True, "output": out[:MAX_OBS_CHARS]})
                     blocks.append(f"[命令] {cmd}\n（这条命令刚跑过，下面是上次的真实输出）\n{out[:MAX_OBS_CHARS]}")
@@ -331,13 +411,13 @@ class ChatSession:
                     # 连缓存一起脱敏：否则下一轮复用缓存又把明文放出来了
                     out = mask_flags(out)
                 self._ran[cmd] = out
-                step = ToolStep(round=rnd + 1, cmd=cmd, exit_code=res.exit_code,
+                step = ToolStep(round=reply.rounds, cmd=cmd, exit_code=res.exit_code,
                                 duration_ms=res.duration_ms, timed_out=res.timed_out,
                                 output=out[:MAX_OBS_CHARS])
                 reply.steps.append(step)
                 self.total_steps += 1
                 if hook:
-                    hook({"type": "chat_tool", "round": rnd + 1, "cmd": cmd,
+                    hook({"type": "chat_tool", "round": reply.rounds, "cmd": cmd,
                           "exit_code": res.exit_code, "timed_out": res.timed_out,
                           "duration_ms": res.duration_ms,
                           "output": out[:MAX_OBS_CHARS]})
@@ -352,22 +432,6 @@ class ChatSession:
                 "content": "OBSERVATION（真实输出，直接引用，不要编造）\n\n"
                            + "\n\n".join(blocks) + nt,
             })
-
-        reply.wall_s = round(time.monotonic() - t0, 2)
-        if not reply.answer:
-            reply.answer = "(no content)"
-        if coach:
-            reply.answer = mask_flags(reply.answer)
-        # 答案落盘时保留完整文本（提示模式的脱敏已在上面做完）；
-        # 命令只记"命令 + 退出码 + 是否复用"，输出本身不进日志——
-        # 里面有可能是 flag，答疑日志不该成为第二个答案库。
-        self._log({"type": "reply", "turn": self.turns,
-                   "answer": reply.answer[:4000], "rounds": reply.rounds,
-                   "steps": [[s.cmd[:200], s.exit_code, bool(s.cached)] for s in reply.steps],
-                   "prompt_tokens": reply.prompt_tokens,
-                   "completion_tokens": reply.completion_tokens,
-                   "wall_s": reply.wall_s, "error": reply.error})
-        return reply
 
     def reset(self) -> None:
         """新会话：内存清空，日志另起一份（旧的留档，不删）。"""
