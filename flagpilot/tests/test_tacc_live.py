@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import stat
 import sys
 import tempfile
@@ -41,10 +42,13 @@ case "$1" in
              printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\nINFO:     Application startup complete.\r\n' ;;
       batch) printf '[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
              printf '@@ev {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1, "wall_s": 2.0}\n[fp] done: /x\n' ;;
-      chat) printf '[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
+      chat) if [[ -n "${FAKE_QUEUE_CHAT:-}" ]]; then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
+            printf '[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
     esac ;;
   download) mkdir -p "${@: -1}/$(basename "${@: -2:1}")"; echo "download $*" >> "$st/record" ;;
-  cancel) echo "cancel $3" >> "$st/record" ;;
+  cancel) echo "cancel $3" >> "$st/record"
+          if [[ -z "${FAKE_CANCEL_STUCK:-}" && -f "$st/ps" ]]; then grep -v "^ *$3 " "$st/ps" > "$st/ps.new"; mv "$st/ps.new" "$st/ps"; fi ;;
+  ps) echo "             JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)"; cat "$st/ps" 2>/dev/null ;;
 esac
 """
 
@@ -166,9 +170,43 @@ class TaccLiveCase(unittest.TestCase):
         self.assertIsNone(tacc_live.run_task("demo-001", "B3", self.tmp / "runs", evs.append))
         self.assertIn("not connected", evs[0]["message"])
         self.ready()
+        # 另一个作业占着名额：这条答疑排队（hold），名额一空就接着交，而不是报 "busy"
         tacc_live.S["busy"] = "solving x"
-        self.assertIn("busy", tacc_live.chat("hi", [], "", True, lambda t: None, lambda e: None)["error"])
-        tacc_live.S["busy"] = ""
+        threading.Timer(0.3, lambda: tacc_live.S.update(busy="")).start()
+        stages = []
+        rep = tacc_live.chat("hi", [], "", True, lambda t: None, lambda e: None, stages.append)
+        self.assertEqual(rep["answer"], "Hello from Qwen")
+        self.assertEqual(stages[0], {"stage": "hold", "busy": "solving x"})
+        self.assertEqual([x["stage"] for x in stages[1:4]], ["uploading", "queued", "running"])
+        # 排队时会话结束：放弃，不会一直挂着
+        tacc_live.S["busy"] = "a chat reply"
+        threading.Timer(0.3, lambda: tacc_live.S.update(phase="idle")).start()
+        self.assertIn("not connected", tacc_live.chat("hi", [], "", True, lambda t: None, lambda e: None)["error"])
+        tacc_live.S.update(busy="", phase="ready")
+
+    def test_queue_reason_and_session_end_cancel_the_waiting_job(self):
+        """作业排队时告诉页面为什么（个人名额满 / 没空 GPU）；会话到点时取消还在排队的作业，免得它之后白占名额。"""
+        self.ready()
+        st = self.tmp / "state"
+        os.environ["FAKE_QUEUE_CHAT"] = "1"          # 答疑作业一直不开跑
+        (st / "ps").write_text("             502      tacc run.slur   yliutz PD       0:00      1 (QOSMaxJobsPerUserLimit)\n")
+        stages = []
+        threading.Timer(0.6, lambda: tacc_live.S.update(phase="idle")).start()
+        with mock.patch.object(tacc_live, "REASON_EVERY_S", 0):
+            rep = tacc_live.chat("hi", [], "", True, lambda t: None, lambda e: None, stages.append)
+        self.assertIn({"stage": "queued", "job": "502", "reason": "QOSMaxJobsPerUserLimit"}, stages)
+        self.assertEqual(rep["error"], "the TACC session ended before the job started")
+        self.assertIn("cancel 502", self.record())
+        self.assertNotIn("502", (st / "ps").read_text())   # 确认取消生效（ps 里已经没有它）
+
+    def test_cancel_is_verified(self):
+        st = self.tmp / "state"
+        (st / "ps").write_text("             777      tacc run.slur   yliutz  R      10:00      1 10-0-3-11\n")
+        self.assertTrue(tacc_live._cancel("777"))
+        (st / "ps").write_text("             778      tacc run.slur   yliutz  R      10:00      1 10-0-3-11\n")
+        os.environ["FAKE_CANCEL_STUCK"] = "1"
+        self.assertFalse(tacc_live._cancel("778"))
+        self.assertIn("tcloud cancel -j 778", tacc_live.status()["log"][-1])     # 告诉人怎么手动收尾
 
 
 class TaccChatHTTP(unittest.TestCase):

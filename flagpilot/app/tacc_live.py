@@ -25,7 +25,8 @@ BAD_NODES = "10-0-1-10,10-0-1-11,10-0-4-10"     # 2026-11 实测有 Slurm 管不
 SESSION_S = 3600 - 180                            # 分区上限 1 小时，留 3 分钟收尾
 BOOT_MARGIN_S = 60                                # 分到节点后、作业第一行输出前的激活时间（偏大估计）
 _L = threading.Lock()
-S: dict = {"phase": "idle", "serve": None, "node": None, "url": "", "t0": 0.0, "ready": 0.0, "log": [], "busy": "", "error": ""}
+S: dict = {"phase": "idle", "serve": None, "node": None, "url": "", "t0": 0.0, "ready": 0.0, "log": [], "busy": "", "error": "",
+          "queue": ""}
 
 
 def _tc() -> str:
@@ -100,6 +101,34 @@ def _stage_upload(task: str, root: Path) -> str:
     return alias
 
 
+def _queue_reason(jid: str) -> str:
+    """作业还没开跑时问一次 Slurm 为什么：QOSMaxJobsPerUserLimit（个人并发名额满）、Resources（没空 GPU）等。
+
+    开跑了、已结束或查不到都返回空串。每次是一趟 SSH（约 1–2 秒），只在排队时隔一阵问一次。
+    """
+    for line in _sdk("ps", timeout=60).splitlines():
+        cols = line.split()
+        if cols and cols[0] == jid and len(cols) >= 6:
+            return cols[-1].strip("()") if cols[4] == "PD" else ""
+    return ""
+
+
+def _gone(jid: str) -> bool:
+    return not any(l.split()[:1] == [jid] for l in _sdk("ps", timeout=60).splitlines())
+
+
+def _cancel(jid: str) -> bool:
+    """取消并核实。以前只发一次 cancel、不看结果：SDK 一抖，作业就在后台占着 GPU 和个人名额跑满 1 小时。"""
+    for _ in range(3):
+        _sdk("cancel", "-j", jid)
+        for _ in range(3):
+            if _gone(jid):
+                return True
+            time.sleep(float(os.environ.get("FLAGPILOT_TACC_POLL", "15")) / 5)
+    _log(f"job {jid} may still be running; cancel it with: tcloud cancel -j {jid}")
+    return False
+
+
 def _log(msg: str) -> None:
     with _L:
         S["log"].append(time.strftime("%H:%M:%S ") + msg)
@@ -117,7 +146,7 @@ def start() -> dict:
     with _L:
         if S["phase"] in ("starting", "ready"):
             return {"ok": True, "phase": S["phase"]}
-        S.update(phase="starting", serve=None, node=None, url="", t0=time.time(), ready=0.0, error="", log=[])
+        S.update(phase="starting", serve=None, node=None, url="", t0=time.time(), ready=0.0, error="", log=[], queue="")
     threading.Thread(target=_serve_loop, daemon=True).start()
     return {"ok": True, "phase": "starting"}
 
@@ -144,10 +173,10 @@ def _serve_loop() -> None:
         deadline, retry, quiet, running = time.time() + 45 * 60, False, t_sub, False
         while time.time() < deadline:
             if S["phase"] == "stopping":
-                _sdk("cancel", "-j", jid)
+                _cancel(jid)
                 _log(f"serve job {jid} cancelled")
                 with _L:
-                    S.update(phase="idle", serve=None)
+                    S.update(phase="idle", serve=None, queue="")
                 return
             time.sleep(poll)
             t_ask = time.time()
@@ -156,9 +185,14 @@ def _serve_loop() -> None:
                 if "SDK_BOOTSTRAP=" in L:
                     running = True
                     with _L:
-                        S["t0"] = max(t_sub, quiet - BOOT_MARGIN_S)
+                        S.update(t0=max(t_sub, quiet - BOOT_MARGIN_S), queue="")
                 else:
                     quiet = t_ask
+                    why = _queue_reason(jid)
+                    with _L:
+                        S["queue"] = why
+            if S["phase"] == "stopping":                 # 睡眠期间点了断开：别再把它改回 ready
+                continue
             m = re.search(r"SERVICE_BASE_URL=(http://([^:\s]+):\d+/v1)", L)
             if "PRECHECK_FAIL" in L:
                 node = (re.search(r"PRECHECK_FAIL node=([^:\s]+)", L) or [None, ""])[1]
@@ -168,7 +202,9 @@ def _serve_loop() -> None:
                 break
             if "Application startup complete" in L and m:
                 with _L:
-                    S.update(phase="ready", url=m.group(1), node=m.group(2), ready=time.time())
+                    if S["phase"] != "starting":
+                        continue
+                    S.update(phase="ready", url=m.group(1), node=m.group(2), ready=time.time(), queue="")
                 _log(f"Qwen 27B ready on {m.group(2)}")
                 threading.Thread(target=_watchdog, args=(jid,), daemon=True).start()
                 return
@@ -180,7 +216,8 @@ def _serve_loop() -> None:
                     break
                 _sdk("cancel", "-j", jid)
                 return _fail(f"serve job {jid} failed")
-            _log(f"waiting for serve {jid}" + (f" on {m.group(2)}" if m else " (starting)" if running else " (queued)"))
+            _log(f"waiting for serve {jid}" + (f" on {m.group(2)}" if m else " (starting)" if running
+                                                 else f" (queued: {S['queue']})" if S["queue"] else " (queued)"))
         if not retry:
             _sdk("cancel", "-j", jid)
             return _fail(f"serve job {jid} not ready within 45 min (cluster busy)")
@@ -208,20 +245,33 @@ def stop() -> dict:
             return {"ok": True}
         if ph != "ready":
             return {"ok": True}
-        S.update(phase="idle", url="", serve=None, node=None)
-    _sdk("cancel", "-j", jid)
-    _log(f"serve job {jid} cancelled")
-    return {"ok": True}
+        S.update(phase="idle", url="", serve=None, node=None, queue="")
+    ok = _cancel(jid)
+    _log(f"serve job {jid} cancelled" if ok else f"serve job {jid}: cancel not confirmed")
+    return {"ok": True, "cancelled": ok}
 
 
-def _claim(what: str) -> str:
-    with _L:
-        if S["phase"] != "ready":
-            return "Qwen on TACC is not connected"
-        if S["busy"]:
-            return f"TACC is busy with {S['busy']}; one job at a time"
-        S["busy"] = what
-    return ""
+def _claim(what: str, on_wait: Callable[[str], None] | None = None, timeout: float = 20 * 60) -> str:
+    """占用"客户端作业"这一个名额（平台上客户端作业共用一个工作目录，只能一个一个来）。
+
+    被占着就排队等（以前直接报 "TACC is busy"，单题和答疑撞上就白白失败），on_wait 收到"在等谁"；
+    会话结束或等太久才放弃。
+    """
+    t_end, told = time.time() + timeout, ""
+    while True:
+        with _L:
+            if S["phase"] != "ready":
+                return "Qwen on TACC is not connected"
+            if not S["busy"]:
+                S["busy"] = what
+                return ""
+            busy = S["busy"]
+        if time.time() > t_end:
+            return f"TACC stayed busy with {busy}"
+        if on_wait and busy != told:
+            on_wait(busy)
+            told = busy
+        time.sleep(min(1.0, float(os.environ.get("FLAGPILOT_TACC_TICK", "3"))))
 
 
 def _release() -> None:
@@ -229,9 +279,31 @@ def _release() -> None:
         S["busy"] = ""
 
 
+REASON_EVERY_S = 15      # 排队时多久问一次 Slurm 原因
+
+
+def _waiting(jid: str, started: bool, last: dict, emit: Callable[[str], None]) -> str:
+    """作业等着开跑时的公共检查。返回放弃的原因（空串 = 继续等）。
+
+    会话结束（到点或被断开）还在等的作业永远等不到服务，直接取消，免得它之后开跑、白占名额；
+    还没开跑就隔一阵问一次排队原因，变了才通知。
+    """
+    if S["phase"] != "ready":
+        _cancel(jid)
+        return "the TACC session ended before the job " + ("finished" if started else "started")
+    if not started and time.time() - last.get("t", 0) >= REASON_EVERY_S:
+        last["t"] = time.time()
+        why = _queue_reason(jid)
+        if why != last.get("why"):
+            last["why"] = why
+            if why:
+                emit(why)
+    return ""
+
+
 def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], None]) -> Path | None:
     """单题：提交批次作业（只带这一道题），跟着日志把事件交给 on_event；结束后把运行目录下载回来。"""
-    err = _claim(f"solving {task}")
+    err = _claim(f"solving {task}", on_wait=lambda b: on_event({"type": "tacc", "stage": "hold", "busy": b}))
     if err:
         on_event({"type": "error", "message": err})
         return None
@@ -250,9 +322,13 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
             on_event({"type": "error", "message": "TACC submission failed" + (f": {why}" if why else "")})
             return None
         on_event({"type": "tacc", "stage": "queued", "job": jid})
-        seen, t_end, started = 0, time.time() + 30 * 60, False
+        seen, t_end, started, last, finished = 0, time.time() + 30 * 60, False, {}, False
         while time.time() < t_end:
             time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "4")))
+            gave_up = _waiting(jid, started, last, lambda why: on_event({"type": "tacc", "stage": "queued", "job": jid, "reason": why}))
+            if gave_up:
+                on_event({"type": "error", "message": gave_up})
+                return None
             L = _sdk("cat", f"slurm_log/flagpilot-client-{jid}.log")
             if not started and "[fp] job=" in L:
                 started = True
@@ -265,7 +341,12 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
                     pass
             seen = len(evs)
             if "[fp] done:" in L or "srun: error" in L or "CANCELLED" in L:
+                finished = True
                 break
+        if not finished:
+            _cancel(jid)
+            on_event({"type": "error", "message": "no result within 30 minutes; the job was cancelled"})
+            return None
         out = Path(runs_root) / "tacc" / batch
         out.mkdir(parents=True, exist_ok=True)
         _sdk("download", "-r", f"flagpilot-runs/{batch}-{tier}", str(out) + "/", timeout=300)
@@ -282,7 +363,7 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
     on_stage 收到 uploading → queued（带作业号）→ running（带节点），网页在"三个点"展开后显示。
     """
     stage = on_stage or (lambda ev: None)
-    err = _claim("a chat reply")
+    err = _claim("a chat reply", on_wait=lambda b: stage({"stage": "hold", "busy": b}))
     if err:
         return {"error": err, "answer": ""}
     try:
@@ -299,9 +380,12 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
         if not jid:
             return {"error": "TACC submission failed" + (f": {why}" if why else ""), "answer": ""}
         stage({"stage": "queued", "job": jid})
-        sent, seen_tools, running, t_end = 0, 0, False, time.time() + 15 * 60
+        sent, seen_tools, running, t_end, last = 0, 0, False, time.time() + 15 * 60, {}
         while time.time() < t_end:
             time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "3")))
+            gave_up = _waiting(jid, running, last, lambda why: stage({"stage": "queued", "job": jid, "reason": why}))
+            if gave_up:
+                return {"error": gave_up, "answer": ""}
             L = _sdk("cat", f"slurm_log/flagpilot-client-{jid}.log")
             if not running and "[fp] job=" in L:
                 running = True
@@ -320,6 +404,7 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
                 return json.loads(rep[-1][8:])
             if "[fp] done: chat" in L or "srun: error" in L or "CANCELLED" in L:
                 return {"error": "the TACC job ended without a reply", "answer": ""}
-        return {"error": "no reply within 15 minutes", "answer": ""}
+        _cancel(jid)                                     # 别让它之后开跑、白占名额
+        return {"error": "no reply within 15 minutes; the job was cancelled", "answer": ""}
     finally:
         _release()

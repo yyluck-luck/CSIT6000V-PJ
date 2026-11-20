@@ -856,6 +856,7 @@ def _tacc_worker(run_id: str, task_name: str, ablate: str | None) -> None:
     cond, events = st["cond"], st["events"]
     tier = str(ablate or SETTINGS["ablation"] or "B3").upper()
     summary: dict = {}
+    failed: list = []
 
     def push(ev: dict) -> None:
         with cond:
@@ -865,11 +866,14 @@ def _tacc_worker(run_id: str, task_name: str, ablate: str | None) -> None:
     def on_event(ev: dict) -> None:
         if ev.get("type") == "summary":
             summary.update(ev)
+        elif ev.get("type") == "error":
+            failed.append(str(ev.get("message") or ""))
         push(ev)
 
     try:
         d = tacc_live.run_task(task_name, tier, config.RUNS_ROOT, on_event)
-        res = dict(summary) or {"verdict": "error", "reason": "the TACC job returned no result", "turns": 0}
+        res = dict(summary) or {"verdict": "error", "reason": (failed[-1] if failed else "") or "the TACC job returned no result",
+                                "turns": 0}
         res.pop("type", None)
         done = {"type": "done", **res, "ablation": tier, "model": "qwen3.8-27b (TACC)", "task": task_name,
                 "e2e_s": round(time.time() - st.get("t0", time.time()), 2)}
