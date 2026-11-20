@@ -8,7 +8,8 @@
 # batch 的参数用环境变量给：
 #   FP_BATCH（默认 tacc-smoke）  FP_SPLIT（默认 dev）  FP_LIMIT  FP_TASKS（逗号分隔题名）
 #   FP_WORKERS（默认 4，不能超过服务端 --max-num-seqs 4）  FP_TURNS（20）  FP_SEEDS（1）
-#   FP_TIME（客户端时长，默认 00:45:00，不能超过分区上限 1h）  FP_DRY_RUN=1（只暂存不提交）
+#   FP_TIME（客户端时长，默认 00:45:00，不能超过分区上限 1h）  FP_DRY_RUN=1（只暂存不提交，暂存目录保留）
+#   FP_KEEP_STAGE=1（提交后保留本机暂存目录；默认交完即删）
 #   FP_ABLATIONS=B0,B1,B2,B3（同一个服务上依次跑多档，批次名 <FP_BATCH>-<档>；空=单批、默认档）
 #   FP_ORDER（lpt|fifo，默认 lpt：预计最慢的题先跑）  FP_LIMIT=0 表示不限题数
 #   FP_DEADLINE_EPOCH（服务作业的结束时刻；pipeline.sh 自动给，客户端据此决定下一档还来不来得及）
@@ -29,7 +30,11 @@ command -v tcloud >/dev/null || { echo "找不到 tcloud（课程 SDK v0.4.1）"
 # SDK 拿本地目录名当集群上的 WORKDIR 名：名字固定，重复提交覆盖同一份，
 # 不会每交一次就在 /mnt/home（已满）多留 73M。代价是同一时间只能跑一个客户端作业。
 case "$MODE" in serve) NAME=qwen-public-serve ;; *) NAME=flagpilot-client ;; esac
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/fp-tcloud-XXXXXX")/${NAME}"
+STAGE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/fp-tcloud-XXXXXX")"
+# 本机暂存用完即删（中途出错退出也删）：网页的每条答疑、每次单题都会交一次，不删会在 TMPDIR 里
+# 越积越多（单题约 15M，整批约 88M）。dry run 与 FP_KEEP_STAGE=1 保留，便于排查。
+[[ "${FP_KEEP_STAGE:-0}" == "1" ]] || trap '[[ "${STAGE_ROOT:-}" == */fp-tcloud-* && -d "$STAGE_ROOT" ]] && rm -rf "$STAGE_ROOT"' EXIT
+STAGE="${STAGE_ROOT}/${NAME}"
 mkdir -p "$STAGE"
 case "$MODE" in
   serve)
@@ -110,9 +115,15 @@ PY
     fi
     SPLIT="${FP_SPLIT:-dev}"
     if [[ "$MODE" != "chat" && "$SPLIT" != "all" && ! -f "$STAGE/tasks/index/splits.json" ]]; then
-      # 题库里没有划分文件（团队尚未冻结）：用同一个确定性生成器现场生成 proposed 划分。
-      python3 "$ROOT/scripts/make_split.py" --root "$STAGE/tasks" --seed 0 \
-        --out "$STAGE/tasks/index/splits.json" >/dev/null
+      if [[ -f "$ROOT/docs/splits-picoctf-53.json" ]]; then
+        # 团队冻结的划分（docs/EVALUATION_BASELINE.md）原样带上。题库索引若与它不符，
+        # 作业里的 CLI 会发现：dev 警告，test 拒跑——现场重新生成就会悄悄换成另一种划分。
+        cp "$ROOT/docs/splits-picoctf-53.json" "$STAGE/tasks/index/splits.json"
+      else
+        # 还没有冻结的划分：用同一个确定性生成器现场生成 proposed 划分。
+        python3 "$ROOT/scripts/make_split.py" --root "$STAGE/tasks" --seed 0 \
+          --out "$STAGE/tasks/index/splits.json" >/dev/null
+      fi
     fi
     WORKERS="${FP_WORKERS:-4}"
     (( WORKERS <= 4 )) || { echo "FP_WORKERS=$WORKERS 超过课程服务的 4 并发上限" >&2; exit 1; }
@@ -168,7 +179,7 @@ if [[ -n "${FP_EXCLUDE:-}" ]]; then
   printf '    - exclude=%s\n' "$FP_EXCLUDE" >> "$STAGE/tuxiv.conf"
 fi
 
-if [[ "${FP_DRY_RUN:-0}" == "1" ]]; then echo "[tcloud] dry run，未提交：$STAGE"; exit 0; fi
+if [[ "${FP_DRY_RUN:-0}" == "1" ]]; then trap - EXIT; echo "[tcloud] dry run，未提交：$STAGE"; exit 0; fi
 echo "[tcloud] 暂存目录 ${STAGE}，提交中…"
 cd "$STAGE"
 tcloud submit
