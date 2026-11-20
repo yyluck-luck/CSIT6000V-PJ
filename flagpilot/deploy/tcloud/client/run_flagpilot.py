@@ -6,6 +6,8 @@ import os
 import runpy
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+here = os.path.dirname(os.path.abspath(__file__))
+pkg = os.path.join(here, "flagpilot.zip")     # submit.sh 把包打成一个 zip（少传 27 个文件）；没有就用目录
+sys.path.insert(0, pkg if os.path.exists(pkg) else here)
 sys.argv = ["flagpilot"] + sys.argv[1:]
 runpy.run_module("flagpilot", run_name="__main__", alter_sys=True)

@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SUBMIT = ROOT / "deploy" / "tcloud" / "submit.sh"
 FAKE_TCLOUD = """#!/bin/sh
 ls > "$FAKE_DIR/listing"
+cp payload.tgz "$FAKE_DIR/" 2>/dev/null
 echo "Submitted batch job 999"
 exit "${FAKE_RC:-0}"
 """
@@ -64,6 +65,39 @@ class TestSubmitStageCleanup(unittest.TestCase):
         self.assertIn("Submitted batch job 999", r.stdout)
         self.assertTrue((self.tmp / "listing").read_text().strip(), "提交时暂存目录应当还在")
         self.assertEqual(left, [])
+
+    def test_code_ships_as_one_zip_and_runs_from_it(self):
+        """SDK 按文件逐个上传（实测答疑作业 37 个文件、提交 35 s）：代码合成一个 flagpilot.zip，作业从 zip 里 import。"""
+        import sys
+        r, left = self.submit(FP_DRY_RUN="1")
+        self.assertEqual((r.returncode, len(left)), (0, 1), r.stderr[-400:])
+        stage = left[0] / "flagpilot-client"
+        self.assertTrue((stage / "flagpilot.zip").is_file())
+        self.assertFalse((stage / "flagpilot").exists())
+        probe = ("import runpy, sys; sys.argv = ['run_flagpilot.py', '--help'];"
+                 "runpy.run_path('run_flagpilot.py', run_name='__main__')")
+        p = subprocess.run([sys.executable, "-I", "-c", probe], cwd=str(stage), capture_output=True, text=True, timeout=60,
+                           env={"PATH": os.environ.get("PATH", ""), "HOME": str(self.tmp)})
+        self.assertEqual(p.returncode, 0, p.stderr[-400:])
+        import zipfile
+        with zipfile.ZipFile(stage / "flagpilot.zip") as z:
+            names = z.namelist()
+        self.assertIn("flagpilot/__main__.py", names)
+        self.assertFalse(any("__pycache__" in n or n.endswith(".pyc") for n in names))
+
+    def test_upload_is_four_files(self):
+        """提交那一刻只剩 SDK 要读的三个文件 + 一个 payload.tgz（以前带随包库的单题作业 200 多个文件、逐个上传）。"""
+        import tarfile
+        r, left = self.submit()
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        listing = sorted((self.tmp / "listing").read_text().split())
+        self.assertEqual(listing, ["job.sh", "payload.tgz", "run.env", "tuxiv.conf"])
+        with tarfile.open(self.tmp / "payload.tgz") as tf:
+            names = [n.removeprefix("./") for n in tf.getnames()]
+        for want in ("flagpilot.zip", "run_flagpilot.py", "bin/xxd", "bin/exiftool"):
+            self.assertIn(want, names)
+        self.assertFalse(any(n.split("/")[-1].startswith("._") for n in names), "macOS ._ 元数据混进了包")
+        self.assertFalse(any("_private" in n or "gold_private" in n for n in names))
 
     def test_failed_submit_keeps_exit_code_and_still_cleans(self):
         r, left = self.submit(FAKE_RC="3")
@@ -146,6 +180,23 @@ class TestJobCleanupTrap(unittest.TestCase):
         line = next(l for l in self.JOB.read_text(encoding="utf-8").splitlines() if l.startswith("trap ") and "EXIT" in l)
         self.assertEqual(self.run_with(line, 0), (0, False))
         self.assertEqual(self.run_with(line, 3), (3, False))
+
+    def test_job_unpacks_the_payload_first(self):
+        """job.sh 开头那行原样拿出来跑：解开 payload.tgz 并删掉它（/mnt/home 已满，不留双份）。"""
+        import tarfile
+        lines = self.JOB.read_text(encoding="utf-8").splitlines()
+        line = next(l for l in lines if "payload.tgz" in l and l.startswith("if "))
+        self.assertLess(lines.index(line), next(i for i, l in enumerate(lines) if l.startswith("source ./run.env")))
+        work = self.tmp / "workdir"
+        (work / "src" / "bin").mkdir(parents=True)
+        (work / "src" / "bin" / "xxd").write_text("x")
+        with tarfile.open(work / "payload.tgz", "w:gz") as tf:
+            tf.add(work / "src" / "bin", arcname="./bin")
+        shutil.rmtree(work / "src")
+        r = subprocess.run(["bash", "-c", f"set -euo pipefail\ncd {work}\n{line}\n"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((work / "bin" / "xxd").exists())
+        self.assertFalse((work / "payload.tgz").exists())
 
     def test_old_trap_shows_the_bug(self):
         self.assertEqual(self.run_with(self.OLD, 0), (1, True))     # 这就是作业日志里的 srun: error

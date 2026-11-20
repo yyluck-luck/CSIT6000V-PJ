@@ -76,7 +76,17 @@ print("[tcloud] 随包 Python 库：" + (", ".join("-".join(w.name.split("-")[:2
 PY
     fi
     # 代码 + 题库。答案表与题解目录一律不进包——和 deploy/upload.sh 同一条硬规则。
-    tar -C "$ROOT" --exclude='__pycache__' --exclude='*.pyc' -cf - flagpilot | tar -C "$STAGE" -xf -
+    # 代码打成一个 flagpilot.zip，Python 直接从 zip 里 import（run_flagpilot.py）。SDK 上传是按文件一个个走的：
+    # 2026-11-20 实测答疑作业 37 个文件、提交 35 s，其中 28 个是这个包——合成一个文件就省掉了大半。
+    python3 - "$ROOT/flagpilot" "$STAGE/flagpilot.zip" <<'PY'
+import sys, zipfile
+from pathlib import Path
+src, out = Path(sys.argv[1]), sys.argv[2]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for f in sorted(src.rglob("*")):
+        if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc":
+            z.write(f, "flagpilot/" + f.relative_to(src).as_posix())
+PY
     ONLY="${FP_TASKS:-}"; [[ "$MODE" == "chat" ]] && ONLY="${FP_CHAT_TASK:-}"
     if [[ "$MODE" == "chat" && -z "$ONLY" ]]; then
       :   # 不挂题的答疑：不带题库
@@ -180,6 +190,12 @@ if [[ -n "${FP_EXCLUDE:-}" ]]; then
 fi
 
 if [[ "${FP_DRY_RUN:-0}" == "1" ]]; then trap - EXIT; echo "[tcloud] dry run，未提交：$STAGE"; exit 0; fi
+if [[ "$MODE" != serve ]]; then
+  # SDK 上传是按文件逐个走一趟的（2026-11-20 实测每个约 0.7 s；带随包库的单题作业有 200 多个文件，光传就要两分钟）。
+  # 除了 SDK 自己要读的 tuxiv.conf、作业入口 job.sh 和 run.env，其余打成一个 payload.tgz，job.sh 开头解开。
+  # COPYFILE_DISABLE：macOS 的 tar 默认给每个文件附一份 ._* 扩展属性，解到 Linux 上全是垃圾（GNU tar 忽略这个变量）
+  (cd "$STAGE" && set -- $(ls -A | grep -v -x -e tuxiv.conf -e job.sh -e run.env) && COPYFILE_DISABLE=1 tar -czf payload.tgz "$@" && rm -rf -- "$@")
+fi
 echo "[tcloud] 暂存目录 ${STAGE}，提交中…"
 cd "$STAGE"
 tcloud submit

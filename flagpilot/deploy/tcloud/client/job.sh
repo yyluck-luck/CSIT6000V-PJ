@@ -16,6 +16,8 @@ trap 'rc=$?; if [[ -n "${QWEN_RUN_DIR:-}" && -d "$QWEN_RUN_DIR" ]]; then chmod -
 trap 'exit 143' TERM
 trap 'exit 130' INT
 cd "$TACC_WORKDIR"
+# submit.sh 把代码、题目、随包库打成一个 payload.tgz（SDK 逐个文件上传，散着传要几十秒到两分钟）：先解开
+if [[ -f payload.tgz ]]; then tar -xzf payload.tgz && rm -f payload.tgz; fi
 # shellcheck disable=SC1091
 source ./run.env
 
