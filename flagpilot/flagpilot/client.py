@@ -23,6 +23,38 @@ from .config import ModelSpec
 
 FLAG_RE = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}\n]{1,120}\}")
 
+# "输入 + max_tokens 超过上下文"的 400。vLLM / OpenAI / SGLang / DeepSeek 都用这句话报。
+_CTX_LIMIT = re.compile(r"maximum context length (?:is|of) (\d+)", re.I)
+# 输入 token 数，各家原文：
+#   vLLM 0.26（课程 TACC 上的版本，renderers/params.py）："... you requested 4096 output tokens and
+#     your prompt contains 29000 input tokens, for a total of 33096 tokens."
+#     写成 "contains at least N" 时 prompt 已被分词器截断，N 只是下限，不能拿来算 → 不匹配，走减半；
+#   vLLM 0.6–0.1x："your request has 29000 input tokens (4096 > 32768 - 29000)"；
+#   更早的 vLLM："(29000 in the messages, 4096 in the completion)" / "33000 tokens in the messages"；
+#   SGLang："29000 tokens from the input"；OpenAI："your messages resulted in 29000 tokens"。
+_CTX_INPUT = re.compile(r"prompt contains (\d+) input tokens|request has (\d+) input tokens|"
+                        r"(\d+) (?:tokens )?in the messages|(\d+) tokens from the input|"
+                        r"messages resulted in (\d+) tokens", re.I)
+MIN_FIT_TOKENS = 256        # 比这还小就不值得再要一轮了：上下文已经满了
+MAX_FIT_RETRIES = 2
+
+
+def fit_after_overflow(detail: str, asked: int) -> int | None:
+    """这个 400 是不是"上下文放不下这么多输出"。不是 → None；是 → 本轮还能要多少 token。
+
+    读得出上限与输入 token 就精确算（留 8 个余量），读不出或算出来不比原值小就减半，
+    保证每次重试都严格变小。结果可能低于 MIN_FIT_TOKENS，由调用方决定放弃。
+    """
+    m = _CTX_LIMIT.search(detail or "")
+    if not m:
+        return None
+    i = _CTX_INPUT.search(detail)
+    if i:
+        fit = int(m.group(1)) - int(next(g for g in i.groups() if g)) - 8
+        if fit < asked:
+            return fit
+    return asked // 2
+
 
 @dataclass
 class Completion:
@@ -35,6 +67,9 @@ class Completion:
     usage_source: str = "reported"  # reported | estimated
     error: str = ""
     note: str = ""
+    # 这次请求实际发出的 max_tokens。上下文放不下时客户端会把它调小再试，
+    # 截断判定要按这个值，而不是配置里的值。0 = 未知（mock 等）。
+    max_tokens: int = 0
     # Ollama 等运行时会单独返回思维链，正文可能为空。留档用于诊断。
     reasoning: str = ""
     # 服务端回报的前缀缓存命中 / 未命中 prompt token（DeepSeek：prompt_cache_hit_tokens /
@@ -88,6 +123,8 @@ class ChatClient:
         messages: list[dict],
         max_tokens: int | None = None,
         on_delta: Callable[[str], None] | None = None,
+        *,
+        _fit_retries: int = 0,
     ) -> Completion:
         """发一轮请求。
 
@@ -176,6 +213,17 @@ class ChatClient:
             finally:
                 # HTTPError 自己持有响应体（3.12 起是临时文件包装），不关就漏一个句柄。
                 e.close()
+            fit = fit_after_overflow(detail, payload["max_tokens"]) if e.code == 400 else None
+            if fit is not None:
+                # 输入 + max_tokens 超过上下文：和 chat_template_kwargs 无关，绝不能走下面的降级
+                # （那会永久关掉思考开关，这一轮照样失败）。按服务端给的数字把本轮上限调小再试。
+                if fit >= MIN_FIT_TOKENS and _fit_retries < MAX_FIT_RETRIES:
+                    retry = self.complete(messages, fit, on_delta=on_delta, _fit_retries=_fit_retries + 1)
+                    retry.note = (retry.note + " " if retry.note else "") + \
+                        f"上下文放不下 max_tokens={payload['max_tokens']}，本轮降到 {fit}"
+                    return retry
+                return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
+                                  error=f"HTTP {e.code}: {detail}", max_tokens=payload["max_tokens"])
             if e.code == 400 and not self._no_template_kwargs and self.spec.provider != "deepseek":
                 # 大概率是 chat_template_kwargs 不被接受：降级后重试一次
                 self._no_template_kwargs = True
@@ -218,6 +266,7 @@ class ChatClient:
             finish_reason=finish,
             usage_source=src,
             note=note,
+            max_tokens=payload["max_tokens"],
             reasoning=reasoning[:2000],
             cache_hit_tokens=hit,
             cache_miss_tokens=miss,

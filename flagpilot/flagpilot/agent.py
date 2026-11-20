@@ -523,6 +523,9 @@ def run_attempt(
         else:
             # 绑定本轮轮次：回调晚到（流结束后才被调度）也不会记到下一轮头上
             comp = active.complete(messages, on_delta=lambda s, _t=turns: on_delta(_t, s))
+        # 上下文放不下时客户端会临时调小本轮上限（client.fit_after_overflow）：
+        # 截断判定和纠正语都要按实际发出的那个值，并在 model 事件里留下记录。
+        sent_max = int(getattr(comp, "max_tokens", 0) or 0) or turn_max
         sum_prompt += comp.prompt_tokens
         sum_completion += comp.completion_tokens
         # L 与 H 分开记账：E4 要比的是 "verified solves vs hosted tokens and cost"，
@@ -556,7 +559,9 @@ def run_attempt(
             cache_miss_tokens=comp.cache_miss_tokens,
             error=comp.error,
             text=comp.text[:4000],
+            **({"max_tokens": sent_max} if sent_max != turn_max else {}),
         )
+        turn_max = sent_max
 
         if comp.error:
             verdict, reason = "error", f"model: {comp.error[:200]}"

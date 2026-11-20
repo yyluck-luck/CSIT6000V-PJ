@@ -211,5 +211,125 @@ class TestErrorResponseClosed(unittest.TestCase):
         self.assertEqual(closed, [400, 400], "降级前后两次 400 都得关掉")
 
 
+OVERFLOW = {"limit": 32768, "input": 29000, "fmt": "v026"}
+MESSAGES = {
+    # 课程 TACC 上的 vLLM 0.26.0（vllm/renderers/params.py::_token_len_check）原文
+    "v026": "This model's maximum context length is {limit} tokens. However, you requested {m} output tokens "
+            "and your prompt contains {inp} input tokens, for a total of {tot} tokens. Please reduce the length "
+            "of the input prompt or the number of requested output tokens.",
+    # 同一处在 prompt 被分词器截断时的写法：N 只是下限
+    "v026_atleast": "This model's maximum context length is {limit} tokens. However, you requested {m} output "
+                    "tokens and your prompt contains at least {inp} input tokens, for a total of at least {tot} "
+                    "tokens. Please reduce the length of the input prompt or the number of requested output tokens.",
+    # vLLM 0.6–0.1x 与更早版本（serving_engine._validate_input）
+    "new": "'max_tokens' or 'max_completion_tokens' is too large: {m}. This model's maximum context length is "
+           "{limit} tokens and your request has {inp} input tokens ({m} > {limit} - {inp}).",
+    "old": "This model's maximum context length is {limit} tokens. However, you requested {tot} tokens "
+           "({inp} in the messages, {m} in the completion). Please reduce the length of the messages or completion.",
+    "bare": "This model's maximum context length is {limit} tokens.",
+}
+
+
+class OverflowStub(Stub):
+    """模拟 vLLM：输入 + max_tokens 超过上下文就 400；chat_template_kwargs 照常接受。"""
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(n) or b"{}")
+        REQUESTS.append(body)
+        m, lim, inp = body["max_tokens"], OVERFLOW["limit"], OVERFLOW["input"]
+        if inp + m > lim:
+            text = MESSAGES[OVERFLOW["fmt"]].format(m=m, limit=lim, inp=inp, tot=inp + m)
+            # vLLM 0.26 的错误体：{"error": {"message", "type", "param", "code"}}
+            msg = json.dumps({"error": {"message": text, "type": "BadRequestError", "param": "input_tokens",
+                                        "code": 400}}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(msg)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(msg)
+            self.close_connection = True
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for chunk in ({"choices": [{"delta": {"content": '{"action":"shell","cmd":"ls"}'}, "finish_reason": "stop"}]},
+                      {"choices": [], "usage": {"prompt_tokens": inp, "completion_tokens": 9}}):
+            self.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
+            self.wfile.flush()
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+        self.close_connection = True
+
+
+class TestContextOverflow(unittest.TestCase):
+    """输入 + max_tokens 超过上下文的 400 不是"不认 chat_template_kwargs"：
+    以前会被误判成后者，永久关掉思考开关，而这一轮照样失败。现在按报错把本轮上限调小重试。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), OverflowStub)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        REQUESTS.clear()
+        OVERFLOW.update(limit=32768, input=29000, fmt="v026")
+        self.client = ChatClient(ModelSpec(name="stub", base_url=f"http://127.0.0.1:{self.port}/v1",
+                                           enable_thinking=False, max_tokens=4096))
+
+    def test_fits_max_tokens_from_vllm_messages(self):
+        for fmt in ("v026", "new", "old"):
+            with self.subTest(fmt=fmt):
+                REQUESTS.clear()
+                OVERFLOW["fmt"] = fmt
+                comp = self.client.complete([{"role": "user", "content": "hi"}])
+                self.assertEqual(comp.error, "")
+                self.assertEqual([r["max_tokens"] for r in REQUESTS], [4096, 32768 - 29000 - 8])
+                self.assertEqual(comp.max_tokens, 3760)
+                self.assertIn("3760", comp.note)
+                # 思考开关一直在：两次请求都带着 chat_template_kwargs，也没有被记成降级
+                self.assertTrue(all("chat_template_kwargs" in r for r in REQUESTS))
+                self.assertFalse(self.client._no_template_kwargs)
+
+    def test_next_turn_asks_for_the_full_budget_again(self):
+        self.client.complete([{"role": "user", "content": "hi"}])
+        OVERFLOW["input"] = 1000
+        REQUESTS.clear()
+        comp = self.client.complete([{"role": "user", "content": "short again"}])
+        self.assertEqual([r["max_tokens"] for r in REQUESTS], [4096])
+        self.assertEqual(comp.max_tokens, 4096)
+
+    def test_unreadable_numbers_halve(self):
+        for fmt in ("bare", "v026_atleast"):                # "at least N" 只是下限，不能拿来精确算
+            with self.subTest(fmt=fmt):
+                REQUESTS.clear()
+                OVERFLOW["fmt"] = fmt
+                comp = self.client.complete([{"role": "user", "content": "hi"}])
+                self.assertEqual([r["max_tokens"] for r in REQUESTS], [4096, 2048])
+                self.assertEqual(comp.error, "")
+
+    def test_full_context_is_an_error_not_a_downgrade(self):
+        OVERFLOW["input"] = 32700                    # 只剩 60 个 token：不值得再要一轮
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertIn("HTTP 400", comp.error)
+        self.assertIn("maximum context length", comp.error)
+        self.assertEqual(len(REQUESTS), 1)
+        self.assertFalse(self.client._no_template_kwargs)
+
+    def test_retries_are_bounded(self):
+        OVERFLOW.update(fmt="bare", input=32000)     # 只剩 768，读不出数字只能减半：4096 → 2048 → 1024，然后放弃
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual([r["max_tokens"] for r in REQUESTS], [4096, 2048, 1024])
+        self.assertIn("HTTP 400", comp.error)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
