@@ -411,7 +411,7 @@ def cmd_batch(args) -> int:
     _p(f"[batch] {cfg.batch}: {len(tasks)} 题 × {cfg.seeds} seeds, "
        f"model={cfg.model.name}, ablation={cfg.ablation.name}（{cfg.ablation.desc}）")
     runner = BatchRunner(cfg, config.RUNS_ROOT / cfg.batch, workers=args.workers)
-    runner.run(tasks, resume=not args.no_resume)
+    runner.run(tasks, resume=not args.no_resume, order=args.order)
     results = runner.load_results()
     _p("")
     _p(metrics.render(metrics.summarize(results)))
@@ -771,6 +771,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--workers", type=int, default=4)
     b.add_argument("--seeds", type=int, default=1)
     b.add_argument("--no-resume", action="store_true")
+    b.add_argument("--order", default="lpt", choices=["lpt", "fifo"],
+                   help="开跑顺序：lpt=预计最慢的先跑（默认，缩短整批墙钟）；fifo=题号顺序")
     b.add_argument("--split", default="all", choices=["all", "dev", "test"],
                    help="题池划分（默认 all 不变）；test 需要 --confirm-test")
     b.add_argument("--split-file", help="划分文件（默认 FLAGPILOT_SPLITS 或 <题库>/index/splits.json）")
