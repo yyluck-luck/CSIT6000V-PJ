@@ -21,6 +21,7 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parent.parent
 BAD_NODES = "10-0-1-10,10-0-1-11,10-0-4-10"     # 2026-11 实测有 Slurm 管不到的进程占卡 / 占 8000 端口
 SESSION_S = 3600 - 180                            # 分区上限 1 小时，留 3 分钟收尾
+BOOT_MARGIN_S = 60                                # 分到节点后、作业第一行输出前的激活时间（偏大估计）
 _L = threading.Lock()
 S: dict = {"phase": "idle", "serve": None, "node": None, "url": "", "t0": 0.0, "ready": 0.0, "log": [], "busy": "", "error": ""}
 
@@ -90,13 +91,16 @@ def _serve_loop() -> None:
     excl = os.environ.get("FLAGPILOT_TACC_EXCLUDE", BAD_NODES)
     poll = float(os.environ.get("FLAGPILOT_TACC_POLL", "15"))
     for attempt in range(1, 5):
+        t_sub = time.time()
         jid = _submit("serve", {"FP_EXCLUDE": excl})
         if not jid:
             return _fail("serve submission failed")
+        # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
+        # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
         with _L:
-            S["serve"] = jid
+            S.update(serve=jid, t0=t_sub)
         _log(f"serve job {jid} submitted (attempt {attempt})")
-        deadline, retry = time.time() + 45 * 60, False
+        deadline, retry, quiet, running = time.time() + 45 * 60, False, t_sub, False
         while time.time() < deadline:
             if S["phase"] == "stopping":
                 _sdk("cancel", "-j", jid)
@@ -105,7 +109,15 @@ def _serve_loop() -> None:
                     S.update(phase="idle", serve=None)
                 return
             time.sleep(poll)
+            t_ask = time.time()
             L = _sdk("cat", f"slurm_log/qwen-public-serve-{jid}.log")
+            if not running:
+                if "SDK_BOOTSTRAP=" in L:
+                    running = True
+                    with _L:
+                        S["t0"] = max(t_sub, quiet - BOOT_MARGIN_S)
+                else:
+                    quiet = t_ask
             m = re.search(r"SERVICE_BASE_URL=(http://([^:\s]+):\d+/v1)", L)
             if "PRECHECK_FAIL" in L:
                 node = (re.search(r"PRECHECK_FAIL node=([^:\s]+)", L) or [None, ""])[1]
@@ -127,7 +139,7 @@ def _serve_loop() -> None:
                     break
                 _sdk("cancel", "-j", jid)
                 return _fail(f"serve job {jid} failed")
-            _log(f"waiting for serve {jid}" + (f" on {m.group(2)}" if m else " (queued)"))
+            _log(f"waiting for serve {jid}" + (f" on {m.group(2)}" if m else " (starting)" if running else " (queued)"))
         if not retry:
             _sdk("cancel", "-j", jid)
             return _fail(f"serve job {jid} not ready within 45 min (cluster busy)")

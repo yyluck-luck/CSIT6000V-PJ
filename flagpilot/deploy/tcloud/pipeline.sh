@@ -32,6 +32,7 @@ ABL=${FP_ABLATIONS:-}
 URL=""; NODE=""; SERVE_T0=0
 for attempt in 1 2 3 4 5 6; do
   SERVE_T0=$(date +%s)        # 偏早的估计：服务作业不会早于提交时刻开跑，所以算出的截止时刻只会偏保守
+  QUIET=$SERVE_T0; RUNNING=""  # 看到 SDK_BOOTSTRAP 后改用"最后一次还没输出的查询 − 60 秒"，排队时间不算进 1 小时
   out=$(FP_EXCLUDE="$EXCL" bash "$SUB" serve 2>&1 | clean)
   SJ=$(printf '%s\n' "$out" | jobid)
   if [[ -z "$SJ" ]]; then log "serve submission failed:"; printf '%s\n' "$out" | tail -5; exit 1; fi
@@ -39,8 +40,16 @@ for attempt in 1 2 3 4 5 6; do
   deadline=$(( $(date +%s) + 45*60 ))
   while (( $(date +%s) < deadline )); do
     sleep "$POLL"
+    ASK_T=$(date +%s)
     L=$(tc cat "slurm_log/qwen-public-serve-$SJ.log")
     printf '%s\n' "$L" > "$OUT/serve-live.log"
+    if [[ -z "$RUNNING" ]]; then
+      if grep -aq '^SDK_BOOTSTRAP=' <<<"$L"; then
+        RUNNING=1; (( QUIET - 60 > SERVE_T0 )) && SERVE_T0=$(( QUIET - 60 ))
+      else
+        QUIET=$ASK_T
+      fi
+    fi
     node=$(printf '%s\n' "$L" | sed -n 's#^SERVICE_BASE_URL=http://\([^:]*\):.*#\1#p' | head -1)
     if grep -aq 'PRECHECK_FAIL' <<<"$L"; then
       node=$(grep -a 'PRECHECK_FAIL' <<<"$L" | sed -n 's/.*node=\([^:]*\):.*/\1/p' | head -1)

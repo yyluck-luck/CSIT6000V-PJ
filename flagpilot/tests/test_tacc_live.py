@@ -23,7 +23,7 @@ from app import tacc_live  # noqa: E402
 
 SUBMIT = r"""#!/usr/bin/env bash
 st="$FAKE_STATE"; n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
-echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-}" >> "$st/record"
+echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-} excl=${FP_EXCLUDE:-}" >> "$st/record"
 printf 'Submitted batch job %s\n' "$n"
 """
 TCLOUD = r"""#!/usr/bin/env bash
@@ -31,7 +31,10 @@ st="$FAKE_STATE"
 case "$1" in
   cat) f=$(basename "$2"); n=$(echo "$f" | sed 's/[^0-9]//g'); mode=$(cat "$st/job-$n.mode" 2>/dev/null)
     case "$mode" in
-      serve) printf 'SERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\nINFO:     Application startup complete.\r\n' ;;
+      serve) c=$(( $(cat "$st/cats-$n" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/cats-$n"
+             if (( c <= ${FAKE_QUEUE:-0} )); then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
+             if [[ "$n" == "${FAKE_PRECHECK_JOB:-}" ]]; then printf 'SDK_BOOTSTRAP=/env\r\nPRECHECK_FAIL node=10-0-1-12: port 8000 is already in use\r\n'; exit 0; fi
+             printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\nINFO:     Application startup complete.\r\n' ;;
       batch) printf '[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
              printf '@@ev {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1, "wall_s": 2.0}\n[fp] done: /x\n' ;;
       chat) printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
@@ -92,6 +95,25 @@ class TaccLiveCase(unittest.TestCase):
         tacc_live.stop()
         self.assertEqual(tacc_live.status()["phase"], "idle")
         self.assertIn("cancel 501", self.record())                        # the serve job is released
+
+    def test_session_hour_counts_from_job_start_not_submission(self):
+        """排队期间不吃会话时长：t0 从"最后一次还没输出的查询"算起（余量置 0 便于测量）。"""
+        os.environ["FAKE_QUEUE"] = "3"
+        with mock.patch.object(tacc_live, "BOOT_MARGIN_S", 0):
+            t_before = time.time()
+            self.ready()
+        t0 = tacc_live.status()["t0"]
+        self.assertGreaterEqual(t0 - t_before, 0.05)                  # 3 次查询都还在排队
+        self.assertTrue(any("(queued)" in l for l in tacc_live.status()["log"]))
+
+    def test_retry_after_precheck_resets_clock_and_excludes_node(self):
+        os.environ["FAKE_PRECHECK_JOB"] = "501"
+        t_before = time.time()
+        self.ready()
+        rec = self.record().splitlines()
+        self.assertEqual([l.split()[1] for l in rec], ["job=501", "job=502"])
+        self.assertTrue(rec[1].endswith(",10-0-1-12"))                 # 第二次提交排除了占卡节点
+        self.assertGreater(tacc_live.status()["t0"], t_before + 0.015)  # 时钟按第二次提交重算
 
     def test_not_connected_and_one_job_at_a_time(self):
         evs = []
