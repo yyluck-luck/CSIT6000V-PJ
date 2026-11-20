@@ -34,6 +34,11 @@ tcloud cancel -j <serve job>                            # 释放 GPU
   pycryptodome / gmpy2 的 manylinux wheel 在本机下好、随包解进作业目录，只经 `FLAGPILOT_SANDBOX_PYTHONPATH`
   进沙箱（动作与重放一致）。doctor 不再报这四样缺失。
 - **调度**：批跑默认"预计最慢的先跑"（LPT），先验来自同目录下历史批次的 wall_s。
+- **划分**：仓库里有团队冻结的 `docs/splits-picoctf-53.json` 就原样带上（以前每次现场重新生成；对同一份题库两者逐字节相同，
+  但题库索引一旦变了，重新生成会悄悄换成另一种划分）。作业里的 CLI 会核对索引哈希：不符时 dev 警告、test 拒跑。
+  v5 与 max_tokens 复验用的 20 道 dev 题正是冻结划分里 core 范围的 dev，与 test 无交集。
+- **本机暂存交完即删**：网页会话里每条答疑、每次单题都要交一次作业，暂存目录以前从不删（单题约 15M、整批约 88M）。
+  `FP_KEEP_STAGE=1` 保留，`FP_DRY_RUN=1` 只暂存不提交。
 - **从网页发起**：`python3 -m flagpilot web --replay runs/tacc` → Lab → *TACC batch*：选档位与题量，点 *Run on TACC*；
   页面显示阶段（Queue → Server → Batch → Download → Done）、作业号、逐题结论，跑完把每档挂成回放（Runs 页可逐步复盘）。
 - **网页实时会话（Qwen 27B on TACC）**：点 Solve 页的 *Qwen on TACC · connect* 或 Ask 页的 *connect Qwen*（或直接点 *Run on TACC*）会提交一个服务作业并常驻，
@@ -66,6 +71,14 @@ tcloud cancel -j <serve job>                            # 释放 GPU
 的理由是去掉"截断 → 无效动作 → 整题出局"这一失败机制，而不是涨了 5 个点。上下文余量：实测单次最大 prompt
 24.3k token，加 4096 仍在 32k 之内；万一放不下，客户端按 vLLM 的报错把这一轮的上限调小重试，不再误当成
 "不认 chat_template_kwargs"而关掉思考开关。之后的批次默认 4096，四档要对比就整组重跑，不和上表混比。
+
+**按收紧后的验证器重验**（main 的 #9：第 4 道关在"清空材料"之外，再用同名、等长的假材料跑一次）：把上面两张表里
+TACC 判 verified 的 64 条提交，在本机分别用旧、新验证器重放（同一份题目附件；本机补齐 pycryptodome / gmpy2 /
+Pillow 与 `python`、`zcat` 后 64 条在旧验证器下全部复现）。新验证器只翻转 2 条，都是 crypto-005（v5 的 B2、B3）：
+脚本先读 `rot13.py`，正则落空时退回写死的密文，清空材料时 `open` 报错蒙混过关，换成假材料就露馅。
+按新验证器：B0 70.0%、B1 65.0% 不变，B2、B3 各降到 55.0%（11/20，95% CI 34.2–74.2%），4096 的 B3 仍是 65.0%。
+max_tokens 的配对变成 11 → 13（crypto-079 与 crypto-005 两对不一致，都偏向 4096；McNemar 精确 p=0.5），
+其中 crypto-005 的差别来自脚本写法，与截断无关，所以上面"为去掉截断机制而改"的结论不变。
 
 踩过的坑都已在脚本里处理：课程运行时（PRoot）没有 `python3` → 客户端垫一层；PRoot 解析不了节点名 →
 宿主机上换成 IP；`tcloud cat` 输出带 `\r` → `submit.sh` 校验地址；部分节点有 Slurm 管不到的进程占着显存或
