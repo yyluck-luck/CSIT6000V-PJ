@@ -12,6 +12,7 @@ mock 模式不需要任何 API：用一个脚本化的策略跑通整条流水�
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import urllib.error
@@ -154,6 +155,22 @@ def _cache_split(usage: dict, prompt_tokens: int) -> tuple[int | None, int | Non
             int(miss) if miss is not None else None)
 
 
+# 退化重复：模型卡在同一段文字上一直写到 max_tokens。v6 实测：base64 的 "X19f" 一口气写满 4096 token，
+# "fbsdfd" 连写三轮，同一段注释反复——每次白花 25–40 秒，结果照样是一次无效动作。
+LOOP_PROBE, LOOP_WINDOW, LOOP_REPEATS, LOOP_MIN_CHARS, LOOP_EVERY = 160, 4000, 4, 1200, 400
+
+
+def looping(text: str) -> bool:
+    """回复的结尾是不是在原样重复：最后 LOOP_PROBE 个字符在最近 LOOP_WINDOW 个字符里出现至少 LOOP_REPEATS 次
+    （不重叠计数）。短回复（< LOOP_MIN_CHARS）从不算；只认一字不差的重复，所以把一个长常量写两三遍、
+    一张有规律但逐行不同的表都不会被误判。"""
+    if len(text) < LOOP_MIN_CHARS:
+        return False
+    tail = text[-LOOP_WINDOW:]
+    probe = tail[-LOOP_PROBE:]
+    return bool(probe.strip()) and tail.count(probe) >= LOOP_REPEATS
+
+
 class ChatClient:
     def __init__(self, spec: ModelSpec):
         self.spec = spec
@@ -161,6 +178,9 @@ class ChatClient:
         # 有些运行时（Ollama / llama.cpp / 老版本 vLLM）不认识 chat_template_kwargs，
         # 会直接 400。第一次撞上就永久降级，避免每次请求都白撞一遍。
         self._no_template_kwargs = spec.provider in ("openai-compatible", "gemini")
+
+    # 退化重复的守卫（见模块级 looping()）。FLAGPILOT_LOOP_GUARD=0 关掉，复现旧行为用。
+    loop_guard = os.environ.get("FLAGPILOT_LOOP_GUARD", "1") != "0"
 
     # ---------- 主路径 ----------
 
@@ -217,6 +237,7 @@ class ChatClient:
         usage = {}
         finish = ""
         stream_err: dict = {}
+        since_check, looped = 0, False
         try:
             with urllib.request.urlopen(req, timeout=self.spec.request_timeout_s) as resp:
                 for raw in resp:
@@ -252,8 +273,16 @@ class ChatClient:
                                 except Exception:
                                     # 前端断开不该影响推理，静默忽略
                                     pass
+                            since_check += len(delta)
+                            if self.loop_guard and since_check >= LOOP_EVERY:
+                                since_check = 0
+                                looped = looping("".join(chunks))
                         if ch.get("finish_reason"):
                             finish = ch["finish_reason"]
+                    if looped:
+                        # 卡在重复里了：不等它写满 max_tokens（每轮白花 25–40 秒），断开流（vLLM 随即放掉这个请求）
+                        finish = "repetition"
+                        break
         except urllib.error.HTTPError as e:
             body = ""
             try:

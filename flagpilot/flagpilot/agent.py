@@ -108,6 +108,12 @@ CORRECTION_TRUNCATED = (
     "If the action needs long code, split it into two shorter actions instead of one huge one."
 )
 
+CORRECTION_REPETITION = (
+    "OUTPUT STOPPED: your reply started repeating the same text over and over, so it was cut off.\n"
+    "Reply again with ONE JSON object: a short `thought`, then the action. Do not repeat text; "
+    "if you need a long value, compute it in code instead of writing it out."
+)
+
 CORRECTION_THINKING = (
     "EMPTY REPLY: the whole token budget went to hidden reasoning, so no action was emitted.\n"
     "Answer with the JSON object immediately and do not think first."
@@ -205,6 +211,8 @@ def truncation_signal(comp, max_tokens: int) -> str:
     它的输出上限与 L 轨的 cfg.model.max_tokens 不同，拿错基准就判不出来。
     """
     fr = (comp.finish_reason or "").strip().lower()
+    if fr == "repetition":                 # 客户端发现回复在原样重复，提前截停（client.looping）
+        return "repetition"
     if fr in ("length", "max_tokens"):
         return "length"
     if (comp.usage_source == "reported"
@@ -229,6 +237,8 @@ def correction_message(kind: str, reason: str, max_tokens: int) -> str:
     """按失败种类选纠正语。kind 为空即普通协议错误。"""
     if kind == "truncated":
         return CORRECTION_TRUNCATED.format(max_tokens=max_tokens)
+    if kind == "repetition":
+        return CORRECTION_REPETITION
     if kind == "thinking_overflow":
         return CORRECTION_THINKING
     return CORRECTION_TEMPLATE.format(reason=reason)
@@ -626,6 +636,9 @@ def run_attempt(
                 err = (f"空回复：{comp.completion_tokens} tok 用满但正文为空"
                        f"（max_tokens={turn_max} 疑似被思维链占满，"
                        f"检查 soft_no_think={cfg.model.soft_no_think}）")
+            elif truncation_signal(comp, turn_max) == "repetition":
+                kind = "repetition"
+                err = f"回复在原样重复同一段文字，写到 {len(comp.text or '')} 字时截停"
             elif truncation_signal(comp, turn_max):
                 kind = "truncated"
                 started = "{" in (comp.text or "")

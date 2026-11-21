@@ -34,6 +34,7 @@ PRIORITY = [
     "network_blocked",
     "protocol",
     "truncated",
+    "repetition",
     "hardcoded",
     "not_reproducible",
     "wrong_flag",
@@ -64,6 +65,7 @@ LABELS = {
     "network_blocked": "误试联网",
     "protocol": "不守 JSON 协议",
     "truncated": "输出被截断（撞 max_tokens）",
+    "repetition": "回复原样重复（客户端截停）",
     "hardcoded": "脚本硬编码答案",
     "not_reproducible": "答案对但不可复现",
     "wrong_flag": "答案错误",
@@ -103,6 +105,7 @@ def _invalid_kind(ev: dict, tokens_by_turn: dict[int, int], max_tokens: int) -> 
 
 _KIND_TAG = {
     "truncated": "truncated",
+    "repetition": "repetition",
     "thinking_overflow": "thinking_overflow",
 }
 
