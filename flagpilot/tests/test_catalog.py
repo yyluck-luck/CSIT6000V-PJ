@@ -61,6 +61,18 @@ class TestCatalog(unittest.TestCase):
         config.RUNS_ROOT = self.saved[0]
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_a_folder_of_challenges_is_not_one_challenge(self):
+        """0CTF/2018/Finals 有个 README，底下才是一道道题：以前整个 Finals 被当成了一道题。"""
+        tree = [{"path": "2018", "type": "tree"}, {"path": "2018/Finals", "type": "tree"}, {"path": "2018/Finals/README.md", "type": "blob", "size": 50},
+                {"path": "2018/Finals/web", "type": "tree"}, {"path": "2018/Finals/web/blog", "type": "tree"},
+                {"path": "2018/Finals/web/blog/app.py", "type": "blob", "size": 900},
+                {"path": "2018/Finals/pwn", "type": "tree"}, {"path": "2018/Finals/pwn/heap", "type": "tree"},
+                {"path": "2018/Finals/pwn/heap/heap", "type": "blob", "size": 9000},
+                {"path": "2018/Misc-Collection", "type": "tree"}, {"path": "2018/Misc-Collection/notes.md", "type": "blob", "size": 10},
+                {"path": "2018/Misc-Collection/one", "type": "tree"}, {"path": "2018/Misc-Collection/one/x.bin", "type": "blob", "size": 10},
+                {"path": "2018/solo", "type": "tree"}, {"path": "2018/solo/README.md", "type": "blob", "size": 10}, {"path": "2018/solo/chal", "type": "blob", "size": 10}]
+        self.assertEqual(sorted(catalog.challenge_dirs(tree)), ["2018/Finals/pwn/heap", "2018/Finals/web/blog", "2018/Misc-Collection/one", "2018/solo"])
+
     def test_challenge_dirs_skip_year_and_category_levels(self):
         dirs = catalog.challenge_dirs(TREE)
         self.assertEqual(sorted(dirs), ["2019/crypto/AES-ABC", "2019/forensics/Flags", "2020/warmup"])

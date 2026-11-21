@@ -173,5 +173,8 @@ class TestSourceLink(unittest.TestCase):
             self.assertEqual(ok.source, "https://play.picoctf.org/practice/challenge/362")
             self.assertEqual(bad.source, "")
             self.assertEqual(custom.get(ok.name, root=root).source, ok.source)
+            old = custom.create("children_tcache", "Heap.\n\n(Imported from sajjadium/ctf-archives: ctfs/HITCON/2018/pwn/children_tcache)",
+                                files=[("a.txt", b"x")], root=root)
+            self.assertEqual(old.source, "https://github.com/sajjadium/ctf-archives/tree/main/ctfs/HITCON/2018/pwn/children_tcache")
         finally:
             shutil.rmtree(root, ignore_errors=True)

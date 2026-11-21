@@ -203,6 +203,17 @@ def _extract_zip(zip_path: Path, dest: Path) -> int:
     return n
 
 
+def _source_from_query(query: str) -> str:
+    """加来源字段之前导入的题：题面末尾有 "(Imported from …)"，从这里还原原题网页。"""
+    import urllib.parse
+    m = re.search(r"\(Imported from (?:sajjadium/ctf-archives: (ctfs/[^)\n]+)|(https?://[^)\s]+))\)", query)
+    if not m:
+        return ""
+    if m.group(1):
+        return web_url("https://github.com/sajjadium/ctf-archives/tree/main/" + urllib.parse.quote(m.group(1).strip(), safe="/"))
+    return web_url(m.group(2))
+
+
 def _to_task(meta: dict, chal: Path) -> Task:
     # 老记录只有 files，新记录有 assets；两者取并，缺哪个都不会漏附件
     files = list(meta.get("assets") or meta.get("files") or [])
@@ -212,7 +223,7 @@ def _to_task(meta: dict, chal: Path) -> Task:
     if query and query.strip() != title.strip():
         brief = f"{title}\n\n{query}"
     return Task(
-        source=web_url(meta.get("source")),
+        source=web_url(meta.get("source")) or _source_from_query(meta.get("query") or ""),
         # 负数 id：与内置题库（正整数）不可能撞
         task_id=-abs(hash(meta["slug"])) % 900000 - 1000,
         name=meta["slug"],

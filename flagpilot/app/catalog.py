@@ -28,6 +28,7 @@ REPO, BRANCH = "sajjadium/ctf-archives", "main"
 API, RAW = "https://api.github.com", "https://raw.githubusercontent.com"
 UA = "FlagPilot/0.1 (challenge import)"
 CTF_TTL_S = 24 * 3600
+CACHE_V = 2         # 题目识别规则的版本：缓存里存原始目录树，规则一变就地重算，不必再联网
 README_MAX = 64 * 1024
 CATS = {"crypto": "Cryptography", "cryptography": "Cryptography", "forensics": "Forensics", "forensic": "Forensics",
         "stego": "Forensics", "steganography": "Forensics", "rev": "Reverse Engineering", "reverse": "Reverse Engineering",
@@ -35,7 +36,9 @@ CATS = {"crypto": "Cryptography", "cryptography": "Cryptography", "forensics": "
         "binary": "Binary Exploitation", "exploitation": "Binary Exploitation", "web": "Web Exploitation",
         "misc": "General Skills", "general": "General Skills", "osint": "General Skills", "blockchain": "Blockchain",
         "hardware": "Hardware", "ppc": "General Skills", "programming": "General Skills"}
-_STRUCT = re.compile(r"^((19|20)\d\d|challenges|chals|tasks|files)$", re.I)
+_STRUCT = re.compile(r"^((19|20)\d\d|challenges|chals|tasks|files|quals?|qualifiers?|qualification|finals?|prelims?|preliminar(y|ies)|"
+                     r"(round|day|stage|wave|part)[ _-]?\d+)$", re.I)
+_DOC = re.compile(r"^(readme|notes?|description|info)(\.(md|txt|markdown|rst))?$|\.(md|markdown)$", re.I)
 _SOLUTION = re.compile(r"^(solve|solver|solution|sol|writeup|write-up|exploit|exp)([^a-z].*)?$", re.I)
 _SOLUTION_DIR = re.compile(r"^(solutions?|writeups?|write-ups?|solve|solver|exploits?|sol)$", re.I)
 _FLAG = re.compile(r"^[A-Za-z0-9_]{2,20}\{[^}\n]{2,200}\}$")
@@ -176,8 +179,10 @@ def challenge_dirs(items: list[dict]) -> dict[str, list[list]]:
             direct.setdefault(x["path"].rpartition("/")[0], []).append(x)
 
     def structural(d: str) -> bool:
+        """年份 / 类别 / 赛段之类的目录；或者底下还有子目录、自己只放了说明文档的目录（一组题的容器，不是一道题）。"""
         name = d.rpartition("/")[2]
-        return bool(_STRUCT.match(name)) or name.lower() in CATS
+        only_docs = all(_DOC.search(x["path"].rpartition("/")[2]) for x in direct.get(d, []))
+        return bool(_STRUCT.match(name)) or name.lower() in CATS or (d in parents and only_docs)
 
     cands = sorted((d for d in direct if d and not (structural(d) and d in parents)), key=lambda d: d.count("/"))
     keep: list[str] = []
@@ -192,15 +197,21 @@ def challenge_dirs(items: list[dict]) -> dict[str, list[list]]:
 
 
 def challenges(ctf: str, refresh: bool = False) -> list[dict]:
-    """一个比赛的所有题（打开时 1 次 API，之后读缓存）。"""
+    """一个比赛的所有题（打开时 1 次 API，之后读缓存；识别规则升级时用缓存里的目录树重算）。"""
     f = _ctf_file(ctf)
-    if f.exists() and not refresh:
-        return json.loads(f.read_text(encoding="utf-8"))["rows"]
-    hit = next((c for c in ctfs() if c["name"] == ctf), None)
-    if hit is None:
-        raise CatalogError(f"No CTF called {ctf} in the archive")
-    tree = json.loads(_get(f"{API}/repos/{REPO}/git/trees/{hit['sha']}?recursive=1"))
-    files = challenge_dirs(tree.get("tree") or [])
+    old = json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+    if old and not refresh and old.get("v") == CACHE_V:
+        return old["rows"]
+    if old and not refresh and old.get("tree"):
+        tree = {"tree": old["tree"], "truncated": old.get("truncated", False)}
+    else:
+        hit = next((c for c in ctfs() if c["name"] == ctf), None)
+        if hit is None:
+            raise CatalogError(f"No CTF called {ctf} in the archive")
+        tree = json.loads(_get(f"{API}/repos/{REPO}/git/trees/{hit['sha']}?recursive=1"))
+    items = [{"path": x["path"], "type": x.get("type"), **({"size": x.get("size", 0)} if x.get("type") == "blob" else {})}
+             for x in tree.get("tree") or []]
+    files = challenge_dirs(items)
     rows = []
     for d, fl in files.items():
         parts = d.split("/")
@@ -210,14 +221,20 @@ def challenges(ctf: str, refresh: bool = False) -> list[dict]:
                      "files": len(fl), "bytes": sum(s for _, s in fl),
                      "readme": any(n.lower() == "readme.md" for n, _ in fl)})
     rows.sort(key=lambda r: (r["year"], r["category"], r["name"].lower()), reverse=False)
-    _save(f, {"rows": rows, "files": {f"ctfs/{ctf}/{d}": fl for d, fl in files.items()},
-              "truncated": bool(tree.get("truncated")), "at": time.time()})
+    _save(f, {"v": CACHE_V, "rows": rows, "files": {f"ctfs/{ctf}/{d}": fl for d, fl in files.items()},
+              "tree": items, "truncated": bool(tree.get("truncated")), "at": time.time()})
     return rows
 
 
 def _cached(ctf: str) -> dict | None:
     f = _ctf_file(ctf)
-    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else None
+    if not f.exists():
+        return None
+    data = json.loads(f.read_text(encoding="utf-8"))
+    if data.get("v") != CACHE_V:          # 旧规则算出来的：重算（有目录树就不联网）
+        challenges(ctf)
+        data = json.loads(f.read_text(encoding="utf-8"))
+    return data
 
 
 def search(q: str, limit: int = 40) -> dict:
@@ -229,7 +246,10 @@ def search(q: str, limit: int = 40) -> dict:
     rows = []
     for f in sorted((_root() / "ctf").glob("*.json")) if (_root() / "ctf").exists() else []:
         try:
-            for r in json.loads(f.read_text(encoding="utf-8"))["rows"]:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            if data.get("v") != CACHE_V:
+                continue                       # 旧缓存：打开这个比赛时会按新规则重算
+            for r in data["rows"]:
                 if match(f"{r['ctf']} {r['year']} {r['category']} {r['name']}".lower()):
                     rows.append(r)
         except Exception:
