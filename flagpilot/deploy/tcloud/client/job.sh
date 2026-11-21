@@ -117,6 +117,18 @@ if [[ "${FP_DEADLINE_EPOCH:-0}" =~ ^[0-9]+$ ]] && (( FP_DEADLINE_EPOCH > 0 && FP
   END=$FP_DEADLINE_EPOCH
 fi
 LAST=0
+# 报告写完后每次尝试只留记录（trace.jsonl、writeup.md、replay/solve.py，与 scripts/export_records.py 相同）。
+# 工作目录和为三项核验复制的题目副本只在核验时有用；每次尝试把附件复制 4 份，一个档位约 150 MB，
+# 2026-11-21 v7 批次中途把 /mnt/home 写满（No space left on device）。判定和报告都只读记录，不受影响；下载也快得多。
+prune_batch() {   # $1 = 批次目录
+  local a
+  for a in "$1"/*/; do
+    [[ -f "$a/trace.jsonl" ]] || continue
+    chmod -R u+w "$a" 2>/dev/null || true
+    find "$a" -mindepth 1 -maxdepth 1 ! -name trace.jsonl ! -name writeup.md ! -name replay -exec rm -rf -- {} + 2>/dev/null || true
+    if [[ -d "$a/replay" ]]; then find "$a/replay" -mindepth 1 -maxdepth 1 ! -name solve.py -exec rm -rf -- {} + 2>/dev/null || true; fi
+  done
+}
 run_batch() {   # $1 = 批次名  $2 = 额外参数（--ablate Bx）
   local s
   s=$(date +%s)
@@ -125,6 +137,7 @@ run_batch() {   # $1 = 批次名  $2 = 额外参数（--ablate Bx）
     --base-url "${BASE}" --metrics-url "${BASE%/v1}/metrics" --scope core ${FP_ARGS} $2 \
     || echo "[fp] batch $1 exited non-zero"
   fp report --batch "$1" --md "${FLAGPILOT_RUNS}/$1.md" || true
+  prune_batch "${FLAGPILOT_RUNS}/$1"
   LAST=$(( $(date +%s) - s ))
   echo "[fp] tier-done $1 ${LAST}s"
 }

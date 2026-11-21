@@ -4,6 +4,7 @@
 #   deploy/tcloud/submit.sh serve                        # 起课程模型服务 qwen3.8-27b（2×3090，≤1h）
 #   deploy/tcloud/submit.sh doctor                       # CPU 自检：SDK 引导、课程 Python、题库泄漏检查
 #   deploy/tcloud/submit.sh batch http://NODE:8000/v1    # 对正在运行的服务跑一个批次
+#   FP_DROP="批次 …" deploy/tcloud/submit.sh cleanup     # 清理 TACC 家目录（盘满时也交得上去，见 cleanup/job.sh）
 #
 # batch 的参数用环境变量给：
 #   FP_BATCH（默认 tacc-smoke）  FP_SPLIT（默认 dev）  FP_LIMIT  FP_TASKS（逗号分隔题名）
@@ -178,8 +179,18 @@ PY
     fi
     echo "[tcloud] 包大小 $(du -sh "$STAGE" | cut -f1)；run.env：$(tr '\n' ' ' < "$STAGE/run.env")"
     ;;
+  cleanup)
+    # 只交 job.sh + tuxiv.conf + run.env（几 KB）：家目录满了也上得去。复用 flagpilot-client 这个 WORKDIR，
+    # 上一批解开的题库和随包库被这几个小文件替换掉。
+    cp "$HERE"/client/tuxiv.conf "$STAGE"/
+    cp "$HERE"/cleanup/job.sh "$STAGE"/job.sh
+    [[ -z "${FP_DROP:-}" || "$FP_DROP" =~ ^[A-Za-z0-9._-]+([[:space:]]+[A-Za-z0-9._-]+)*$ ]] \
+      || { echo "FP_DROP: batch names separated by spaces" >&2; exit 1; }
+    printf 'FP_MODE=cleanup\nFP_DROP=%q\n' "${FP_DROP:-}" > "$STAGE/run.env"
+    perl -pi -e "s/time=00:45:00/time=00:10:00/" "$STAGE/tuxiv.conf"
+    ;;
   *)
-    echo "未知模式 ${MODE}（serve | doctor | batch）" >&2; exit 1 ;;
+    echo "未知模式 ${MODE}（serve | doctor | batch | chat | cleanup）" >&2; exit 1 ;;
 esac
 
 if [[ -n "${FP_EXCLUDE:-}" ]]; then
@@ -190,7 +201,7 @@ if [[ -n "${FP_EXCLUDE:-}" ]]; then
 fi
 
 if [[ "${FP_DRY_RUN:-0}" == "1" ]]; then trap - EXIT; echo "[tcloud] dry run，未提交：$STAGE"; exit 0; fi
-if [[ "$MODE" != serve ]]; then
+if [[ "$MODE" != serve && "$MODE" != cleanup ]]; then
   # SDK 上传是按文件逐个走一趟的（2026-11-20 实测每个约 0.7 s；带随包库的单题作业有 200 多个文件，光传就要两分钟）。
   # 除了 SDK 自己要读的 tuxiv.conf、作业入口 job.sh 和 run.env，其余打成一个 payload.tgz，job.sh 开头解开。
   # COPYFILE_DISABLE：macOS 的 tar 默认给每个文件附一份 ._* 扩展属性，解到 Linux 上全是垃圾（GNU tar 忽略这个变量）
