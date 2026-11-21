@@ -713,6 +713,13 @@
   .md ol>li::marker{font:700 15px var(--mono);color:var(--ink2)}
   .md blockquote{margin:0 0 10px;padding:2px 0 2px 14px;border-left:4px solid var(--yellow);color:var(--ink2)}
   .md hr{border:0;border-top:1.5px dashed var(--rule);margin:14px 0}
+  .math{font-family:"STIX Two Math","Cambria Math","Latin Modern Math","Times New Roman",serif;font-size:1.06em}
+  .math i{font-style:italic} .math .fn{font-style:normal} .math sup,.math sub{font-size:max(15px,.75em);line-height:0}
+  .math .frac{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;font-size:max(15px,.86em);margin:0 .12em;line-height:1.25}
+  .math .frac>span:first-child{border-bottom:1px solid currentColor;padding:0 .15em} .math .frac.nb>span:first-child{border-bottom:0}
+  .math .ov{border-top:1px solid currentColor;padding-top:1px} .math .un{border-bottom:1px solid currentColor}
+  .math .rows{display:inline-flex;flex-direction:column;vertical-align:middle;margin:0 .25em;line-height:1.35} .math .sp{display:inline-block;width:1em}
+  .math.disp{display:block;text-align:center;margin:.7em 0;overflow-x:auto;overflow-y:hidden;padding:.15em 0}
   .md a{color:var(--blue);text-decoration:underline;text-underline-offset:3px} .md del{color:var(--ink3)} .md code{font-size:15px}
   .md .tbl{max-width:100%;overflow:auto;margin:0 0 12px} .md table{border-collapse:collapse;font-size:15px;line-height:1.45}
   .md th,.md td{border:1.5px solid var(--ink);padding:6px 11px;text-align:left;vertical-align:top} .md th{background:var(--paper);font-weight:700}
@@ -1130,15 +1137,15 @@ const PROVENANCE = {literal_flag: 'Right flag, but the script only prints it: th
 const BUDGET_WHY = {invalid_action: 'Stopped: three replies were not valid JSON actions', max_turns: 'Used every turn without a valid submission',
   wall_time: 'Ran out of time before a valid submission', context: 'The context filled up before a valid submission',
   completion_tokens: 'Used the output-token budget before a valid submission', truncated: 'Replies kept hitting the output limit',
-  thinking_overflow: 'Reasoning kept using up the output limit'};
+  thinking_overflow: 'Reasoning kept using up the output limit', repetition: 'Replies kept repeating the same text'};
 const STOPPED = {invalid_action: 'stopped after three replies outside the JSON protocol', max_turns: 'all turns used', wall_time: 'time budget used',
-  context: 'context full', completion_tokens: 'output-token budget used', truncated: 'replies cut at the output limit', thinking_overflow: 'reasoning filled the output limit',
+  context: 'context full', completion_tokens: 'output-token budget used', truncated: 'replies cut at the output limit', thinking_overflow: 'reasoning filled the output limit', repetition: 'replies stuck repeating themselves',
   wrong_flag: 'the flag does not match the answer', hardcoded_no_material: 'the flag does not depend on the challenge material', literal_flag: 'the script contains the flag itself',
   script_error: 'the replay script failed', no_output: 'the replay printed nothing', timeout: 'the replay timed out', empty_flag: 'no flag was submitted',
   reproduced_no_gold: 'reproduced; there is no answer to check it against'};
 const FAIL = {ok: 'verified', reproduced: 'reproduced, no gold', model_error: 'model call failed', thinking_overflow: 'empty reply (reasoning used the budget)',
   sandbox_timeout: 'tool timeout', tool_missing: 'tool missing in the environment', tool_denied: 'permission denied', network_blocked: 'tried the network',
-  protocol: 'broke the JSON protocol', truncated: 'reply truncated at max_tokens', hardcoded: 'script hard-codes the flag', not_reproducible: 'correct but not reproducible',
+  protocol: 'broke the JSON protocol', truncated: 'reply truncated at max_tokens', repetition: 'reply stuck repeating itself', hardcoded: 'script hard-codes the flag', not_reproducible: 'correct but not reproducible',
   wrong_answer: 'wrong flag', budget: 'turns exhausted without a submission', unknown: 'unclassified'};
 
 /* the server's JSON. An HTML page instead (or "not found" for an action the page knows) means the server process is
@@ -3094,16 +3101,90 @@ const MD_EM = [
 const MD_FENCE = /^(\s*)(`{3,}|~{3,})(.*)$/, MD_HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/, MD_ITEM = /^(\s*)([-*+]|\d{1,3}[.)])(\s+)(.*)$/;
 const MD_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/, MD_HEAD = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/, MD_QUOTE = /^\s{0,3}>/;
 const mdIndent = l => (l.match(/^\s*/)[0] || '').replace(/\t/g, '    ').length;
+/* Math in replies: $…$ and \(…\) inline, $$…$$ and \[…\] on lines of their own. A small TeX subset drawn with Unicode and HTML
+   (no library, so it works offline): Greek letters, operators and arrows, ^ and _, \frac, \sqrt, \binom, \pmod, \text, \mathbb,
+   accents, matrices and cases as rows. An unknown command keeps its name, so nothing is silently dropped. A "$" opens math only
+   when a non-space follows, and closes it only when a non-space precedes it and no letter or digit follows: prices ("$5 or $10")
+   and shell variables ("PATH=$PATH:$HOME") stay text. */
+const TEX_SYM = {alpha:'α',beta:'β',gamma:'γ',delta:'δ',epsilon:'ϵ',varepsilon:'ε',zeta:'ζ',eta:'η',theta:'θ',vartheta:'ϑ',iota:'ι',kappa:'κ',lambda:'λ',mu:'μ',nu:'ν',xi:'ξ',
+  pi:'π',varpi:'ϖ',rho:'ρ',varrho:'ϱ',sigma:'σ',varsigma:'ς',tau:'τ',upsilon:'υ',phi:'ϕ',varphi:'φ',chi:'χ',psi:'ψ',omega:'ω',Gamma:'Γ',Delta:'Δ',Theta:'Θ',Lambda:'Λ',
+  Xi:'Ξ',Pi:'Π',Sigma:'Σ',Upsilon:'Υ',Phi:'Φ',Psi:'Ψ',Omega:'Ω',times:'×',cdot:'·',pm:'±',mp:'∓',div:'÷',ast:'∗',star:'⋆',circ:'∘',bullet:'•',oplus:'⊕',ominus:'⊖',
+  otimes:'⊗',odot:'⊙',approx:'≈',equiv:'≡',neq:'≠',ne:'≠',leq:'≤',le:'≤',geq:'≥',ge:'≥',ll:'≪',gg:'≫',sim:'∼',simeq:'≃',cong:'≅',propto:'∝',in:'∈',notin:'∉',ni:'∋',
+  subset:'⊂',subseteq:'⊆',supset:'⊃',supseteq:'⊇',cup:'∪',cap:'∩',setminus:'∖',emptyset:'∅',varnothing:'∅',forall:'∀',exists:'∃',neg:'¬',lnot:'¬',land:'∧',lor:'∨',
+  wedge:'∧',vee:'∨',top:'⊤',bot:'⊥',perp:'⊥',parallel:'∥',mid:'∣',nmid:'∤',to:'→',rightarrow:'→',leftarrow:'←',gets:'←',leftrightarrow:'↔',Rightarrow:'⇒',Leftarrow:'⇐',
+  Leftrightarrow:'⇔',implies:'⟹',iff:'⟺',mapsto:'↦',longrightarrow:'⟶',uparrow:'↑',downarrow:'↓',infty:'∞',partial:'∂',nabla:'∇',sum:'∑',prod:'∏',int:'∫',oint:'∮',
+  ldots:'…',dots:'…',cdots:'⋯',vdots:'⋮',ddots:'⋱',lfloor:'⌊',rfloor:'⌋',lceil:'⌈',rceil:'⌉',langle:'⟨',rangle:'⟩',vert:'|',Vert:'‖',lvert:'|',rvert:'|',lVert:'‖',
+  rVert:'‖',prime:'′',angle:'∠',triangle:'△',hbar:'ℏ',ell:'ℓ',Re:'ℜ',Im:'ℑ',aleph:'ℵ',checkmark:'✓',square:'□',degree:'°',lbrace:'{',rbrace:'}',backslash:'\\',
+  colon:':',quad:' ',qquad:'  ','{':'{','}':'}','$':'$','%':'%','&':'&','#':'#','_':'_','|':'‖',' ':' ',',':' ',';':' ',':':' ','!':''};
+const TEX_FN = new Set(['mod','bmod','gcd','lcm','log','ln','lg','exp','sin','cos','tan','sec','csc','cot','arcsin','arccos','arctan','sinh','cosh','tanh',
+  'min','max','det','dim','ker','deg','Pr','lim','sup','inf','arg','hom','rank','ord','sgn']);
+const TEX_BB = {N:'ℕ',Z:'ℤ',Q:'ℚ',R:'ℝ',C:'ℂ',P:'ℙ',F:'𝔽',H:'ℍ'};
+const TEX_ACC = {hat:'̂',widehat:'̂',tilde:'̃',widetilde:'̃',bar:'̄',vec:'⃗',dot:'̇',ddot:'̈',check:'̌',breve:'̆'};
+const TEX_TXT = new Set(['text','textrm','textnormal','mathrm','operatorname','textsf','mathsf','texttt','mathtt','textup']);
+function texHtml(src, depth = 0){
+  const s = String(src || ''); let i = 0, out = '';
+  if (depth > 12) return esc(s);
+  const group = () => {                                  // one argument: {…} or a single token
+    while (s[i] === ' ') i++;
+    if (s[i] === '{'){ let d = 0, j = i; for (; j < s.length; j++){ if (s[j] === '\\'){ j++; continue; } if (s[j] === '{') d++; else if (s[j] === '}' && --d === 0) break; }
+      const inner = s.slice(i + 1, j); i = Math.min(s.length, j + 1); return inner; }
+    if (s[i] === '\\'){ const m = s.slice(i).match(/^\\([A-Za-z]+|.?)/); i += m[0].length; return m[0]; }
+    return s[i++] || '';
+  };
+  const opt = () => { if (s[i] !== '[') return null; const j = s.indexOf(']', i); if (j < 0) return null; const v = s.slice(i + 1, j); i = j + 1; return v; };
+  const sub = t => texHtml(t, depth + 1);
+  while (i < s.length){
+    const c = s[i];
+    if (c === '\\'){
+      const m = s.slice(i).match(/^\\([A-Za-z]+|.?)/); i += m[0].length; const n = m[1];
+      if (/^[dtc]?frac$/.test(n)){ const a = group(), b = group(); out += `<span class="frac"><span>${sub(a)}</span><span>${sub(b)}</span></span>`; }
+      else if (/^[dt]?binom$/.test(n)){ const a = group(), b = group(); out += `(<span class="frac nb"><span>${sub(a)}</span><span>${sub(b)}</span></span>)`; }
+      else if (n === 'sqrt'){ const k = opt(), a = group(); out += (k ? `<sup>${sub(k)}</sup>` : '') + `√<span class="ov">${sub(a)}</span>`; }
+      else if (n === 'pmod'){ out += ` (<span class="fn">mod</span> ${sub(group())})`; }
+      else if (TEX_TXT.has(n)){ out += `<span class="fn">${esc(group().replace(/\\([{}$%&#_ ])/g, '$1'))}</span>`; }
+      else if (n === 'mathbf' || n === 'textbf' || n === 'boldsymbol' || n === 'bm'){ out += `<b>${sub(group())}</b>`; }
+      else if (n === 'mathbb'){ out += [...group()].map(ch => TEX_BB[ch] || esc(ch)).join(''); }
+      else if (n === 'mathit' || n === 'textit' || n === 'emph' || n === 'mathcal' || n === 'mathscr' || n === 'mathfrak'){ out += `<i>${esc(group())}</i>`; }
+      else if (n === 'overline' || n === 'underline'){ out += `<span class="${n === 'overline' ? 'ov' : 'un'}">${sub(group())}</span>`; }
+      else if (TEX_ACC[n]){ out += sub(group()).replace(/(<\/i>)?$/, TEX_ACC[n] + '$1'); }
+      else if (n === 'left' || n === 'right' || n === 'middle' || /^[bB]igg?[lrm]?$/.test(n) || /style$/.test(n) || n === 'limits' || n === 'nolimits'){ if (s[i] === '.') i++; }
+      else if (n === 'begin'){
+        const env = group(), endTag = '\\end{' + env + '}', end = s.indexOf(endTag, i), body = end < 0 ? s.slice(i) : s.slice(i, end);
+        i = end < 0 ? s.length : end + endTag.length;
+        const rows = body.split(/\\\\/).filter(r => r.trim()).map(r => r.split(/(?<!\\)&/).map(x => sub(x.trim())).join('<span class="sp"></span>'));
+        const pm = /^([pbBvV]?)matrix$/.exec(env), br = pm ? ({p: '()', b: '[]', B: '{}', v: '||', V: '‖‖'}[pm[1]] || '') : env === 'cases' ? '{' : '';
+        out += `${esc(br[0] || '')}<span class="rows">${rows.map(r => `<span>${r}</span>`).join('')}</span>${esc(br[1] || '')}`; }
+      else if (n === 'end'){ group(); }
+      else if (n === '\\'){ out += '<br>'; }
+      else if (TEX_FN.has(n)){ out += (n === 'mod' || n === 'bmod' ? ' ' : '') + `<span class="fn">${n === 'bmod' ? 'mod' : n}</span> `; }
+      else if (Object.prototype.hasOwnProperty.call(TEX_SYM, n)){ out += esc(TEX_SYM[n]); }
+      else out += `<span class="fn">${esc(n)}</span>`;
+      continue; }
+    if (c === '^' || c === '_'){ i++; const t = c === '^' ? 'sup' : 'sub'; out += `<${t}>${sub(group())}</${t}>`; continue; }
+    if (c === '{' || c === '}'){ i++; continue; }
+    if (/[A-Za-z]/.test(c)){ let j = i; while (j < s.length && /[A-Za-z]/.test(s[j])) j++; out += `<i>${s.slice(i, j)}</i>`; i = j; continue; }
+    out += c === "'" ? '′' : c === '-' ? '−' : c === '~' ? ' ' : c === '*' ? '∗' : esc(c); i++;
+  }
+  return out;
+}
+const unesc = h => h.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+const MATH_IN = /\$\$([^$]+?)\$\$|\\\[(.+?)\\\]|\\\((.+?)\\\)|(^|[^\\\w$])\$(?=[^\s$])([^$\n]*?[^\s\\$])\$(?![\w$])/g;
+const mathSpan = (tex, disp) => `<span class="math${disp ? ' disp' : ''}">${texHtml(tex)}</span>`;
 function mdInline(s){
   const codes = [];
   let h = esc(s).replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+  const maths = [];                                     // math before links and emphasis: "a_1 * b_2" must not turn into <em>
+  h = h.replace(MATH_IN, (m0, dd, dk, ik, pre, ds) => { maths.push(mathSpan(unesc(dd ?? dk ?? ik ?? ds), dd != null || dk != null));
+    return (pre || '') + '\u0001' + (maths.length - 1) + '\u0001'; });
   h = h.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`)
        .replace(/(^|[\s(])(https?:\/\/[^\s<]+?)(?=[.,;:!?)]*(?:\s|$|<))/g, (_, a, u) => `${a}<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
   for (const [re, to] of MD_EM) h = h.replace(re, to);
+  h = h.replace(/\u0001(\d+)\u0001/g, (_, k) => maths[+k]);
   return h.replace(/\u0000(\d+)\u0000/g, (_, k) => '<code>' + codes[+k] + '</code>');
 }
 const mdTable = (lines, i) => lines[i].includes('|') && i + 1 < lines.length && lines[i + 1].includes('|') && lines[i + 1].includes('-') && MD_SEP.test(lines[i + 1]);
-const mdStarts = (lines, i) => MD_FENCE.test(lines[i]) || MD_HEAD.test(lines[i]) || MD_HR.test(lines[i]) || MD_QUOTE.test(lines[i]) || MD_ITEM.test(lines[i]) || mdTable(lines, i);
+const MD_MATH = /^\s*(\$\$|\\\[)/;
+const mdStarts = (lines, i) => MD_MATH.test(lines[i]) || MD_FENCE.test(lines[i]) || MD_HEAD.test(lines[i]) || MD_HR.test(lines[i]) || MD_QUOTE.test(lines[i]) || MD_ITEM.test(lines[i]) || mdTable(lines, i);
 function mdCells(l){ let t = l.trim(); if (t.startsWith('|')) t = t.slice(1); if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
   return t.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|')); }
 function mdList(lines, i){
@@ -3136,6 +3217,12 @@ function mdLite(text){
       const ind = m[1].length, close = new RegExp('^\\s*' + (m[2][0] === '`' ? '`' : '~') + '{' + m[2].length + ',}\\s*$'), lang = m[3].trim().split(/\s+/)[0] || '', body = [];
       for (i++; i < lines.length && !close.test(lines[i]); i++) body.push(lines[i].replace(new RegExp('^ {0,' + ind + '}'), ''));
       i++; out.push(codeBlock(body.join('\n'), lang || 'text', lang || 'snippet')); continue; }
+    if ((m = l.match(MD_MATH))){                         // display math: $$ … $$ or \[ … \], on one line or several
+      const closeRe = m[1] === '$$' ? /\$\$\s*$/ : /\\\]\s*$/; let body = l.trim().slice(2);
+      if (body.trim() && closeRe.test(body)){ body = body.replace(closeRe, ''); i++; }
+      else { const acc = [body]; for (i++; i < lines.length && !closeRe.test(lines[i]); i++) acc.push(lines[i]);
+        if (i < lines.length){ acc.push(lines[i].replace(closeRe, '')); i++; } body = acc.join('\n'); }
+      out.push(`<div class="math disp">${texHtml(body.trim())}</div>`); continue; }
     if ((m = l.match(MD_HEAD))){ const n = m[1].length, tag = n <= 2 ? 'h3' : n === 3 ? 'h4' : 'h5'; out.push(`<${tag}>${mdInline(m[2])}</${tag}>`); i++; continue; }
     if (MD_HR.test(l)){ out.push('<hr>'); i++; continue; }
     if (MD_QUOTE.test(l)){ const q = []; while (i < lines.length && MD_QUOTE.test(lines[i])) q.push(lines[i++].replace(/^\s{0,3}>\s?/, ''));
