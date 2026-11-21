@@ -55,6 +55,7 @@ for attempt in 1 2 3 4 5 6; do
       node=$(grep -a 'PRECHECK_FAIL' <<<"$L" | sed -n 's/.*node=\([^:]*\):.*/\1/p' | head -1)
       log "precheck failed: $(grep -a 'PRECHECK_FAIL' <<<"$L" | head -1 | sed 's/.*PRECHECK_FAIL //')"
       grep -a '^PRECHECK ' <<<"$L" | sed 's/^/    /'
+      tc cancel -j "$SJ" >/dev/null      # retry elsewhere, but stop this one first: a failed serve job kept a slot for 20+ min
       EXCL="${EXCL:+$EXCL,}$node"; SJ=""; continue 2
     fi
     if grep -aq 'Application startup complete' <<<"$L"; then
@@ -65,9 +66,10 @@ for attempt in 1 2 3 4 5 6; do
       log "serve job $SJ failed:"
       grep -a -e 'Error:' -e 'error:' <<<"$L" | grep -av 'frame #' | tail -4 | sed 's/^/    /'
       if [[ -n "$node" ]] && grep -aq -e 'Free memory on device' -e 'Address already in use' <<<"$L"; then
+        tc cancel -j "$SJ" >/dev/null
         EXCL="${EXCL:+$EXCL,}$node"; SJ=""; continue 2
       fi
-      SJ=""; exit 1
+      exit 1                              # the EXIT trap cancels $SJ
     fi
     st=$(grep -a -o -e 'torch.compile took [0-9.]* s' -e 'GPU KV cache size: [0-9,]* tokens' -e 'init engine.*took [0-9.]* s' <<<"$L" | tail -1)
     log "waiting for serve $SJ${node:+ @$node}${st:+ ($st)}"
