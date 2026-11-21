@@ -219,6 +219,26 @@ agent's turns (thought → action → real tool output → observation); the rig
 verdict, the replay result, and the budget counters. A `writeup.md` download appears when the run
 finishes.
 
+What the five pages do (⌘K / Ctrl+K opens one box that reaches all of them, plus challenges, runs,
+conversations, experiments, models and common actions):
+
+- **Solve** — a run can be watched step by step: *Step mode* holds every command until you run it,
+  edit it first, or skip it; *Pause*, *Stop*, and a hint box that the agent reads on its next step.
+  Held time is not charged to the wall-clock budget, and hints, edits and skips are marked in the
+  trace. Every step has *Explain this step in Ask*.
+- **Runs** — every attempt, replayable step by step.
+- **Lab** — experiments on the agent itself (see §3, *Lab experiments*): results with 95% intervals
+  and paired tests, *Compare* (one challenge × models × tiers × repeats, in parallel), *Batch* (one
+  model over N challenges, live challenge × tier map), *Diff* (two runs aligned step by step, first
+  divergence marked), *Probe* (does the bare model already know the flag?) and *TACC batch*.
+- **Upload** — your own files, or *Find a challenge online*: search a public archive of about 500
+  past CTFs on GitHub (`sajjadium/ctf-archives`) or paste a link. Solution files are never attached;
+  a real `flag.txt` becomes the gold flag (hash only); links to local or private addresses are refused.
+- **Ask** — the tutor. Each conversation picks its own model (hosted Gemini, a local endpoint, or
+  Qwen on TACC) from the chip under the input; a message held for Qwen can be sent to another model
+  at once. Every flag the tutor states is checked against the gold hash (or, without gold, against
+  the session's real command output) and marked; a wrong one gets one correction round.
+
 Screenshots: `flagpilot/docs/screenshots/01-solve.png`, `02-chat.png`; architecture:
 `flagpilot/docs/screenshots/architecture.svg`.
 
@@ -432,6 +452,28 @@ at request time.
 request does not carry a sampling seed, so these are repeated attempts, not seeded determinism; the
 distinction is stated wherever repetition counts are reported.
 
+**Lab experiments from the web page.** The Lab reads every batch on disk (`runs/tacc/<exp>/<batch>-B?`
+from the TACC pipeline and `runs/lab/<exp>/<arm>` from the page) with one reader: per arm the verified
+share and its Wilson 95% interval (forest plot), exact McNemar tests on pairs matched by challenge and
+repeat, a one-sentence conclusion, a challenge × arm map whose squares open the replay, a per-category
+table, and CSV / SVG export. Experiments started from the page run with memory off. Attempts that
+failed outside the model (HTTP 408/429/5xx, network errors, runner exceptions) are shown striped,
+left out of rates, intervals and tests, and can be re-run in place.
+
+Same 20 dev-split challenges, B0 and B3, one attempt each (2026-11-20):
+
+| Model | Where | B0 verified | B3 verified | median wall time (B0 / B3) |
+|---|---|---|---|---|
+| Qwen 3.8 27B AWQ | TACC, batch `v5` | 14/20 · 70% (48–85%) | 12/20 · 60% (39–78%) | 36 s / 47 s |
+| Gemini Flash-Lite | laptop, Lab `local/1120-134508-18b8` | 11/20 · 55% (34–74%) | 12/20 · 60% (39–78%) | 25 s / 27 s |
+
+No difference here is significant: Qwen vs Gemini at B0 has 3 vs 0 discordant pairs (McNemar
+p = 0.25), at B3 2 vs 2 (p = 1.00); B0 vs B3 within each model gives p = 0.50 (Qwen) and 1.00
+(Gemini). Gemini answered faster per call but took more turns (7.8 vs 6.5 at B0) and more often
+found a flag it could not back with a reproducible script (5 unverified vs 2 at B0). Five Gemini
+attempts first hit the free tier's per-minute quota; they were re-run and are counted above (see
+§4E). Twenty challenges cannot separate a 10-point gap; more challenges or repeats are needed.
+
 ### 4. Deployment on TACC
 
 Four paths. **Path A needs no cluster at all** and is what grading should use; the others exist
@@ -551,8 +593,11 @@ cd flagpilot && python3 -m flagpilot web --model gemini-flash-lite-latest --repl
   `GEMINI_API_KEY` / `GOOGLE_API_KEY` or the root `.env`. It is never logged or written into a run's
   fingerprint.
 - Only standard chat fields are sent. Flash-lite rejects `reasoning_effort: "none"` with a 400.
-- The free tier gets overloaded at times. A 429 or 503, or a stream that ends before any text, is
-  retried twice with the server's suggested delay, and the model event records `retries`.
+- The free tier gets overloaded at times. A 503, or a stream that ends before any text, is retried
+  twice. A 429 is read in full: a per-minute quota waits as long as the server says (`retryDelay` or
+  "retry in Ns", up to 65 s) for up to four retries; a daily quota fails at once with a plain reason.
+  The model event records `retries`. (The first Gemini Lab batch lost 5 of 40 attempts to the
+  per-minute quota because only the first 500 characters of the error were read.)
 - Measured on 2026-11-20 during a busy period: one call took 9-12 s, and demo-001 was verified in
   5 turns (170 s).
 - When Qwen on TACC is not connected, Ask and Solve's **Run** both use Gemini. TACC remains the path
@@ -582,15 +627,19 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 374 tests
-bash scripts/verify.sh                            # 13 feature checks (the last one drives the web UI)
+python3 -m unittest discover -s tests -t . -q     # 413 tests
+bash scripts/verify.sh                            # 14 feature checks (the last two drive the web UI)
+node scripts/ui_check.mjs                         # 76 browser checks in headless Chrome
+node scripts/click_all.mjs                        # clicks every control on every page: 90 controls
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 374 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all 413 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
-prints one line per check.
+prints one line per check. `ui_check` drives every page in headless Chrome with a mock model;
+`click_all` clicks each visible control once and fails on any error or any control that does
+nothing (controls that would start TACC jobs, delete, stop or reach the internet are left out).
 
 ### 7. Known limitations and expected variation
 
@@ -639,6 +688,10 @@ prints one line per check.
     material's *contents*; they cannot show that the reasoning was correct. A script that reads the
     material but still falls back to a hardcoded answer will pass if the decoy happens to satisfy its
     assertions.
+14. **The Qwen vs Gemini comparison is not like for like.** Qwen ran on TACC with the vendored
+    tools; Gemini ran on a laptop sandbox. The Gemini batch also ran after trimming started to keep
+    flag-like lines from the cut middle of long output (B1–B3; the `v5` Qwen batch used plain
+    head/tail trimming). Treat the table in §3 as a sanity check, not a model ranking.
 
 ### 8. Troubleshooting
 

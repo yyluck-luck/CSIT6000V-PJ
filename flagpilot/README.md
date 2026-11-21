@@ -30,12 +30,14 @@ python3 -m flagpilot show --run-dir /path/to/runs/<batch>/<task>-s0   # 终端�
 ## 改完代码先跑这两条
 
 ```bash
-bash scripts/verify.sh                                       # 12 项自检，不花 GPU
-python3 -m unittest discover -s tests -t . -q                # 374 条单元/集成测试
+bash scripts/verify.sh                                       # 14 项自检，不花 GPU（最后两项开无头 Chrome）
+python3 -m unittest discover -s tests -t . -q                # 413 条单元/集成测试
+node scripts/ui_check.mjs                                    # 76 项网页交互检查
+node scripts/click_all.mjs                                   # 每个页面的每个控件点一遍（90 个）
 ```
 
 `verify.sh` 会**自己造一套合成题库**（临时目录，跑完删掉），所以它不依赖外部题库，
-也不假设"题库里某道题 mock 恰好能解"。助教刚 clone 下来直接跑也能 12/12。
+也不假设"题库里某道题 mock 恰好能解"。助教刚 clone 下来直接跑也能 14/14（没有 Node / Chrome 时网页两项记为跳过）。
 
 真实实验才需要 `FLAGPILOT_TASKS` 指向 picoCTF 题库（见 [docs/DATASET.md](docs/DATASET.md)）。
 
@@ -70,11 +72,14 @@ flagpilot/
 │   └── cli.py              子命令入口
 ├── app/                    Web 界面
 │   ├── server.py           零依赖 HTTP + SSE
+│   ├── lab.py              Lab：实验读取、Wilson 区间、配对 McNemar、本地实验调度、失败重跑
+│   ├── catalog.py          在线题库：GitHub 赛题归档搜索 / 预览 / 导入，贴链接导入（防 SSRF）
+│   ├── tacc_live.py        网页上的 TACC 会话（只走课程 SDK）
 │   └── index.html          单页前端（无构建步骤）
 ├── demo-tasks/             ★ 内置合成题（3 道），供快速验证与自检
 ├── deploy/                 TACC / Slurm 提交脚本（通用集群模板）
 ├── scripts/                本地启停、自检、划分生成、H 轨一命令
-├── tests/                  210 条测试
+├── tests/                  413 条测试
 └── docs/                   设计、题库、TACC、实现状态
 ```
 
@@ -95,7 +100,9 @@ runs/<batch>/gpu.jsonl                   GPU 秒账本（检测到 GPU 时才写
 | 模块 | 文件 | 上手成本 |
 |---|---|---|
 | Agent / 判据 | `flagpilot/agent.py`、`verify.py` | 需要理解四态与重放逻辑 |
-| 前端 | `app/index.html` | 单文件，无构建，改完刷新即可 |
+| 前端 | `app/index.html` | 单文件，无构建，改完刷新即可；`scripts/ui_check.mjs`、`click_all.mjs` 是它的测试 |
+| 人在回路 | `flagpilot/control.py` | 单步 / 暂停 / 插提示：`run_attempt(control=...)`，批跑与 CLI 不传 |
+| Lab / 在线题库 | `app/lab.py`、`app/catalog.py` | 各有测试：`tests/test_lab.py`、`tests/test_catalog.py` |
 | 评测 / 指标 | `flagpilot/metrics.py`、`runner.py`、`tagger.py` | 主要看 Wilson 与归因表 |
 | 存储 / 加密 | `flagpilot/storage.py`、`writeup.py` | 见 [docs/WRITEUPS_AND_STORAGE.md](docs/WRITEUPS_AND_STORAGE.md) |
 | 部署 | `deploy/*.slurm` | 只需要改 `env.sh` 里的四个变量 |
