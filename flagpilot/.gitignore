@@ -30,3 +30,5 @@ logs/
 
 # Local storage encryption keys
 *.fernet.key
+# temporary run folders an older version left inside a task set
+demo-tasks/.*-tmp/

@@ -238,10 +238,14 @@ def dry_run(
         return DryRunResult(False, "no_output", stderr="没有提供脚本")
 
     dest = _make_run_dir(task, tasks_root, keep_dir, "dryrun")
-    _stage(dest, task, tasks_root, with_material=True)
-    res = _run_script(dest, script, timeout_s, limits)
-    stdout = res.stdout or ""
-    tail = _stderr_tail(res.stderr, dest)
+    try:
+        _stage(dest, task, tasks_root, with_material=True)
+        res = _run_script(dest, script, timeout_s, limits)
+        stdout = res.stdout or ""
+        tail = _stderr_tail(res.stderr, dest)
+    finally:
+        if keep_dir is None:                # nobody keeps it: do not leave it in the task set (.dryrun-tmp piled up)
+            shutil.rmtree(dest, ignore_errors=True)
 
     if res.timed_out:
         return DryRunResult(False, "timeout", stdout, tail, res.exit_code,
@@ -533,6 +537,20 @@ def evaluate(
         return ReplayResult("unverified", "no_output", "没有提供 solve.py",
                             gold_checked=gold_known)
 
+    if keep_dir is None:
+        # 没人要留证据（rescore、测试）：重放和材料检验都放进本次专用的目录，用完删掉。以前放在题库的
+        # .replay-tmp 下不删，材料检验的子目录（no-material 等）还在几次评测之间共用同一个父目录。
+        own = _make_run_dir(task, tasks_root, None, "replay")
+        try:
+            return _replay(task, submitted_flag, script, tasks_root, timeout_s, limits, own / "replay", material_free, gold_known)
+        finally:
+            shutil.rmtree(own, ignore_errors=True)
+    return _replay(task, submitted_flag, script, tasks_root, timeout_s, limits, Path(keep_dir), material_free, gold_known)
+
+
+def _replay(task: Task, submitted_flag: str, script: str, tasks_root: Path, timeout_s: float,
+            limits: SandboxLimits | None, keep_dir: Path, material_free: bool, gold_known: bool) -> ReplayResult:
+    """evaluate 的后半段：干净目录重放，再做材料检验。keep_dir 是本次重放的目录，检验目录建在它旁边。"""
     # 第三道：干净目录重跑
     replay_dir = _make_run_dir(task, tasks_root, keep_dir, "replay")
     # 只从题库根目录拷附件，不用 agent 工作目录里的副本——
