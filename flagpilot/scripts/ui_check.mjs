@@ -230,11 +230,32 @@ try {
   await js("document.querySelector('#runTacc').click()");
   const qAsked = await until("!document.querySelector('#dlgWrap').hidden && /ends in/.test(document.querySelector('#dlgWrap').textContent)", 3000);
   await js("[...document.querySelectorAll('#dlgWrap .btn')].find(b => /Not now/.test(b.textContent)).click()");
-  const declined = await until("document.querySelector('#dlgWrap').hidden", 2000) && await js("window.__posts3.length === 0 && !pendingRun");
+  const dlgGone = await until("document.querySelector('#dlgWrap').hidden", 3000), noPost = await js("window.__posts3.length === 0"), noPending = await js("!pendingRun");
+  const declined = dlgGone && noPost && noPending;
   await js("window.fetch = window.__F3; QW = {phase: 'idle'}; qwenPoll()");
   check("Qwen panel shows each start-up step live; a session about to end asks before a run", pIdle && pStart && pClosed && qAsked && declined && !smallPanel.length,
-    JSON.stringify({pIdle, pStart, pClosed, qAsked, declined, small: smallPanel.slice(0, 3)}));
+    JSON.stringify({pIdle, pStart, pClosed, qAsked, dlgGone, noPost, noPending, posts: await js('window.__posts3'), dlg: await js("(() => { const w = document.querySelector('#dlgWrap'); return [w.hidden, w.className, (w.querySelector('#dlgT') || {}).textContent || '', w.querySelectorAll('.btn').length]; })()"), small: smallPanel.slice(0, 3)}));
   await noCJK("solve, after the Qwen panel");
+
+  // 5e. pasting a link: several matches → a list to pick from; a challenge already here → offered at once; fixes are shown
+  await js("document.querySelector('.navbtn[data-page=\"upload\"]').click()");
+  await js("document.querySelector('#impSeg button[data-imp=\"link\"]').click()");
+  await js(`(() => { window.__F4 = window.fetch; window.__imp = [];
+    window.fetch = (u, o) => { if (u === '/api/catalog/import'){ const b = JSON.parse(o.body); window.__imp.push(b);
+        if (b.url === 'github.com/acme/ctf2024') return Promise.resolve(new Response(JSON.stringify({error: 'acme/ctf2024 holds 2 challenges; pick one', corrected: ['added https://'],
+          choices: [{label: 'crypto/Baby_RSA', url: 'https://github.com/acme/ctf2024/tree/main/crypto/Baby_RSA'}, {label: 'pwn/babyrop', url: 'https://github.com/acme/ctf2024/tree/main/pwn/babyrop', files: 2}]}), {status: 409, headers: {'Content-Type': 'application/json'}}));
+        return Promise.resolve(new Response(JSON.stringify({local: {name: 'demo-001', title: 'Decode the data file'}, corrected: ['this picoCTF challenge is already in your challenge list']}), {headers: {'Content-Type': 'application/json'}})); }
+      return window.__F4(u, o); }; })()`);
+  await js("(() => { const i = document.querySelector('#impUrl'); i.value = 'github.com/acme/ctf2024'; document.querySelector('#impUrlGo').click(); })()");
+  const impChoices = await until("document.querySelectorAll('#impUrlMsg [data-impchoice]').length === 2 && /Fixed the link: added https/.test(document.querySelector('#impUrlMsg').textContent)", 4000);
+  await js("document.querySelector('#impUrlMsg [data-impchoice=\"1\"]').click()");
+  const impPicked = await until("window.__imp.length === 2 && window.__imp[1].url === 'https://github.com/acme/ctf2024/tree/main/pwn/babyrop'", 3000);
+  const impLocal = await until("/Already in your challenge list: demo-001/.test(document.querySelector('#impUrlMsg').textContent) && document.querySelector('#impSolve')", 4000);
+  await js("window.fetch = window.__F4");
+  check("pasting a link: several matches become a list, a challenge already here is offered, fixes are shown", impChoices && impPicked && impLocal, JSON.stringify({impChoices, impPicked, impLocal}));
+  await noCJK("import");
+  await js("document.querySelector('#impSeg button[data-imp=\"search\"]').click()");
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
 
   // 6. runs + replay
   await js("document.querySelector('.navbtn[data-page=\"history\"]').click()");

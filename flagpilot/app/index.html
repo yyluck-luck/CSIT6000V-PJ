@@ -415,6 +415,7 @@
   .qlog{margin-top:14px} .qlog summary{cursor:pointer;font:700 16px var(--font)} .qlog pre{margin:8px 0 0;max-height:240px;overflow:auto;background:var(--paper);border-left:4px solid var(--ink);padding:10px 12px;font:15px/1.5 var(--mono);white-space:pre-wrap;word-break:break-all}
   @media (prefers-reduced-motion: reduce){ .qbar.ind i,.qsteps li.current .qi{animation:none} }
   /* run again with a hint, from the result */
+  .impcard .fixed{color:var(--blue)}
   .hintre{display:flex;gap:10px;flex:1 1 100%;margin-top:10px} .hintre input{flex:1;min-width:0;font:16px var(--font);padding:9px 12px;border:1.5px solid var(--ink);background:var(--white)}
   #runCtl.tacc .toggle,#runCtl.tacc #ctlPause,#runCtl.tacc .hintbox{display:none}
   /* customise an imported challenge */
@@ -1014,7 +1015,7 @@
           <div id="impRes"></div><div id="impPrev"></div>
         </div>
         <div class="impp" data-imp="link" hidden>
-          <div class="impbar"><input type="url" id="impUrl" placeholder="https://github.com/…/tree/main/… or a link to a file" autocomplete="off" spellcheck="false" aria-label="Challenge link">
+          <div class="impbar"><input type="text" id="impUrl" placeholder="A GitHub folder or file, a file link, a picoCTF practice link, or a challenge's name" autocomplete="off" spellcheck="false" aria-label="Challenge link or name">
             <button class="btn primary" id="impUrlGo"><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg>Import<span class="arr">→</span></button></div>
           <div id="impUrlMsg"></div>
         </div>
@@ -2848,9 +2849,10 @@ function choose({title, body, buttons}){
     w.innerHTML = `<div class="back" data-v=""></div><div class="tp" role="alertdialog" aria-modal="true" aria-labelledby="dlgT" aria-describedby="dlgB">
       <div class="hd"><h3 id="dlgT">${esc(title)}</h3></div><p class="dlgb" id="dlgB">${esc(body)}</p>
       <div class="actions">${buttons.map((b, i) => `<button class="btn${b.primary ? ' primary' : ''}" type="button" data-v="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
-    w.hidden = false; requestAnimationFrame(() => w.classList.add('open'));
+    /* closed before its first frame (a quick click, Esc at once): the frame must not open it again (it stayed on screen) */
+    let shut = false; w.hidden = false; requestAnimationFrame(() => { if (!shut) w.classList.add('open'); });
     const key = e => { if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); close(null); } };
-    const close = v => { document.removeEventListener('keydown', key, true); w.classList.remove('open');
+    const close = v => { if (shut) return; shut = true; document.removeEventListener('keydown', key, true); w.classList.remove('open');
       setTimeout(() => { if (!w.classList.contains('open')){ w.hidden = true; w.innerHTML = ''; } }, 220); try { prev && prev.focus({preventScroll: true}); } catch(_){} res(v); };
     document.addEventListener('keydown', key, true);
     w.querySelectorAll('[data-v]').forEach(el => el.addEventListener('click', () => close(el.dataset.v === '' ? null : buttons[+el.dataset.v].value)));
@@ -3119,13 +3121,30 @@ async function impPreview(path){
     + `<div class="actions"><button class="btn primary" data-import="${esc(path)}">${ORBIT}Import<span class="arr">→</span></button></div></div>`;
   host.scrollIntoView({block: 'nearest', behavior: reduced() ? 'auto' : 'smooth'});
 }
+/* what the server changed in a pasted link, so the user sees why the import worked */
+const impFixed = notes => notes && notes.length ? `<p class="hint fixed">Fixed the link: ${notes.map(n => esc(n)).join('; ')}.</p>` : '';
 async function impImport(body, btn, host){
   btn.disabled = true; btn.classList.add('busy');
   try {
-    const d = await impJSON('/api/catalog/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const r = await fetch('/api/catalog/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}), d = await r.json().catch(() => ({}));
+    if (r.status === 409 && d.choices && d.choices.length){            // several challenges fit: pick one
+      host.innerHTML = `<div class="impcard"><h3>${esc(en(d.error || 'Pick one'))}</h3>${impFixed(d.corrected)}<div class="list imprs">`
+        + d.choices.map((c, i) => `<button type="button" class="row impr" data-impchoice="${i}"><div style="min-width:0"><div class="nm">${esc(c.label)}</div>`
+          + `${c.files ? `<div class="ds">${plural(c.files, 'file')}</div>` : ''}</div><span class="arr">→</span></button>`).join('') + '</div></div>';
+      host.querySelectorAll('[data-impchoice]').forEach(b => b.onclick = () => { const c = d.choices[+b.dataset.impchoice];
+        impImport(c.archive ? {path: c.archive} : {url: c.url}, b, host); });
+      return; }
+    if (!r.ok || d.error) throw new Error(d.error || ('HTTP ' + r.status));
+    if (d.local){                                                       // already in this copy's challenge list
+      const all = await loadTasks(), t = (all.tasks || []).find(x => x.name === d.local.name);
+      host.innerHTML = `<div class="impcard"><h3>Already in your challenge list: ${esc(d.local.name)}</h3>${impFixed(d.corrected)}<p class="hint">${esc(d.local.title)}</p>`
+        + `<div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
+      $('#impSolve').onclick = () => { if (t) pick(t); go('solve'); };
+      $('#impAsk').onclick = () => { if (t) pick(t); go('chat'); };
+      return; }
     const all = await loadTasks(), nw = (all.custom_tasks || []).find(x => x.name === d.task.name);
     host.innerHTML = `<div class="impcard"><h3>Imported: ${d.task.source ? `<a class="srclink" data-task="${esc(d.task.name)}" href="${esc(d.task.source)}" target="_blank" rel="noopener noreferrer">${esc(d.task.title)}<span class="ext" aria-hidden="true">↗</span></a>` : esc(d.task.title)}</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known: a solve can be verified' : 'no gold flag: a solve cannot be confirmed correct'}${d.service ? ' · network service: likely unsolvable offline' : ''}`
-      + `${d.skipped && d.skipped.length ? ' · left out ' + plural(d.skipped.length, 'file') : ''}</p><div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
+      + `${d.skipped && d.skipped.length ? ' · left out ' + plural(d.skipped.length, 'file') : ''}</p>${impFixed(d.corrected)}<div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
     customEditor(host.querySelector('.impcard'), d.task.name);
     $('#impSolve').onclick = () => { if (nw) pick(nw); go('solve'); };
     $('#impAsk').onclick = () => { if (nw) pick(nw); go('chat'); };
@@ -3141,7 +3160,8 @@ $('#pUpload').addEventListener('click', e => {
 });
 $('#impUrlGo').onclick = () => { const u = $('#impUrl').value.trim(); if (!u){ $('#impUrl').focus(); return; } impImport({url: u}, $('#impUrlGo'), $('#impUrlMsg')); };
 $('#impUrl').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); $('#impUrlGo').click(); } });
-$('#sheetOnline').onclick = () => { closeSheet(); go('upload'); setTimeout(() => $('#impQ').focus({preventScroll: false}), 60); };
+$('#sheetOnline').onclick = () => { closeSheet(); go('upload'); const b = $('#impSeg button[data-imp="search"]'); if (b && !b.classList.contains('on')) b.click();
+  setTimeout(() => $('#impQ').focus({preventScroll: false}), 60); };
 
 /* ---------------- challenge preview: the statement, the files and the original page, without leaving the site ---------------- */
 let tpBack = null, tpRaf = 0, tpSeq = 0;

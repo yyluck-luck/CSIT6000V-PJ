@@ -125,7 +125,9 @@ def _get(url: str, limit: int | None = None, accept: str = "application/vnd.gith
             reset = int(e.headers.get("X-RateLimit-Reset") or 0)
             raise CatalogError("GitHub's hourly limit for anonymous requests is used up; it resets at "
                                f"{time.strftime('%H:%M', time.localtime(reset))}. Set GITHUB_TOKEN to raise it.")
-        raise CatalogError(f"The server answered HTTP {e.code}")
+        err = CatalogError(f"The server answered HTTP {e.code}")
+        err.code = e.code                     # linkfix tells "not there" (404 / 422) from other failures
+        raise err
     except urllib.error.URLError as e:
         raise CatalogError(f"Could not reach {urllib.parse.urlsplit(url).hostname}: {e.reason}")
     if limit and len(data) > limit:
@@ -330,9 +332,11 @@ def _unique(names: list[str]) -> list[str]:
     return out
 
 
-def _create(title: str, query: str, category: str, got: list[tuple[str, bytes]], gold: str, source: str = ""):
-    if not got:
-        raise CatalogError("Nothing to import: no attachments left after leaving out solutions")
+def _create(title: str, query: str, category: str, got: list[tuple[str, bytes]], gold: str, source: str = "",
+            described: bool = False):
+    """described: the statement itself holds the material (picoCTF 2019 "13": a ROT13 line in the README, no files)."""
+    if not got and not described:
+        raise CatalogError("Nothing to import: no attachments left after leaving out solutions, and no description")
     if sum(len(b) for _, b in got) > custom.MAX_TOTAL_BYTES:
         raise CatalogError("The attachments add up to more than 128 MB")
     return custom.create(title=title[:200], query=query[:6000], files=got, category=category or "custom", gold=gold, source=source)
@@ -351,7 +355,7 @@ def import_archive(path: str) -> dict:
     query = (pv["readme"].strip() or f"Challenge {parts[-1]} from {ctf} {year}".strip()) + f"\n\n(Imported from {REPO}: {path})"
     if pv["service"]:
         query += "\n\n" + SERVICE_NOTE
-    task = _create(pv["title"], query, cat, got, gold, pv["source"])
+    task = _create(pv["title"], query, cat, got, gold, pv["source"], described=bool(pv["readme"].strip()))
     return {"task": task, "gold": bool(gold), "service": pv["service"], "skipped": pv["skipped"], "source": pv["source"]}
 
 
@@ -359,33 +363,48 @@ _GH_TREE = re.compile(r"^https://github\.com/([\w.-]+)/([\w.-]+)/tree/([^/]+)/(.
 _GH_BLOB = re.compile(r"^https://github\.com/([\w.-]+)/([\w.-]+)/blob/([^/]+)/(.+)$")
 
 
-def import_url(url: str) -> dict:
-    """贴链接导入：GitHub 目录 / GitHub 文件 / 任意 http(s) 文件。"""
-    url = (url or "").strip()
-    check_url(url)
-    m = _GH_TREE.match(url)
-    if m:
-        owner, repo, ref, path = m.groups()
-        tree = json.loads(_get(f"{API}/repos/{owner}/{repo}/git/trees/{urllib.parse.quote(ref + ':' + path, safe=':')}?recursive=1"))
-        files = [[x["path"], int(x.get("size") or 0)] for x in tree.get("tree") or [] if x.get("type") == "blob"]
-        keep, skip, flag_file = _plan(files)
-        raw = lambda rel: f"{RAW}/{owner}/{repo}/{ref}/" + urllib.parse.quote(f"{path}/{rel}")    # noqa: E731
-        readme = next((rel for rel, _ in files if rel.lower() == "readme.md"), None)
-        text = _get(raw(readme), limit=README_MAX, accept="*/*").decode("utf-8", "replace") if readme else ""
-        got = [(n, _get(raw(rel), limit=custom.MAX_FILE_BYTES, accept="*/*")) for n, (rel, _) in zip(_unique([r for r, _ in keep]), keep)]
-        gold = gold_from(_get(raw(flag_file), limit=400, accept="*/*").decode("utf-8", "replace")) if flag_file else ""
-        name = path.rstrip("/").rpartition("/")[2]
-        cat = next((CATS[p.lower()] for p in path.split("/")[:-1] if p.lower() in CATS), "")
-        service = is_service(files, text, path)
-        task = _create(readme_title(text) or name, (text.strip() or f"Challenge {name}") + f"\n\n(Imported from {url})" + ("\n\n" + SERVICE_NOTE if service else ""), cat, got, gold, url)
-        return {"task": task, "gold": bool(gold), "service": service, "skipped": skip, "source": url}
-    m = _GH_BLOB.match(url)
-    if m:
-        owner, repo, ref, path = m.groups()
-        url = f"{RAW}/{owner}/{repo}/{ref}/{path}"
+def _import_dir(owner: str, repo: str, ref: str, path: str, files: list[list], source: str) -> dict:
+    """Import one challenge folder of a GitHub repository; files are [relative path, size] inside it."""
+    keep, skip, flag_file = _plan(files)
+    base = f"{RAW}/{owner}/{repo}/{urllib.parse.quote(ref, safe='/')}/"
+    raw = lambda rel: base + urllib.parse.quote(f"{path}/{rel}" if path else rel)      # noqa: E731
+    readme = next((rel for rel, _ in files if rel.lower() == "readme.md"), None)
+    text = _get(raw(readme), limit=README_MAX, accept="*/*").decode("utf-8", "replace") if readme else ""
+    got = [(n, _get(raw(rel), limit=custom.MAX_FILE_BYTES, accept="*/*")) for n, (rel, _) in zip(_unique([r for r, _ in keep]), keep)]
+    gold = gold_from(_get(raw(flag_file), limit=400, accept="*/*").decode("utf-8", "replace")) if flag_file else ""
+    name = path.rstrip("/").rpartition("/")[2] or repo
+    cat = next((CATS[p.lower()] for p in path.split("/")[:-1] if p.lower() in CATS), "")
+    service = is_service(files, text, path)
+    task = _create(readme_title(text) or name, (text.strip() or f"Challenge {name}") + f"\n\n(Imported from {source})"
+                   + ("\n\n" + SERVICE_NOTE if service else ""), cat, got, gold, source, described=bool(text.strip()))
+    return {"task": task, "gold": bool(gold), "service": service, "skipped": skip, "source": source}
+
+
+def _import_file(url: str, source: str = "") -> dict:
     name = urllib.parse.unquote(urllib.parse.urlsplit(url).path.rpartition("/")[2]) or "download.bin"
     if _SOLUTION.match(name):
         raise CatalogError("That file looks like a solution, not a challenge")
     data = _get(url, limit=custom.MAX_FILE_BYTES, accept="*/*")
-    task = _create(name, f"Challenge file {name}.\n\n(Imported from {url})", "", [(name, data)], "", url)
-    return {"task": task, "gold": False, "skipped": [], "source": url}
+    task = _create(name, f"Challenge file {name}.\n\n(Imported from {source or url})", "", [(name, data)], "", source or url)
+    return {"task": task, "gold": False, "skipped": [], "source": source or url}
+
+
+def import_url(url: str, ask=None) -> dict:
+    """贴链接导入。链接先经 app/linkfix.resolve 纠正（补 https、换成存在的分支、找到真正的路径、单个文件换成它所在的
+    题目目录、平台页面或题名到题库里找），每处改动记在 "corrected" 里给页面看；好几道题都对得上时抛 linkfix.Choose。"""
+    from app import linkfix
+    r = linkfix.resolve(url, ask=ask)
+    notes = r.get("notes") or []
+    if r["kind"] == "local":
+        return {"local": {"name": r["task"], "title": r["title"]}, "corrected": notes}
+    if r["kind"] == "archive":
+        out = import_archive(r["path"])
+    elif r["kind"] == "github":
+        out = _import_dir(r["owner"], r["repo"], r["ref"], r["dir"], r["files"],
+                          f"https://github.com/{r['owner']}/{r['repo']}/tree/{r['ref']}" + (f"/{r['dir']}" if r["dir"] else ""))
+    elif r["kind"] == "github_file":
+        raw = f"{RAW}/{r['owner']}/{r['repo']}/{urllib.parse.quote(r['ref'], safe='/')}/" + urllib.parse.quote(r["file"])
+        out = _import_file(raw, f"https://github.com/{r['owner']}/{r['repo']}/blob/{r['ref']}/{r['file']}")
+    else:
+        out = _import_file(r["url"])
+    return {**out, "corrected": notes}

@@ -40,7 +40,7 @@ from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
-from app import catalog, drafting, httpcache, lab, runs_index, tacc, tacc_live
+from app import catalog, drafting, httpcache, lab, linkfix, runs_index, tacc, tacc_live
 from flagpilot.control import OPS, RunControl
 
 STATIC = Path(__file__).resolve().parent / "index.html"
@@ -399,6 +399,18 @@ def _new_control(payload: dict) -> RunControl:
     if hint:
         ctl.set("hint", hint)
     return ctl
+
+
+def _link_ask():
+    """给 linkfix 的模型：链接里的路径或页面对不上时，从真实候选里挑一个（它的回答只有在候选里才算）。演示模型不用。"""
+    cfg = _make_cfg("web-import")
+    if cfg.model.name == "mock":
+        return None
+    client = llm_client.build_client(cfg.model)
+
+    def ask(prompt: str) -> str:
+        return client.complete([{"role": "user", "content": prompt}], max_tokens=200).text or ""
+    return ask
 
 
 def _hint_of(payload: dict) -> str:
@@ -906,13 +918,17 @@ class Handler(BaseHTTPRequestHandler):
             if payload.get("path"):
                 r = catalog.import_archive(str(payload["path"])[:600])
             elif payload.get("url"):
-                r = catalog.import_url(str(payload["url"])[:2000])
+                r = catalog.import_url(str(payload["url"])[:2000], ask=_link_ask())
             else:
                 return self._json(400, {"error": "path or url required"})
+        except linkfix.Choose as c:          # 好几道题都对得上：页面列出来让人挑
+            return self._json(409, {"error": c.why, "choices": c.choices, "corrected": c.notes})
         except catalog.CatalogError as e:
             return self._json(502, {"error": str(e)})
         except ValueError as e:              # custom.create 的输入校验
             return self._json(400, {"error": str(e)})
+        if r.get("local"):                   # 本机题库里已有这道题：不用导入
+            return self._json(200, r)
         t = r["task"]
         return self._json(200, {**r, "task": {"name": t.name, "title": t.title, "category": t.category,
                                               "has_gold": t.has_gold, "n_assets": len(t.assets), "source": t.source}})
