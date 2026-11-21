@@ -2931,7 +2931,25 @@ async function sendChat(){
     else if (ev.type === 'error'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = `<span class="bad">${esc(en(ev.message))}</span>`; finish(); settle(false, ev.message);
       setStatus('Error', 'bad', en(ev.message)); closed = true; es.close(); done(false); }
   };
-  es.onerror = () => { if (closed) return; es.close(); done(false); if (!acc){ attach(); body.innerHTML = '<span class="bad">The stream was interrupted.</span>'; } finish(); settle(false, 'stream interrupted'); setStatus('Ready'); };
+  /* the stream dropped: the server keeps going and writes the reply into the thread, so pick it up from there instead of giving up */
+  es.onerror = () => { if (closed) return; es.close(); stage('Connection dropped; picking the reply up again'); onHold('reconnecting'); resume(); };
+  const resume = async () => {
+    const t0r = Date.now(), sid = chatId; let turn = null;
+    while (!closed && Date.now() - t0r < 12 * 60000){
+      await sleep(2000);
+      let d; try { d = await (await fetch('/api/chat/history?id=' + encodeURIComponent(sid), {cache: 'no-store'})).json(); } catch(_){ continue; }
+      const ms = d.messages || [];
+      if (turn == null){ const u = ms.filter(m => m.type === 'user').pop(); if (!u) continue; turn = u.turn; }
+      const r = ms.find(m => (m.type === 'reply' || m.type === 'error') && m.turn === turn); if (!r || closed) continue;
+      closed = true; if (raf){ cancelAnimationFrame(raf); raf = 0; }
+      if (r.type === 'reply'){ attach(); body.innerHTML = markFlags(mdLite(r.answer || '(no content)'), r.flag_checks) + (r.model ? `<p class="who">${esc(prettyModel(r.model))}</p>` : '');
+        finish(); settle(true); chatTurns += 1; done(true); }
+      else { attach(); body.innerHTML = `<span class="bad">${esc(en(r.error || 'the request failed'))}</span>`; finish(); settle(false, r.error); done(false); }
+      setStatus('Ready'); scrollChat(); return;
+    }
+    if (!closed){ closed = true; done(false); if (!acc){ attach(); body.innerHTML = '<span class="bad">The connection dropped and the reply did not come back in time. Reopen this conversation later to see it.</span>'; }
+      finish(); settle(false, 'stream interrupted'); setStatus('Ready'); }
+  };
 }
 $('#sendChat').onclick = sendChat;
 $('#chatTools').onchange = showMount;

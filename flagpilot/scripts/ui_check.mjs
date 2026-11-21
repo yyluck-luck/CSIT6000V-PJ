@@ -367,6 +367,14 @@ try {
   await js("window.EventSource = window.__ES; document.querySelector('.navbtn[data-page=\"chat\"]').click()");
   const dotOff = await until("!document.querySelector('.navbtn[data-page=\"chat\"]').classList.contains('note')", 1000);
   check("rail: a reply running behind another page rings its item, leaves a dot when done, opening Ask clears it", ringOn && dotOn && dotOff, JSON.stringify({ringOn, dotOn, dotOff}));
+  // the stream drops mid-reply: the server finishes anyway and the page picks the reply up from the thread log
+  await js("document.querySelector('#newChat').click()"); await sleep(200);
+  await js(`(() => { window.__ES = window.EventSource;
+    window.EventSource = class { constructor(){ setTimeout(() => { this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_delta', text: 'Partial '})}); setTimeout(() => this.onerror && this.onerror(new Event('error')), 80); }, 60); } close(){} }; })()`);
+  await typeMsg("survive a dropped connection");
+  const recovered = await until("(() => { const b = [...document.querySelectorAll('#chatLog .bub.bot')].pop(), md = b && b.querySelector('.md'); return md && md.textContent.length > 20 && !/interrupted|did not come back/.test(b.textContent) && b.querySelector('.who') && !document.querySelector('#chatLog .rcpt'); })()", 15000);
+  await js("window.EventSource = window.__ES");
+  check("Ask: a dropped stream does not lose the reply; it is picked up from the thread", recovered);
   // who answers is chosen per conversation: a menu on the chip; a message held for Qwen can go to another model at once
   await js("document.querySelector('#newChat').click(); localStorage.removeItem('fp.ask.pick'); localStorage.removeItem('fp.ask.threads'); useThreadPick(newPick())");
   await sleep(300);                                   // let the page's own focus-the-input frame pass first
