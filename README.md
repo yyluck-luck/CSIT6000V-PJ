@@ -627,7 +627,7 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 413 tests
+python3 -m unittest discover -s tests -t . -q     # 414 tests
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web UI)
 node scripts/ui_check.mjs                         # 76 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 90 controls
@@ -635,7 +635,7 @@ node scripts/click_all.mjs                        # clicks every control on ever
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 413 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all 414 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check. `ui_check` drives every page in headless Chrome with a mock model;
 `click_all` clicks each visible control once and fails on any error or any control that does

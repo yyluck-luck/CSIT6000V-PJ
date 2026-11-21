@@ -31,7 +31,7 @@ python3 -m flagpilot show --run-dir /path/to/runs/<batch>/<task>-s0   # 终端�
 
 ```bash
 bash scripts/verify.sh                                       # 14 项自检，不花 GPU（最后两项开无头 Chrome）
-python3 -m unittest discover -s tests -t . -q                # 413 条单元/集成测试
+python3 -m unittest discover -s tests -t . -q                # 414 条单元/集成测试
 node scripts/ui_check.mjs                                    # 76 项网页交互检查
 node scripts/click_all.mjs                                   # 每个页面的每个控件点一遍（90 个）
 ```
@@ -79,7 +79,7 @@ flagpilot/
 ├── demo-tasks/             ★ 内置合成题（3 道），供快速验证与自检
 ├── deploy/                 TACC / Slurm 提交脚本（通用集群模板）
 ├── scripts/                本地启停、自检、划分生成、H 轨一命令
-├── tests/                  413 条测试
+├── tests/                  414 条测试
 └── docs/                   设计、题库、TACC、实现状态
 ```
 
