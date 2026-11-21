@@ -71,10 +71,10 @@ class TestWebAPI(unittest.TestCase):
                         raise AssertionError("chat 出错：" + str(ev.get("message")))
         return None
 
-    def upload(self, title, content=b"flag: picoCTF{upload_web_1234}\n", gold=""):
+    def upload(self, title, content=b"flag: picoCTF{upload_web_1234}\n", gold="", query="附件里直接写着答案"):
         return self.post("/api/upload", {
             "title": title,
-            "query": "附件里直接写着答案",
+            "query": query,
             "category": "misc",
             "gold": gold,
             "files": [{"name": "note.txt", "data_b64": base64.b64encode(content).decode()}],
@@ -494,6 +494,44 @@ class TestWebAPI(unittest.TestCase):
                 ctx.exception.close()
         finally:
             self.post("/api/custom/delete", {"task": name})
+
+    def test_a_made_up_flag_is_not_saved_as_the_answer_by_accident(self):
+        """babyheap（2026-11-20）：模型编了一个 flag，又被当成答案存了进去，下一次编同一个 flag 就显示"Right flag"。
+        存的正是这次没能证明的 flag 时要先确认；存错了能删掉。"""
+        name = self.upload("a service challenge")["task"]["name"]
+        made_up = "flag{babyheap_0ctf_2017_solved}"
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post("/api/custom/gold", {"task": name, "gold": made_up, "flag": made_up, "unverified": True})
+            self.assertEqual(ctx.exception.code, 409)
+            body = json.loads(ctx.exception.read())
+            ctx.exception.close()
+            self.assertTrue(body["needs_confirm"])
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertFalse(mine[name]["has_gold"], "nothing is saved without the second click")
+            r = self.post("/api/custom/gold", {"task": name, "gold": made_up, "flag": made_up, "unverified": True, "confirm": True})
+            self.assertEqual((r["has_gold"], r["match"]), (True, True))
+            r = self.post("/api/custom/gold", {"task": name, "clear": True})
+            self.assertFalse(r["has_gold"])
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertFalse(mine[name]["has_gold"])
+            # a verified run's flag (or a different flag) needs no confirmation
+            r = self.post("/api/custom/gold", {"task": name, "gold": "flag{real}", "flag": made_up, "unverified": True})
+            self.assertEqual((r["has_gold"], r["match"]), (True, False))
+        finally:
+            self.post("/api/custom/delete", {"task": name})
+
+    def test_service_challenges_are_marked(self):
+        from app import catalog
+        d = self.upload("service one", query="Challenge x\n\n" + catalog.SERVICE_NOTE)
+        plain = self.upload("plain one")
+        try:
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertTrue(mine[d["task"]["name"]]["service"])
+            self.assertFalse(mine[plain["task"]["name"]]["service"])
+        finally:
+            self.post("/api/custom/delete", {"task": d["task"]["name"]})
+            self.post("/api/custom/delete", {"task": plain["task"]["name"]})
 
     def test_chat_requires_message(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:

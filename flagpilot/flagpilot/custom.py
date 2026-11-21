@@ -204,22 +204,44 @@ def _extract_zip(zip_path: Path, dest: Path) -> int:
     return n
 
 
-def set_gold(name: str, gold: str, root: Path | None = None) -> Task:
-    """给自建 / 导入的题补上标准答案（只存哈希）。之后的运行就能判 verified / wrong，而不只是"能不能复现"。"""
-    gold = (gold or "").strip()
-    if not gold or len(gold) > 300 or "\n" in gold:
-        raise ValueError("The answer must be one line of at most 300 characters")
+def _meta_file(name: str, root: Path | None) -> Path:
     base = (root or store_root()) / name
     f = base / "task.json"
     if not f.is_file() or not base.resolve().is_relative_to((root or store_root()).resolve()):
         raise ValueError(f"No uploaded challenge called {name}")
-    meta = json.loads(f.read_text(encoding="utf-8"))
-    meta["gold_sha256"] = hashlib.sha256(gold.encode()).hexdigest()
-    meta["gold_provided"] = True
+    return f
+
+
+def _write_meta(f: Path, meta: dict) -> Task:
     tmp = f.with_suffix(".tmp")
     tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, f)
-    return _to_task(meta, base / "challenge")
+    return _to_task(meta, f.parent / "challenge")
+
+
+def set_gold(name: str, gold: str, root: Path | None = None, source: str = "you") -> Task:
+    """给自建 / 导入的题补上标准答案（只存哈希）。之后的运行就能判 verified / wrong，而不只是"能不能复现"。
+
+    source 记下答案从哪来（you = 事后在网页上补的）：界面据此说"与保存的答案一致"，而不是"flag 正确"。
+    """
+    gold = (gold or "").strip()
+    if not gold or len(gold) > 300 or "\n" in gold:
+        raise ValueError("The answer must be one line of at most 300 characters")
+    f = _meta_file(name, root)
+    meta = json.loads(f.read_text(encoding="utf-8"))
+    meta["gold_sha256"] = hashlib.sha256(gold.encode()).hexdigest()
+    meta["gold_provided"] = True
+    meta["gold_source"] = source
+    return _write_meta(f, meta)
+
+
+def clear_gold(name: str, root: Path | None = None) -> Task:
+    """删掉保存的答案（存错了，比如存成了模型自己编的 flag）。之后的运行回到"无答案可比"。"""
+    f = _meta_file(name, root)
+    meta = json.loads(f.read_text(encoding="utf-8"))
+    meta["gold_sha256"], meta["gold_provided"] = "", False
+    meta.pop("gold_source", None)
+    return _write_meta(f, meta)
 
 
 def _source_from_query(query: str) -> str:

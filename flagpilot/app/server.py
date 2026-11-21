@@ -549,7 +549,9 @@ class Handler(BaseHTTPRequestHandler):
                      for t in load_index()]
             mine = [{"name": t.name, "category": t.category, "scope": "custom",
                      "title": t.title[:90], "custom": True, "has_gold": t.has_gold,
-                     "n_assets": len(t.assets), "source": t.source} for t in custom.load()]
+                     "n_assets": len(t.assets), "source": t.source,
+                     # 原比赛里是网络服务的题：真 flag 从来不在这些文件里
+                     "service": "ran as a network service" in (t.query or "")} for t in custom.load()]
             return self._json(200, {
                 "tasks": tasks,
                 "custom_tasks": mine,
@@ -720,11 +722,19 @@ class Handler(BaseHTTPRequestHandler):
                 sess.cancel(turn)                 # 撤回的正是还在回答的那一轮：做完当前这步就停
             return self._json(200, {"ok": True, "turn": turn})
         if path == "/api/custom/gold":
+            name, flag = str(payload.get("task") or ""), str(payload.get("flag") or "").strip()   # flag：刚才那次运行交的，当场判对错（不落盘）
             try:
-                t = custom.set_gold(str(payload.get("task") or ""), str(payload.get("gold") or ""))
+                if payload.get("clear") is True:
+                    t = custom.clear_gold(name)
+                    return self._json(200, {"task": t.name, "has_gold": False, "match": None})
+                gold = str(payload.get("gold") or "").strip()
+                # 要存的正是这次运行没能证明的那个 flag：多半是模型自己编的。存进去以后"判对"就成了自己证明自己，先问一句
+                if flag and gold == flag and payload.get("unverified") is True and payload.get("confirm") is not True:
+                    return self._json(409, {"needs_confirm": True, "error": "That is the flag this run could not back up, "
+                                             "so it is probably made up. Save it only if you know it is the real flag."})
+                t = custom.set_gold(name, gold)
             except ValueError as e:
                 return self._json(400, {"error": str(e)})
-            flag = str(payload.get("flag") or "").strip()      # 刚才那次运行交的 flag：当场判对错（不落盘）
             match = (hashlib.sha256(flag.encode()).hexdigest() == t.gold_sha256) if flag else None
             return self._json(200, {"task": t.name, "has_gold": t.has_gold, "match": match})
         if path == "/api/lab/retry":

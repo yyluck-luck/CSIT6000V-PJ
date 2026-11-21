@@ -245,6 +245,19 @@
      type only if even that is too wide), so the box can grow and shrink with the word without ever moving a line break */
   #hero h1 .l1{display:block;white-space:nowrap} #hero h1.three .l1b{display:block} #hero h1.three .sp{display:none}
   #hero h1{font-size:calc(clamp(44px,min(6.6vw,10.5vh),184px) * var(--fit,1))}
+  /* "solves" under a liquid-glass lens: it glides along the word (on hover it follows the pointer); the letters under it are
+     magnified, the rest of the word sits in its shadow, like a spotlight. Transforms only (compositor); still under reduced motion */
+  #hero .lw{position:relative;display:inline-block}
+  #hero .lw .lclip{position:absolute;inset:-.08em -.06em;overflow:hidden;pointer-events:none}
+  #hero .lw .spot{position:absolute;left:0;top:50%;width:7.2em;height:7.2em;margin:-3.6em 0 0 -3.6em;border-radius:50%;will-change:transform;
+    background:radial-gradient(circle,rgba(244,243,238,0) 0 .5em,rgba(244,243,238,.5) .88em,rgba(244,243,238,.56) 3.6em)}
+  #hero .lw .lens{position:absolute;left:0;top:0;width:1.12em;height:1.12em;border-radius:50%;overflow:hidden;pointer-events:none;will-change:transform;
+    background:#fbfaf6;box-shadow:0 .14em .34em rgba(20,20,20,.2),0 .03em .06em rgba(20,20,20,.14)}
+  #hero .lw .lens::before{content:'';position:absolute;inset:0;z-index:1;border-radius:50%;pointer-events:none;
+    background:radial-gradient(110% 80% at 32% 14%,rgba(255,255,255,.85),rgba(255,255,255,.16) 38%,rgba(255,255,255,0) 56%),radial-gradient(80% 60% at 70% 92%,rgba(110,160,255,.3),rgba(110,160,255,0) 70%);
+    box-shadow:inset 0 .018em .02em #fff,inset 0 -.05em .1em rgba(30,60,140,.26),inset 0 0 0 .012em rgba(20,20,20,.2),inset 0 0 .16em rgba(255,255,255,.75)}
+  #hero .lw .mag{position:absolute;left:0;top:0;font-size:calc(var(--lensS) * 1em);white-space:nowrap;will-change:transform;text-shadow:-.01em 0 rgba(255,50,90,.32),.01em 0 rgba(40,120,255,.32)}
+  #hero .lw{--lensS:1.22}
   .flip .tw{font-family:var(--mono);font-weight:800;letter-spacing:-.05em;background:linear-gradient(90deg,#ff3b3b,#ff9f1c,#ffe14d,#3ddc84,#2fa8ff,#7c5cff,#ff4dd2,#ff3b3b);
     background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:rainbow 2.4s linear infinite}
   .flip .caret{display:inline-block;width:.1em;height:.8em;margin-left:.05em;vertical-align:-.02em;background:#3ddc84;animation:caret 1s steps(1) infinite}
@@ -369,6 +382,8 @@
   .verdict.run{border-style:dashed}
   .vbar{display:flex;flex-wrap:wrap;align-items:center;gap:16px 20px;padding:20px 0 0;font:500 15px var(--mono);color:var(--ink2)}
   .vbar .gap{flex:1}
+  .svcwarn{margin:12px 0 0;padding:10px 14px;border-left:4px solid var(--red);background:rgba(226,48,45,.07);font-size:15px;line-height:1.45;max-width:72ch}
+  .goldin .gwarn{flex:1 1 100%;margin:4px 0 0;font-size:15px}
   .goldin{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:10px} .goldin input{flex:1 1 320px;min-width:0;font:15px var(--mono);padding:9px 12px;border:1.5px solid var(--ink);background:var(--white)}
 
   /* ---------- Pixel Prompt Button ---------- */
@@ -798,7 +813,7 @@
       <div class="hero2">
       <header id="hero">
         <div class="in">
-          <h1 aria-label="FlagPilot solves crypto, forensics and general challenges, and proves every flag."><span aria-hidden="true"><span class="l1">FlagPilot solves<span class="sp"> </span><span class="l1b"><span class="flip" id="flip"><span class="tw">crypto</span></span> challenges</span></span><span class="ln2">and proves every flag.</span></span></h1>
+          <h1 aria-label="FlagPilot solves crypto, forensics and general challenges, and proves every flag."><span aria-hidden="true"><span class="l1">FlagPilot <span class="lw" id="lensWord">solves<span class="lclip"><i class="spot"></i></span><span class="lens"><span class="mag">solves</span></span></span><span class="sp"> </span><span class="l1b"><span class="flip" id="flip"><span class="tw">crypto</span></span> challenges</span></span><span class="ln2">and proves every flag.</span></span></h1>
           <div class="actions"><button class="btn primary" data-taskpill id="pickHero">Choose a challenge<span class="arr">→</span></button>
             <button class="btn" data-go="history">Replay a run<span class="arr">→</span></button></div>
         </div>
@@ -817,6 +832,7 @@
       <div class="c8" id="solveMain">
         <h1 class="ltitle"><a class="srclink" id="sgLink" target="_blank" rel="noopener noreferrer"><span id="sgTitle">Choose a challenge</span><span class="ext" aria-hidden="true">↗</span></a></h1>
         <div class="meta" id="sgMeta"><span class="g ring" id="sgG"></span><span id="sgId"></span></div>
+        <p class="svcwarn" id="sgSvc" hidden><b>Needs its original server.</b> This challenge ran as a network service; its real flag never shipped with these files. A flag printed here can only be a guess, so it cannot be confirmed.</p>
         <div class="actions">
           <button class="btn primary" id="run" disabled hidden><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg><svg class="chk" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Run<span class="arr">↵</span></button>
           <button class="btn" id="runTacc" hidden data-tip="Solve this challenge with Qwen 27B on TACC">Run on TACC<span class="arr">→</span></button>
@@ -1513,6 +1529,37 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
   }, 2600);
 })();
 
+/* ================= Liquid glass over "solves": a lens glides along the word; on hover it follows the pointer ================= */
+(function(){
+  const lw = $('#lensWord'); if (!lw) return;
+  const lens = lw.querySelector('.lens'), mag = lw.querySelector('.mag'), spot = lw.querySelector('.spot'), S = parseFloat(getComputedStyle(lw).getPropertyValue('--lensS')) || 1.22;
+  let W = 0, w = 0, h = 0, anims = [], cur = 0, want = null, raf = 0;
+  /* the lens at x; the copy inside it is set S times larger (real glyphs, so it stays sharp) and moved so that it is the word
+     magnified about the lens centre */
+  const T = x => [`translate3d(${x}px,0,0)`, `translate3d(${(1 - S) * w / 2 - S * x}px,${(1 - S) * h / 2}px,0)`, `translate3d(${x + w / 2}px,0,0)`];
+  const ends = () => [-w * .12, W - w * .88];
+  const place = x => { cur = x; const t = T(x); lens.style.transform = t[0]; mag.style.transform = t[1]; spot.style.transform = t[2]; };
+  const run = (A, B, o) => { anims = [lens, mag, spot].map((el, i) => el.animate([{transform: A[i]}, {transform: B[i]}], o)); };
+  function stop(){ if (anims.length){ try { cur = new DOMMatrixReadOnly(getComputedStyle(lens).transform).m41; } catch(_){} anims.forEach(a => a.cancel()); anims = []; place(cur); } }
+  function sweep(from){
+    stop(); if (!W) return;
+    const [a, b] = ends();
+    if (reduced()){ place((W - w) / 2); return; }
+    const o = {duration: 4800, iterations: Infinity, direction: 'alternate', easing: 'cubic-bezier(.62,0,.38,1)'};
+    run(T(a), T(b), o); if (from === 'b') anims.forEach(x => { x.currentTime = o.duration; });
+  }
+  function measure(){ W = lw.offsetWidth; w = lens.offsetWidth; h = lens.offsetHeight; if (W) sweep(); }
+  const step = () => { raf = 0; if (want == null) return; const d = want - cur; place(Math.abs(d) < .4 ? want : cur + d * .2); if (Math.abs(want - cur) >= .4) raf = requestAnimationFrame(step); };
+  lw.addEventListener('pointermove', e => { if (reduced() || !W) return; const [a, b] = ends(), r = lw.getBoundingClientRect();
+    want = Math.max(a, Math.min(b, e.clientX - r.left - w / 2)); stop(); if (!raf) raf = requestAnimationFrame(step); }, {passive: true});
+  lw.addEventListener('pointerleave', () => { if (reduced() || !W) return; want = null; cancelAnimationFrame(raf); raf = 0;
+    const [a, b] = ends(), end = cur - a < b - cur ? 'a' : 'b';
+    run(T(cur), T(end === 'a' ? a : b), {duration: 600, easing: 'cubic-bezier(.34,1.3,.5,1)', fill: 'forwards'});
+    const glide = anims[0]; glide.finished.then(() => { if (anims[0] === glide) sweep(end); }, () => {}); }, {passive: true});
+  new ResizeObserver(measure).observe(lw);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
+})();
+
 /* ======================= Challenges / picker ======================= */
 const ABL_NOTE = {B0: ['Bare model', 'no truncation, shell and python only, minimal prompt'], B1: ['+ trimming', 'long observations keep head, tail and flag-like lines, so the prefix stays cacheable'],
                   B2: ['+ structured tools', 'adds file, strings and decode actions'], B3: ['+ full rules', 'adds the solving and submission rules (default)']};
@@ -1599,8 +1646,14 @@ $('#tasks').addEventListener('click', async e => {
     await fetch('/api/custom/delete', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: t.name})});
     if (sel === t.name) pick(null); await loadTasks(); toast('Deleted ' + t.name); return;
   }
-  vtMorph(row.querySelector('.nm'), $('#sgTitle'), () => { pick(t); sheetShut(); go('solve', {quiet: true}); });
+  pickFromSheet(t, row);
 });
+/* the picker serves several pages: from Solve the choice opens the challenge there; from the Lab or Ask it only sets that page's challenge */
+let sheetFrom = 'solve';
+function pickFromSheet(t, row){
+  if (sheetFrom !== 'solve'){ pick(t); closeSheet(); return; }
+  vtMorph(row.querySelector('.nm'), $('#sgTitle'), () => { pick(t); sheetShut(); go('solve', {quiet: true}); });
+}
 let kbIdx = -1;
 const visibleRows = () => qs('#tasks .row').filter(el => !el.hidden);
 function kbMove(delta){
@@ -1612,7 +1665,7 @@ function kbMove(delta){
 let sheetRaf = 0;
 function openSheet(){
   const w = $('#sheetWrap'); if (!w.hidden) return;
-  w.hidden = false; kbIdx = -1;
+  w.hidden = false; kbIdx = -1; sheetFrom = page;
   // focus synchronously: a key pressed right after "/" must already land in the search box
   $('#taskSearch').focus({preventScroll: true}); $('#taskSearch').select();
   cancelAnimationFrame(sheetRaf);
@@ -1636,6 +1689,7 @@ function pick(t){
   const lk = $('#sgLink'); if (t && t.source){ lk.href = t.source; lk.dataset.tip = 'Open the challenge\'s page'; } else { lk.removeAttribute('href'); delete lk.dataset.tip; }
   $('#sgG').className = 'g ' + g;
   $('#sgId').textContent = t ? `${t.name} · ${t.category || ''} · ${t.has_gold ? 'gold flag known' : 'no gold flag'}` : '';
+  $('#sgSvc').hidden = !(t && t.service);
   decrypt($('#sgTitle'), t ? (t.title || t.name) : 'Choose a challenge');
   $('#run').hidden = !t; $('#runTacc').hidden = !t;
   ['#run', '#sweep', '#probeBtn'].forEach(q => $(q).disabled = !t || busy);
@@ -2019,7 +2073,10 @@ function showDone(ev){
   const noGold = ((run && run.replay) || {}).gold_checked === false || !!(selTask && selTask.custom && !selTask.has_gold);
   if (ev.verdict === 'unverified'){
     if (noGold){ code = 'NOT CONFIRMED'; label = UNCONFIRMED[ev.reason] || 'There is no answer to check this flag against, and the script did not reproduce it'; }
-    else label = PROVENANCE[ev.reason] || ('Right flag, but the script did not reproduce it in a clean sandbox' + (REPLAY_WHY[ev.reason] ? ': ' + REPLAY_WHY[ev.reason] : '')); }
+    else label = PROVENANCE[ev.reason] || ('Right flag, but the script did not reproduce it in a clean sandbox' + (REPLAY_WHY[ev.reason] ? ': ' + REPLAY_WHY[ev.reason] : ''));
+    if (selTask && selTask.custom && !noGold) label = label.replace(/^Right flag/, 'Matches the saved answer'); }
+  if (ev.verdict === 'verified' && selTask && selTask.custom) label = 'Matches the saved answer and reproduced by a clean replay';
+  if (ev.verdict === 'wrong' && selTask && selTask.custom && (ev.reason || 'wrong_flag') === 'wrong_flag') label = 'Does not match the saved answer';
   const flag = (run && run.submit && run.submit.flag) || ev.flag || '', who = sel || ev.task || ev.run_id || ev.web_run_id || '';
   setStatus(code.charAt(0) + code.slice(1).toLowerCase(), tone === 'ok' ? '' : (tone === 'warn' ? 'warn' : 'bad'), `${who} · ${ev.turns} turns`,
             R.bulk ? null : {big: code, flag: flag || label});
@@ -2035,7 +2092,7 @@ function showDone(ev){
   $('#verdict').innerHTML = verdictHTML(code, label, tone, flag ? '<div class="vflag" id="vflag"></div>' : '')
     + (bare ? '' : `<div class="vbar"><span>${said.join(' · ')}</span><span class="gap"></span>
        ${ev.verdict === 'error' && /^model:/.test(ev.reason || '') ? '<button class="btn" id="changeModel" type="button">Change model<span class="arr">→</span></button>' : ''}
-       ${selTask && selTask.custom && !selTask.has_gold ? '<button class="btn" id="addGold" type="button" data-tip="Paste the real flag once: later runs are judged right or wrong">Add the answer<span class="arr">→</span></button>' : ''}
+       ${selTask && selTask.custom ? `<button class="btn" id="addGold" type="button" data-tip="${selTask.has_gold ? 'Replace or remove the saved answer' : 'Paste the real flag once: later runs are judged right or wrong'}">${selTask.has_gold ? 'Change the answer' : 'Add the answer'}<span class="arr">→</span></button>` : ''}
        <button class="pixbtn" id="promptBtn" type="button"><canvas></canvas><span class="pl">Copy explainer prompt</span></button>
        ${ev.web_run_id ? `<a id="writeupDownload" class="btn sm" href="/api/writeup?id=${encodeURIComponent(ev.web_run_id)}" download>Writeup<span class="arr">↓</span></a>` : ''}</div>`);
   const vd = $('#verdict .verdict');
@@ -2045,16 +2102,29 @@ function showDone(ev){
   if ($('#promptBtn')) PixelButton($('#promptBtn'));
   if ($('#addGold')) $('#addGold').onclick = () => {
     const bar = $('#addGold').closest('.vbar'); if (bar.querySelector('.goldin')) return;
-    bar.insertAdjacentHTML('beforeend', '<div class="goldin"><input id="goldIn" placeholder="The real flag, e.g. picoCTF{...}" autocomplete="off" spellcheck="false" aria-label="The real flag"><button class="btn primary" id="goldSave" type="button">Save</button><span class="hint">Only its hash is kept.</span></div>');
-    const save = async () => { const g = $('#goldIn').value.trim(); if (!g) return;
-      try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, gold: g, flag: (run && run.submit && run.submit.flag) || ''})}); const d = await r.json();
+    const had = !!(selTask && selTask.has_gold);
+    bar.insertAdjacentHTML('beforeend', '<div class="goldin"><input id="goldIn" placeholder="The real flag, from the challenge itself (not from a run)" autocomplete="off" spellcheck="false" aria-label="The real flag"><button class="btn primary" id="goldSave" type="button">Save</button>'
+      + (had ? '<button class="btn" id="goldClear" type="button">Remove the answer</button>' : '') + '<span class="hint">Only its hash is kept.</span></div>');
+    /* a flag this run could not back up is probably made up: saving it as the answer would make the next run that types it look right */
+    const unproven = ev.verdict !== 'verified';
+    const save = async (confirm = false) => { const g = $('#goldIn').value.trim(); if (!g) return;
+      try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, gold: g, flag: (run && run.submit && run.submit.flag) || flag || '', unverified: unproven, confirm})}); const d = await r.json();
+        if (r.status === 409 && d.needs_confirm){
+          if (!$('.goldin .gwarn')) $('.goldin').insertAdjacentHTML('beforeend', `<p class="gwarn bad">${esc(d.error)}</p><button class="btn" id="goldAnyway" type="button">Save it anyway</button>`);
+          $('#goldAnyway').onclick = () => save(true); return; }
         if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);
         if (selTask) selTask.has_gold = true; await loadTasks();
         $('.goldin').innerHTML = d.match === true ? '<span class="ok">Saved. The flag from this run matches the answer: it was right.</span>'
           : d.match === false ? '<span class="bad">Saved. The flag from this run does not match the answer: it was wrong.</span>' : '<span class="hint">Saved. Later runs are judged against it.</span>';
         $('#addGold').remove(); }
       catch(e){ toast(e.message); } };
-    $('#goldSave').onclick = save; $('#goldIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } }); $('#goldIn').focus();
+    $('#goldSave').onclick = () => save(); $('#goldIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } }); $('#goldIn').focus();
+    if ($('#goldClear')) $('#goldClear').onclick = async () => {
+      try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, clear: true})}); const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);
+        if (selTask) selTask.has_gold = false; await loadTasks();
+        $('.goldin').innerHTML = '<span class="hint">Answer removed. Runs are no longer judged against it.</span>'; $('#addGold').remove(); }
+      catch(e){ toast(e.message); } };
   };
   if ($('#changeModel')) $('#changeModel').onclick = () => { toggleInsp(true); setTimeout(() => { const m = $('#modelSel'); if (m){ m.focus(); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } }, 260); };
   const rb = $('#run'); if (tone === 'ok' && !reduced()){ rb.classList.add('done'); setTimeout(() => rb.classList.remove('done'), 1400); }
@@ -3334,7 +3404,7 @@ document.addEventListener('keydown', e => {
   if (!$('#sheetWrap').hidden){
     if (e.key === 'Escape'){ e.preventDefault(); closeSheet(); }
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); kbMove(e.key === 'ArrowDown' ? 1 : -1); }
-    else if (e.key === 'Enter' && !e.isComposing){ const el = qs('#tasks .row.kb')[0] || visibleRows()[0]; if (el){ e.preventDefault(); const t = taskByName(el.dataset.name); if (t) vtMorph(el.querySelector('.nm'), $('#sgTitle'), () => { pick(t); sheetShut(); go('solve', {quiet: true}); }); } }
+    else if (e.key === 'Enter' && !e.isComposing){ const el = qs('#tasks .row.kb')[0] || visibleRows()[0]; if (el){ e.preventDefault(); const t = taskByName(el.dataset.name); if (t) pickFromSheet(t, el); } }
     return;
   }
   if (e.key === 'Escape' && inspOpen()){ toggleInsp(false); return; }

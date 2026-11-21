@@ -75,6 +75,16 @@ try {
   const lay = []; for (let i = 0; i < 34; i++){ lay.push(await js("(() => { const h = document.querySelector('#hero h1'), b = h.querySelector('.l1b').getBoundingClientRect(); return Math.round(h.getBoundingClientRect().height) + ':' + Math.round(b.top); })()")); await sleep(100); }
   check("layout text flip cycles", await until(`document.querySelector('#flip .tw').textContent.trim() !== ${JSON.stringify(w0.trim())}`, 4000));
   check("hero: typing the next word never moves a line break", new Set(lay).size === 1, [...new Set(lay)].join(' '));
+  // "solves" under a liquid-glass lens: it glides by itself, follows the pointer over the word, and its copy is the magnified word
+  const lensX = "new DOMMatrixReadOnly(getComputedStyle(document.querySelector('#lensWord .lens')).transform).m41";
+  const lx1 = await js(lensX); await sleep(600); const lx2 = await js(lensX);
+  const lb = await js("(() => { const r = document.querySelector('#lensWord').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })()");
+  await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: lb[0] + lb[2] * .8, y: lb[1] + lb[3] / 2 }); await sleep(800);
+  const lensC = await js(lensX + " + document.querySelector('#lensWord .lens').offsetWidth / 2");
+  const magOk = await js("(() => { const m = document.querySelector('#lensWord .mag'); return m.textContent === 'solves' && parseFloat(getComputedStyle(m).fontSize) > parseFloat(getComputedStyle(document.querySelector('#lensWord')).fontSize) * 1.1; })()");
+  await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 880 });
+  check("hero: a liquid-glass lens glides over 'solves' and follows the pointer", Math.abs(lx2 - lx1) > 1 && Math.abs(lensC - lb[2] * .8) < lb[2] * .12 && magOk,
+    JSON.stringify({lx1: Math.round(lx1), lx2: Math.round(lx2), lensC: Math.round(lensC), want: Math.round(lb[2] * .8), magOk}));
   // notifications come from the Dynamic Island at the top (there is no bottom pop-up any more); a tap closes one early
   await js("toast('Hello from the island')");
   const islOpen = await until("document.querySelector('#island').classList.contains('note') && /Hello from the island/.test(document.querySelector('#islNote').textContent) && !document.querySelector('#toast')", 1500);
@@ -496,6 +506,21 @@ try {
   check("Ask composer: one focus frame (no outline inside it)", await js("(() => { const t = document.querySelector('#chatInput'); t.focus(); return getComputedStyle(t).outlineStyle === 'none'; })()"));
   await noCJK("ask");
   const smallAsk = await js(SMALL); check("no small text on Ask", !smallAsk.length, smallAsk.join(" | "));
+
+  // the picker opened from the Lab or Ask sets that page's challenge and stays there (it used to jump to Solve)
+  await js("document.querySelector('.navbtn[data-page=\"lab\"]').click()"); await sleep(300);
+  await js("labShow('compare')"); await sleep(200);
+  await js("document.querySelector('#pLab [data-taskpill]').click()"); await until("!document.querySelector('#sheetWrap').hidden", 2000); await sleep(200);
+  const sheetAll = "(() => { const q = document.querySelector('#taskSearch'); q.value = ''; q.dispatchEvent(new Event('input', {bubbles: true})); document.querySelector('#catFilter button').click(); })()";
+  await js(sheetAll); await sleep(150);
+  const labPickName = await js("(() => { const r = [...document.querySelectorAll('#tasks .row')].filter(x => !x.hidden && x.dataset.name !== sel)[0]; r.click(); return r.dataset.name; })()");
+  const labStay = await until(`document.querySelector('.page.on').dataset.page === 'lab' && document.querySelector('#sheetWrap').hidden && sel === ${JSON.stringify(labPickName)}`, 2000);
+  await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()"); await sleep(300);
+  await js("document.querySelector('#mountChip').click()"); await until("!document.querySelector('#sheetWrap').hidden", 2000); await sleep(200);
+  await js(sheetAll); await sleep(150);
+  const askPickName = await js("(() => { const r = [...document.querySelectorAll('#tasks .row')].filter(x => !x.hidden && x.dataset.name !== sel)[0]; r.click(); return r.dataset.name; })()");
+  const askStay = await until(`document.querySelector('.page.on').dataset.page === 'chat' && document.querySelector('#sheetWrap').hidden && sel === ${JSON.stringify(askPickName)}`, 2000);
+  check("picking a challenge from the Lab or Ask stays on that page", labStay && askStay, JSON.stringify({labStay, askStay}));
 
   // the logo goes home: Solve's landing even when a challenge is open
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
