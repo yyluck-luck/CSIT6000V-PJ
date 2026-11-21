@@ -7,7 +7,7 @@
 #                               another configured provider if Gemini has no key, else the offline demo model)
 #   ./start.sh --check          check that every model provider answers with this copy's keys (no server started)
 #   ./start.sh --restart        restart (after pulling new code)
-#   ./start.sh --stop           stop it
+#   ./start.sh --stop           stop it (and end its Qwen session on TACC, which would otherwise hold two GPUs for up to an hour)
 #
 # Needs only Python 3.11 or newer (and git, to fetch the evaluation challenges on the first run): no packages to
 # install. Keys come from shared.env (shipped with this private repository) or from your own .env, which wins.
@@ -60,6 +60,28 @@ except Exception:
 PY
 }
 
+# end this copy's Qwen session on TACC before stopping it (--restart keeps the session: the new server picks it up)
+end_tacc() {
+  "$PY" - "$URL" <<'PY' 2>/dev/null
+import json, sys, time, urllib.request
+op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+base = sys.argv[1]
+def phase():
+    return json.loads(op.open(base + "/api/tacc/session", timeout=10).read()).get("phase")
+try:
+    if phase() not in ("starting", "ready"):
+        sys.exit(0)
+    print("Ending the Qwen session on TACC (cancelling its GPU job)...", flush=True)
+    req = urllib.request.Request(base + "/api/tacc/session/stop", data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+    op.open(req, timeout=180).read()
+    t = time.time()
+    while time.time() - t < 90 and phase() not in ("idle", "failed"):
+        time.sleep(2)
+except Exception:
+    sys.exit(1)
+PY
+}
+
 is_flagpilot() { ps -o command= -p "$1" 2>/dev/null | grep -q "flagpilot web"; }
 dir_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1; }
 
@@ -93,6 +115,7 @@ stop() {
     else echo "FlagPilot is not running on port $PORT."; fi
     return 0
   fi
+  if [ "$ACTION" = stop ] && up; then end_tacc || true; fi
   for p in $mine; do kill "$p" 2>/dev/null || true; done
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do up || break; sleep 0.3; done
   if up; then for p in $mine; do kill -9 "$p" 2>/dev/null || true; done; sleep 0.5; fi

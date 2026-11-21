@@ -380,7 +380,7 @@ class TaccChatHTTP(unittest.TestCase):
         saved = config.RUNS_ROOT
         config.RUNS_ROOT = tmp
         try:
-            def fake_chat(m, h, t, tools, on_delta, on_tool, on_stage=None):
+            def fake_chat(m, h, t, tools, on_delta, on_tool, on_stage=None, cancelled=None):
                 on_stage({"stage": "queued", "job": "7"})
                 on_delta("Hi")
                 return {"answer": "Hi there", "steps": []}
@@ -574,6 +574,16 @@ class TestRobustness(TaccHarness):
         notes = [s for s in stages if s["stage"] == "retrying"]
         self.assertEqual(len(notes), 2)
         self.assertIn("trying again", notes[0]["message"])
+
+    def test_a_rerun_hint_reaches_the_tacc_job_in_the_statement(self):
+        self.ready()
+        d = tacc_live.run_task("demo-001", "B3", self.tmp / "runs", lambda e: None, hint="look at the header")
+        self.assertIsNotNone(d)
+        staged = (self.tmp / "state" / "staged").read_text(encoding="utf-8")
+        row = [json.loads(l) for l in staged.splitlines() if l.startswith("{") and '"demo-001"' in l][-1]
+        self.assertTrue(row["query"].endswith("Hint from the user: look at the header"), row["query"][-80:])
+        self.assertEqual(row["scope"], "core")
+        self.assertIn("tasks=demo-001 ", self.record())
 
     def test_the_watchdog_notices_a_service_that_died(self):
         self.ready()

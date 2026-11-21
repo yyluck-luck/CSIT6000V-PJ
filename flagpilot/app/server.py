@@ -55,6 +55,7 @@ PARTIAL_MAX_CHARS = 6000    # 一轮的动作 JSON 不会这么长；超出部�
 STATE: dict[str, dict] = {}
 CHATS: dict[str, ChatSession] = {}
 TACC_TURNS: dict[str, int] = {}          # 交给 TACC 的答疑：每个会话本进程发出的最大轮次号
+TACC_CANCEL: dict = {}        # (会话, 轮次) → threading.Event：撤回时取消 TACC 上的答疑作业
 LOCK = threading.Lock()
 SETTINGS = {"model": "mock", "base_url": "", "track": "L", "ablation": "B3"}
 
@@ -389,11 +390,42 @@ def _load_run_from_disk(rid: str) -> dict | None:
 
 
 def _new_control(payload: dict) -> RunControl:
-    """开跑时就带上单步：否则第一条命令可能抢在"打开单步"的请求之前执行。"""
+    """开跑时就带上单步：否则第一条命令可能抢在"打开单步"的请求之前执行。
+    hint：结果卡上"带提示重跑"——提示在第一轮调模型之前就进对话。"""
     ctl = RunControl()
     if payload.get("step"):
         ctl.set("step", True)
+    hint = _hint_of(payload)
+    if hint:
+        ctl.set("hint", hint)
     return ctl
+
+
+def _hint_of(payload: dict) -> str:
+    return " ".join(str(payload.get("hint") or "").split())[:500]
+
+
+def _finish(rid: str) -> dict:
+    """Finish：立刻结束这次运行，会话保留。页面马上收到 done（verdict "stopped"）；后台收拾干净：
+    本机运行在下一个闸门处停下（不再执行新命令），TACC 作业在后台取消（名额等它真停了才放）。"""
+    st = STATE[rid]
+    cond = st.setdefault("cond", threading.Condition())
+    with cond:
+        if st.get("summary") or st.get("finished"):
+            return {"ok": True, "already": True}
+        st["finished"] = True
+        turns = sum(1 for e in st.get("events") or [] if e.get("type") == "model")
+    if st.get("control") is not None:
+        st["control"].set("stop")
+    if st.get("finish") is not None:
+        st["finish"].set()
+    done = {"type": "done", "verdict": "stopped", "reason": "finished by you", "turns": turns, "task": st.get("task"),
+            "ablation": st.get("ablate"), "web_run_id": rid, "e2e_s": round(time.time() - st.get("t0", time.time()), 2)}
+    with cond:
+        st.setdefault("events", []).append(done)
+        st["summary"] = done
+        cond.notify_all()
+    return {"ok": True}
 
 
 def _wake(cond: threading.Condition) -> None:
@@ -462,10 +494,14 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
         summary["e2e_s"] = round(time.time() - STATE[run_id].get("t0", t_tag), 2)
         # 先发 done 再置 summary：读端以 events 为准，看到 done 就收尾，
         # 反过来的话读端可能先看到 summary、补发一条兜底 done，造成重复。
+        if STATE[run_id].get("finished"):         # Finish 已经给页面发过 done：轨迹照常落盘，这里不再发第二个
+            return
         hook({"type": "done", **summary})
         STATE[run_id]["summary"] = summary
         _wake(cond)
     except Exception as e:
+        if STATE[run_id].get("finished"):
+            return
         hook({"type": "error", "message": f"{type(e).__name__}: {e}",
               "trace": traceback.format_exc()[-1500:]})
         STATE[run_id]["summary"] = {"verdict": "error",
@@ -624,7 +660,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tacc":
             return self._json(200, tacc.status(config.RUNS_ROOT))
         if path == "/api/tacc/session":
-            return self._json(200, tacc_live.status())
+            return self._json(200, tacc_live.watch() if self._qparam("watch") == "1" else tacc_live.status())
         if path == "/api/chat/sessions":
             return self._json(200, {"sessions": runs_index.list_chats(config.RUNS_ROOT / "chat")})
         if path == "/api/chat/history":
@@ -757,6 +793,10 @@ class Handler(BaseHTTPRequestHandler):
                 sess = CHATS.pop(sid, None)       # 下一条消息从盘上重建会话：撤回的那轮不再进模型的上下文
             if sess is not None:
                 sess.cancel(turn)                 # 撤回的正是还在回答的那一轮：做完当前这步就停
+            with LOCK:
+                ev = TACC_CANCEL.get((sid, turn))
+            if ev is not None:
+                ev.set()                          # 这一问在 TACC 上答：取消它的作业（名额等它真停了才放）
             return self._json(200, {"ok": True, "turn": turn})
         if path == "/api/custom/edit":
             q = payload.get("query")
@@ -832,6 +872,8 @@ class Handler(BaseHTTPRequestHandler):
                           "t0": time.time(),     # 端到端计时起点（收到 POST 那一刻）
                           # 单步 / 暂停 / 插提示：只有本机运行能在命令之间停下来，TACC 作业做不到
                           "control": _new_control(payload) if payload.get("backend") != "tacc" else None,
+                          "finish": threading.Event() if payload.get("backend") == "tacc" else None,
+                          "hint": _hint_of(payload),
                           "ablate": ablate or SETTINGS["ablation"]}
         try:
             target = _tacc_worker if payload.get("backend") == "tacc" else _worker
@@ -879,6 +921,10 @@ class Handler(BaseHTTPRequestHandler):
         """看着一次本机运行的人：单步、暂停 / 继续、批准 / 修改 / 跳过当前命令、停止、插提示。"""
         rid, op = str(payload.get("id") or ""), str(payload.get("op") or "")
         st = STATE.get(rid) if _SID_RE.match(rid) else None
+        if op == "finish":                         # 本机和 TACC 运行都能立刻结束
+            if not st or st.get("kind") == "chat" or (st.get("summary") and not st.get("finished")):
+                return self._json(404, {"error": "No run in progress with that id"})
+            return self._json(200, _finish(rid))
         ctl = st.get("control") if st else None
         if ctl is None or st.get("summary"):
             return self._json(404, {"error": "No run in progress with that id"})
@@ -1015,26 +1061,45 @@ class Handler(BaseHTTPRequestHandler):
                 history.append({"user": pending, "answer": r.get("answer") or ""})
                 pending = None
         q: queue.Queue = queue.Queue()
+        cancel = threading.Event()                              # 这一问被撤回：TACC 上的作业跟着取消
         with LOCK:
             turn = max(turn, TACC_TURNS.get(sid, 0) + 1)       # 上一条的提问可能还没落盘：按本进程发出的号再往后排
             TACC_TURNS[sid] = turn
+            TACC_CANCEL[(sid, turn)] = cancel
             STATE[sid] = {"q": q, "summary": None, "kind": "chat"}
 
         def work() -> None:
-            stamp = lambda: time.strftime("%Y-%m-%dT%H:%M:%S")      # noqa: E731
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if not rows:
-                storage.append_record(path, {"ts": stamp(), "type": "meta", "task": task_name,
-                                             "model": TACC_MODEL, "tools": use_tools})
-            storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
+            try:
+                _work()
+            except Exception as e:                  # 答疑线程出错也要给页面一个结尾，否则 SSE 一直挂着等
+                q.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
+                q.put(None)
+            finally:
+                with LOCK:
+                    TACC_CANCEL.pop((sid, turn), None)
+
+        stamp = lambda: time.strftime("%Y-%m-%dT%H:%M:%S")      # noqa: E731
+        # 这一问先落盘再回轮次号：页面拿到轮次号就可能撤回，那时会话日志必须已经在了（否则撤回 404）
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not rows:
+            storage.append_record(path, {"ts": stamp(), "type": "meta", "task": task_name,
+                                         "model": TACC_MODEL, "tools": use_tools})
+        storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
+
+        def _work() -> None:
             rep = tacc_live.chat(message, history, task_name, use_tools,
                                  on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),
                                  on_tool=lambda ev: q.put(ev if ev.get("type") == "chat_check" else {**ev, "type": "chat_tool"}),
-                                 on_stage=lambda ev: q.put({**ev, "type": "chat_stage"}))
+                                 on_stage=lambda ev: q.put({**ev, "type": "chat_stage"}), cancelled=cancel.is_set)
+            with LOCK:
+                TACC_CANCEL.pop((sid, turn), None)
+            if rep.get("cancelled"):                    # 撤回了：会话日志里已有 recall 记录，不再记错误
+                q.put(None)
+                return
             if rep.get("error") and not rep.get("answer"):
                 # 失败也落盘：重开线程时能看到这条消息为什么没有回复（不参与上面的问答配对）
                 storage.append_record(path, {"ts": stamp(), "type": "error", "turn": turn, "error": str(rep["error"])[:400]})
-                q.put({"type": "error", "message": rep["error"]})
+                q.put({"type": "error", "message": rep["error"], **({"renew": True} if rep.get("renew") else {})})
             else:
                 steps = rep.get("steps") or []
                 storage.append_record(path, {"ts": stamp(), "type": "reply", "turn": turn,
@@ -1326,7 +1391,11 @@ def _tacc_worker(run_id: str, task_name: str, ablate: str | None) -> None:
             cond.notify_all()
 
     try:
-        d = tacc_live.run_task(task_name, tier, config.RUNS_ROOT, on_event, on_delta=on_delta)
+        fin = st.get("finish") or threading.Event()
+        d = tacc_live.run_task(task_name, tier, config.RUNS_ROOT, on_event, on_delta=on_delta, cancelled=fin.is_set,
+                               hint=st.get("hint") or "")
+        if st.get("finished"):                     # Finish：页面已经收到 done，作业在后台取消
+            return
         res = dict(summary) or {"verdict": "error", "reason": (failed[-1] if failed else "") or "the TACC job returned no result",
                                 "turns": 0}
         res.pop("type", None)
@@ -1369,6 +1438,17 @@ def auto_model() -> str:
     return "mock"
 
 
+class QuietServer(ThreadingHTTPServer):
+    """浏览器关标签页、断网、刷新时连接被对方掐断，不是服务器错误：不往日志里打一整段 traceback。"""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        import sys
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
           base_url: str = "", track: str = "L", metrics_url: str = "",
           replay_dir: str = "") -> None:
@@ -1388,7 +1468,7 @@ def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
     if host not in ("127.0.0.1", "localhost", "::1"):
         # 没有账号体系，绑到 0.0.0.0 等于把"提交 run / <run> 执行命令"开放给同网段。
         print(f"⚠ 监听 {host} 且无鉴权：仅限可信内网，勿暴露到公网", flush=True)
-    srv = ThreadingHTTPServer((host, port), Handler)
+    srv = QuietServer((host, port), Handler)
     print(f"FlagPilot demo → http://{host}:{port}   model={model}", flush=True)
     # 重启前若有 Qwen 会话还在 TACC 上跑，接回来（不然它白占 GPU 和个人名额到 1 小时）
     state = config.RUNS_ROOT / "tacc" / "session.json"

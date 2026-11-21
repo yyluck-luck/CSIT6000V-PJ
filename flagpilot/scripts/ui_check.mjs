@@ -150,7 +150,7 @@ try {
   await js("document.querySelector('#promptBtn').click()");
   check("copy prompt button completes", await until("/Copied|Copy failed/.test(document.querySelector('#promptBtn').textContent)", 3000), await js("document.querySelector('#promptBtn').textContent"));
   // a TACC run that fails says why and stops the clock (it used to sit on RUNNING while the timer kept counting)
-  await js("QW = {phase: 'ready', remaining: 600}"); await js("document.querySelector('#runTacc').click()");
+  await js("QW = {phase: 'ready', remaining: 600}; qwAt = Date.now()"); await js("document.querySelector('#runTacc').click()");
   const taccErr = await until("/ERROR/.test((document.querySelector('#verdict .vcode') || {}).textContent || '') && /not connected/.test((document.querySelector('#verdict .vlabel') || {}).textContent || '')", 8000);
   const clockA = await js("document.querySelector('#mE2e').dataset.s"); await sleep(1200);
   const clockB = await js("document.querySelector('#mE2e').dataset.s"), clockLive = await js("document.querySelector('#mE2e').classList.contains('live')");
@@ -180,6 +180,61 @@ try {
   await js("(() => { const d = document.querySelector('#flow details.step'); if (d) d.open = true; const b = document.querySelector('[data-explain]'); b && b.click(); })()");
   check("a step can be explained in Ask", await until("document.querySelector('.page.on').dataset.page === 'chat' && /Explain step \\d+ of my run/.test((document.querySelector('#chatLog .bub.me') || {}).textContent || '') && document.querySelector('#chatLog .bub.bot .md')", 15000));
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
+
+  // 5c. Finish ends a run at once (its card says so), and the card runs it again with a hint that reaches the agent
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("(() => { const c = document.querySelector('#ctlStep'); c.checked = true; c.dispatchEvent(new Event('change', {bubbles: true})); })()");
+  await js("document.querySelector('#run').click()");
+  const fHeld = await until("!document.querySelector('#awaitCard').hidden", 20000);
+  const fShown = await js("!document.querySelector('#ctlFinish').hidden && getComputedStyle(document.querySelector('#ctlFinish')).display !== 'none'");
+  await js("document.querySelector('#ctlFinish').click()");
+  const fDone = await until("/FINISHED/.test((document.querySelector('#verdict .vcode') || {}).textContent || '') && document.querySelector('#runCtl').hidden && !busy", 8000);
+  await js("(() => { const c = document.querySelector('#ctlStep'); c.checked = false; c.dispatchEvent(new Event('change', {bubbles: true})); })()");
+  await js("localStorage.removeItem('fp.stepmode')");
+  await js("(() => { window.__F2 = window.fetch; window.__runBodies = []; window.fetch = (u, o) => { if (u === '/api/run' && o && o.method === 'POST') window.__runBodies.push(JSON.parse(o.body)); return window.__F2(u, o); }; })()");
+  await js("document.querySelector('#hintRerun').click()");
+  await until("document.querySelector('#hintReIn')", 2000);
+  await js("(() => { const i = document.querySelector('#hintReIn'); i.value = 'look at the file with strings'; document.querySelector('#hintReGo').click(); })()");
+  const reHint = await until("window.__runBodies.length === 1 && window.__runBodies[0].hint === 'look at the file with strings'", 5000);
+  const reDone = await until("document.querySelector('#verdict .verdict:not(.run)') && run && run.turns.some(t => /strings/.test(t.hint || ''))", 30000);
+  await js("window.fetch = window.__F2");
+  check("Finish ends a run at once; the result runs it again with a hint that reaches the agent", fHeld && fShown && fDone && reHint && reDone, JSON.stringify({fHeld, fShown, fDone, reHint, reDone}));
+  // a TACC run shows only Finish: step mode, pause and hints cannot reach a job on the cluster
+  await js("ctlShow('abcabcabcabc', true)");
+  const taccCtl = await js("['.toggle', '#ctlPause', '.hintbox'].every(q => getComputedStyle(document.querySelector('#runCtl ' + q)).display === 'none') && getComputedStyle(document.querySelector('#ctlFinish')).display !== 'none'");
+  await js("ctlHide()");
+  check("a TACC run offers Finish and hides the controls that cannot reach a cluster job", taccCtl);
+
+  // 5d. Qwen on TACC: the chip opens a panel that shows each start-up step live; a session about to end asks before a run
+  await js(`(() => { window.__F3 = window.fetch; window.__QW = {phase: 'idle', log: [], progress: {}}; window.__posts3 = [];
+    window.fetch = (u, o) => { const post = o && o.method === 'POST';
+      if (typeof u === 'string' && u.startsWith('/api/tacc/session') && !post) return Promise.resolve(new Response(JSON.stringify(window.__QW), {headers: {'Content-Type': 'application/json'}}));
+      if (typeof u === 'string' && u.startsWith('/api/tacc/session/') && post){ window.__posts3.push(u); return Promise.resolve(new Response('{"ok":true}', {headers: {'Content-Type': 'application/json'}})); }
+      return window.__F3(u, o); }; })()`);
+  await js("document.querySelector('#qwenChip').click()");
+  const pIdle = await until("!document.querySelector('#qwWrap').hidden && /Not running/.test(document.querySelector('#qwBody').textContent) && document.querySelector('[data-qw=\"start\"]')", 3000);
+  await js(`window.__QW = {phase: 'starting', elapsed: 200, remaining: 0, log: [], progress: {step: 'weights', eta: 70, typical: 308, elapsed: 200, queue: '', ahead: 0,
+      detail: {node: '10-0-3-11', gpus: '2 GPUs, 24 GB each', weights_gib: 19.57, weights_pct: 60},
+      tail: ['Loading safetensors checkpoint shards:  60% Completed | 3/5'],
+      steps: [{id: 'queue', label: 'Waiting for 2 free GPUs', state: 'done', s: 30}, {id: 'node', label: 'GPUs assigned', state: 'done', s: 100},
+              {id: 'vllm', label: 'Starting vLLM', state: 'done', s: 68}, {id: 'engine', label: 'Starting the engine on 2 GPUs', state: 'done', s: 65},
+              {id: 'weights', label: 'Loading the model weights', state: 'current', s: 4}, {id: 'compile', label: 'Loading compiled kernels', state: 'todo', s: 45},
+              {id: 'warmup', label: 'Allocating memory and warming up', state: 'todo', s: 15}, {id: 'server', label: 'Opening the API', state: 'todo', s: 5},
+              {id: 'ready', label: 'Ready', state: 'todo', s: 0}]}}`);
+  const pStart = await until("document.querySelectorAll('#qwBody .qsteps li').length === 9 && document.querySelector('#qwBody .qsteps li.current') && /60%/.test(document.querySelector('#qwBody').textContent) && /about (1:\\d\\d|\\d+ s) left/.test(document.querySelector('#qwBody .qline').textContent) && document.querySelector('#qwBody .qlog')", 6000);
+  const smallPanel = await js(SMALL);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  const pClosed = await until("document.querySelector('#qwWrap').hidden", 2000);
+  await js("window.__QW = {phase: 'ready', remaining: 60, node: '10-0-3-11', url: 'http://x', log: [], progress: {}, min_run_s: 420, min_chat_s: 180}");
+  await js("qwenPoll()"); await sleep(250);
+  await js("document.querySelector('#runTacc').click()");
+  const qAsked = await until("!document.querySelector('#dlgWrap').hidden && /ends in/.test(document.querySelector('#dlgWrap').textContent)", 3000);
+  await js("[...document.querySelectorAll('#dlgWrap .btn')].find(b => /Not now/.test(b.textContent)).click()");
+  const declined = await until("document.querySelector('#dlgWrap').hidden", 2000) && await js("window.__posts3.length === 0 && !pendingRun");
+  await js("window.fetch = window.__F3; QW = {phase: 'idle'}; qwenPoll()");
+  check("Qwen panel shows each start-up step live; a session about to end asks before a run", pIdle && pStart && pClosed && qAsked && declined && !smallPanel.length,
+    JSON.stringify({pIdle, pStart, pClosed, qAsked, declined, small: smallPanel.slice(0, 3)}));
+  await noCJK("solve, after the Qwen panel");
 
   // 6. runs + replay
   await js("document.querySelector('.navbtn[data-page=\"history\"]').click()");
@@ -456,6 +511,10 @@ try {
       && qPosts === 1 && /Queue/.test(qLabel) && qDone && JSON.stringify(qOrder) === JSON.stringify(["first", "Answer 1", "second", "Answer 2", "third", "Answer 3"]) && JSON.stringify(await js("window.__posts")) === JSON.stringify(["first", "second", "third"]),
     JSON.stringify({qShape, qPosts, qLabel, qDone, qOrder}));
   check("Ask: replies render Markdown (bold, lists, inline code)", qMd);
+  const mathHtml = await js("mdLite('Conclusion: $N \\\\approx 1.4 \\\\times 10^{25}$ is small.\\n\\n$$\\\\phi(N) = (p-1)(q-1)$$\\n\\nIt costs $5 or $10; run `echo $HOME`.')");
+  check("Ask: replies render math ($…$ inline, $$…$$ on its own line); prices and shell variables stay text",
+    /<span class="math"><i>N<\/i> ≈ 1\.4 × 10<sup>25<\/sup><\/span>/.test(mathHtml) && /<div class="math disp">ϕ\(<i>N<\/i>\)/.test(mathHtml)
+      && /costs \$5 or \$10/.test(mathHtml) && /<code>echo \$HOME<\/code>/.test(mathHtml), mathHtml.slice(0, 400));
   // recall: a queued message comes back to the box without reaching the server; an answered one is dropped on the server too;
   // one still being answered is dropped and the next queued message goes out only after the server has been told
   await typeMsg("fourth"); await until("window.__posts.length === 4", 2000);

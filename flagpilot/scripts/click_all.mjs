@@ -43,7 +43,7 @@ const js = async expr => { const r = await send("Runtime.evaluate", { expression
 const until = async (expr, ms = 8000) => { const t = Date.now(); while (Date.now() - t < ms) { try { if (await js(`!!(${expr})`)) return true; } catch {} await sleep(40); } return false; };
 
 // what never gets clicked (TACC jobs, deletes, stops, the internet) and how a control is named in the report
-const SKIP = String.raw`#runTacc,#qwenChip,#taccStart,#taccStop,#impUrlGo,[data-import],.del,[data-stop],#ctlStop,#awStop,a[href^="http"],a[download],[data-close]`;
+const SKIP = String.raw`#runTacc,#qwenChip,#taccStart,#taccStop,#impUrlGo,[data-import],.del,[data-stop],#ctlFinish,[data-qw],[data-qwopen],#awStop,a[href^="http"],a[download],[data-close]`;
 const SKIP_TEXT = /delete|remove|disconnect|stop|clear all|reset/i;
 const PROBE = String.raw`(() => {
   window.__clk = {mut: 0, req: 0};

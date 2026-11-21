@@ -395,6 +395,28 @@
   .tp .md{font-size:16px;padding:14px 16px;background:var(--paper);border-left:4px solid var(--ink);max-height:44vh;overflow:auto}
   .tp .files{margin:14px 0 0;padding:0;list-style:none;font:15px/1.7 var(--mono)} .tp .files li{display:flex;gap:12px} .tp .files .sz{margin-left:auto;color:var(--ink3)}
   .tp .actions{margin-top:18px}
+  /* a question with two answers (session about to end, …) */
+  #dlgWrap,#qwWrap{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:24px} #dlgWrap[hidden],#qwWrap[hidden]{display:none}
+  #dlgWrap .back,#qwWrap .back{position:absolute;inset:0;background:rgba(20,20,20,.38);opacity:0;transition:opacity var(--t2) ease} #dlgWrap.open .back,#qwWrap.open .back{opacity:1}
+  #dlgWrap .tp{width:min(580px,100%)} #qwWrap .tp{width:min(680px,100%)} #dlgWrap.open .tp,#qwWrap.open .tp{transform:none;opacity:1}
+  .dlgb{font:17px/1.55 var(--font);margin:12px 0 4px;color:var(--ink)} .tp .actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  /* Qwen on TACC: the session panel with start-up progress step by step */
+  .qline{font:700 18px/1.4 var(--font);margin:12px 0 10px} .qsub{font:16px/1.55 var(--font);color:var(--ink2);margin:0 0 12px}
+  .qbar{height:10px;border:1.5px solid var(--ink);background:var(--paper);overflow:hidden;margin:0 0 16px}
+  .qbar i{display:block;height:100%;background:var(--blue);transition:width .9s linear}
+  .qbar.ind i{width:30%;animation:qind 1.6s ease-in-out infinite} @keyframes qind{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
+  .qsteps{list-style:none;margin:0;padding:0;border-top:1.5px solid var(--rule)}
+  .qsteps li{display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:start;padding:9px 0;border-bottom:1px solid var(--rule);font:16px/1.45 var(--font)}
+  .qsteps .ql small{display:block;font:15px/1.45 var(--mono);color:var(--ink2)} .qsteps .qt{font:600 15px var(--mono);color:var(--ink2);padding-top:2px}
+  .qsteps .qi{width:18px;height:18px;margin-top:3px;border:2px solid var(--ink3);border-radius:50%}
+  .qsteps li.done .qi{border-color:var(--blue);background:var(--blue);box-shadow:inset 0 0 0 3px var(--white)}
+  .qsteps li.current .qi{border-color:var(--blue);border-right-color:transparent;animation:qspin .9s linear infinite} @keyframes qspin{to{transform:rotate(360deg)}}
+  .qsteps li.current{font-weight:700} .qsteps li.current .qt{color:var(--blue)} .qsteps li.todo{color:var(--ink3)} .qsteps li.todo .ql small{color:var(--ink3)}
+  .qlog{margin-top:14px} .qlog summary{cursor:pointer;font:700 16px var(--font)} .qlog pre{margin:8px 0 0;max-height:240px;overflow:auto;background:var(--paper);border-left:4px solid var(--ink);padding:10px 12px;font:15px/1.5 var(--mono);white-space:pre-wrap;word-break:break-all}
+  @media (prefers-reduced-motion: reduce){ .qbar.ind i,.qsteps li.current .qi{animation:none} }
+  /* run again with a hint, from the result */
+  .hintre{display:flex;gap:10px;flex:1 1 100%;margin-top:10px} .hintre input{flex:1;min-width:0;font:16px var(--font);padding:9px 12px;border:1.5px solid var(--ink);background:var(--white)}
+  #runCtl.tacc .toggle,#runCtl.tacc #ctlPause,#runCtl.tacc .hintbox{display:none}
   /* customise an imported challenge */
   .cust{margin-top:20px;border-top:1.5px dashed var(--rule);padding-top:14px}
   .cust>summary{cursor:pointer;list-style:none;font:800 18px var(--font)} .cust>summary::-webkit-details-marker{display:none}
@@ -875,7 +897,7 @@
           <label class="chip toggle" data-tip="Each command waits for your OK before it runs"><input type="checkbox" id="ctlStep"><span class="tick"></span>Step mode</label>
           <button class="btn" id="ctlPause">Pause</button>
           <div class="hintbox"><input id="ctlHint" maxlength="500" placeholder="Give the agent a hint, e.g. try base64" aria-label="Hint for the agent"><button class="btn plain" id="ctlHintGo">Send hint</button></div>
-          <button class="btn plain" id="ctlStop">Stop</button>
+          <button class="btn" id="ctlFinish" data-tip="End this run now and keep what it has done so far. A Qwen session on TACC stays open for the next run">Finish</button>
         </div>
         <div id="awaitCard" hidden></div>
         <div class="scrub" id="scrub" hidden><div class="bubble" id="scrubBubble"></div><div class="track" id="scrubTrack"></div><div class="under" id="scrubUnder"></div></div>
@@ -1081,6 +1103,9 @@
 </aside>
 
 <!-- ======================= Challenge picker ======================= -->
+<div id="dlgWrap" hidden></div>
+<div id="qwWrap" hidden><div class="back" data-qwclose></div><div class="tp" role="dialog" aria-modal="true" aria-labelledby="qwTitle">
+  <div class="hd"><h3 id="qwTitle">Qwen 27B on TACC</h3><button class="close" type="button" data-qwclose aria-label="Close">Close</button></div><div id="qwBody"></div></div></div>
 <div id="tpWrap" hidden><div class="back" data-tpclose></div><div class="tp" role="dialog" aria-modal="true" aria-labelledby="tpTitle">
   <div class="hd"><h3 id="tpTitle"></h3><button class="close" type="button" data-tpclose>Close</button></div><p class="meta" id="tpMeta"></p><div id="tpBody"></div><div class="actions" id="tpActs"></div></div></div>
 <div id="sheetWrap" hidden>
@@ -1121,6 +1146,7 @@ const V = {
   wrong:      ['Wrong flag', 'bad', 'WRONG'],
   budget:     ['Budget exhausted before a valid submission', 'bad', 'BUDGET'],
   error:      ['Run error', 'bad', 'ERROR'],
+  stopped:    ['Finished by you before a verdict; the steps so far are below', 'warn', 'FINISHED'],
 };
 /* no answer to check against: what the replay could and could not show */
 const UNCONFIRMED = {literal_flag: 'The script just prints a flag typed into it, so nothing was solved: the flag is probably made up',
@@ -2079,7 +2105,7 @@ function onEvent(ev){
   switch (ev.type){
     case 'meta': if (ev.budget && ev.budget.max_turns) run.maxTurns = ev.budget.max_turns; break;
     case 'model_partial': if (!R.bulk && !run.byKey.has('t' + ev.turn)){ renderLive(ev.turn, ev.text || ''); run.liveTurn = ev.turn; } break;
-    case 'tacc': { const msg = taccStage(ev); run.taccMsg = msg; run.taccStarted = ev.stage === 'running'; run.stageAt = Date.now();
+    case 'tacc': { $('#runCtl').classList.add('tacc'); const msg = taccStage(ev); run.taccMsg = msg; run.taccStarted = ev.stage === 'running'; run.stageAt = Date.now();
       setStatus(ev.stage === 'hold' ? 'On hold' : 'Running', ev.stage === 'hold' ? 'warn' : '', `${sel || ''} · ${msg}`);
       const vl = $('#verdict .vlabel'); if (vl && $('#verdict .verdict.run')) vl.textContent = `Qwen 27B on TACC · ${msg}`;
       const h = $('#traceEmpty .hint'); if (h) h.textContent = (ev.stage === 'hold' ? 'On hold: ' : '') + msg.charAt(0).toUpperCase() + msg.slice(1) + '…'; break; }
@@ -2151,12 +2177,20 @@ function showDone(ev){
        ${ev.verdict === 'error' && /^model:/.test(ev.reason || '') ? '<button class="btn" id="changeModel" type="button">Change model<span class="arr">→</span></button>' : ''}
        ${selTask && selTask.custom ? `<button class="btn" id="addGold" type="button" data-tip="${selTask.has_gold ? 'Replace or remove the saved answer' : 'Paste the real flag once: later runs are judged right or wrong'}">${selTask.has_gold ? 'Change the answer' : 'Add the answer'}<span class="arr">→</span></button>` : ''}
        <button class="pixbtn" id="promptBtn" type="button"><canvas></canvas><span class="pl">Copy explainer prompt</span></button>
-       ${ev.web_run_id ? `<a id="writeupDownload" class="btn sm" href="/api/writeup?id=${encodeURIComponent(ev.web_run_id)}" download>Writeup<span class="arr">↓</span></a>` : ''}</div>`);
+       ${ev.web_run_id ? `<a id="writeupDownload" class="btn sm" href="/api/writeup?id=${encodeURIComponent(ev.web_run_id)}" download>Writeup<span class="arr">↓</span></a>` : ''}
+       ${!R.bulk && sel && ['wrong', 'budget', 'unverified', 'error', 'stopped'].includes(ev.verdict) ? '<button class="btn" id="hintRerun" type="button" data-tip="Run this challenge again with a hint the agent reads before its first step">Run again with a hint<span class="arr">→</span></button>' : ''}</div>`);
   const vd = $('#verdict .verdict');
   if (!R.bulk && !reduced()){ vd.classList.add('in'); ceremony(vd, tone); }
   flipText(vd.querySelector('.vcode'), code);
   if (flag) decrypt($('#vflag'), flag, 520);
   if ($('#promptBtn')) PixelButton($('#promptBtn'));
+  if ($('#hintRerun')) $('#hintRerun').onclick = () => {
+    const bar = $('#hintRerun').closest('.vbar'); if (bar.querySelector('.hintre')){ $('#hintReIn').focus(); return; }
+    bar.insertAdjacentHTML('beforeend', '<div class="hintre"><input id="hintReIn" maxlength="500" placeholder="A hint for the next run, e.g. the key is hidden in the image metadata" aria-label="Hint for the next run" autocomplete="off"><button class="btn primary" id="hintReGo" type="button">Run again</button></div>');
+    const go2 = () => { const h = $('#hintReIn').value.trim(); if (!h) { $('#hintReIn').focus(); return; } if (busy) return toast('A run is in progress');
+      return lastBackend === 'tacc' ? $('#runTacc').__go(h) : runLocal(h); };
+    $('#hintReGo').onclick = go2; $('#hintReIn').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing){ e.preventDefault(); go2(); } });
+    $('#hintReIn').focus(); };
   if ($('#addGold')) $('#addGold').onclick = () => {
     const bar = $('#addGold').closest('.vbar'); if (bar.querySelector('.goldin')) return;
     const had = !!(selTask && selTask.has_gold);
@@ -2269,16 +2303,16 @@ async function recoverRun(run_id, onEvent, onReset, budgetMs){
   throw new Error('Connection lost and the result could not be recovered (retried for 10 minutes)');
 }
 const onEventRef = onEvent;
-function runOne(task, ablate, onEvent, onReset, backend){
+function runOne(task, ablate, onEvent, onReset, backend, hint){
   return new Promise(async (resolve, reject) => {
     let r;
     const step = backend !== 'tacc' && $('#ctlStep').checked;
-    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step})}); } catch(e){ return reject(e); }
+    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step, ...(hint ? {hint} : {})})}); } catch(e){ return reject(e); }
     if (!r.ok){ let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch(_){} return reject(new Error('Submission failed: ' + m)); }
     const {run_id} = await r.json(); if (!run_id) return reject(new Error('The server returned no run id'));
     if (onEvent === onEventRef) keepHere({sel: task, run: run_id});            // a reload picks this run up again
     let settled = false, es = null, lastEv = Date.now(); const t0 = performance.now();
-    if (backend !== 'tacc') ctlShow(run_id);
+    ctlShow(run_id, backend === 'tacc');
     const finish = v => { if (!settled){ settled = true; ctlHide(); try { es && es.close(); } catch(_){} resolve(v); } };
     const die = e => { if (!settled){ settled = true; ctlHide(); try { es && es.close(); } catch(_){} reject(e); } };
     const rescue = () => { if (!settled) recoverRun(run_id, onEvent, onReset).then(finish).catch(die); };
@@ -2286,6 +2320,7 @@ function runOne(task, ablate, onEvent, onReset, backend){
     es = new EventSource('/api/stream?id=' + run_id);
     es.onmessage = e => { lastEv = Date.now(); let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
       /* an error ends the run like a verdict: the clock stops and the card says why (it used to sit on RUNNING forever) */
+      if (ev.type === 'error' && ev.renew) setTimeout(() => renewThen('run').then(ok => { if (ok){ pendingRun = task; pendingHint = hint || ''; } }), 400);
       if (ev.type === 'error'){ const d = {...ev, type: 'done', verdict: 'error', reason: ev.message || 'server error',
           turns: run && run.turns ? run.turns.length : 0, e2e_s: (performance.now() - t0) / 1000}; if (onEvent) onEvent(d); return finish(d); }
       if (onEvent) onEvent(ev); if (ev.type === 'done') finish(ev); };
@@ -2334,7 +2369,8 @@ function labCeremony(host){ if (reduced()) return;
 let ctlRid = null, awaitTurn = null;
 const STEP_KEY = 'fp.stepmode';
 try { $('#ctlStep').checked = localStorage.getItem(STEP_KEY) === '1'; } catch(_){}
-function ctlShow(rid){ ctlRid = rid; $('#runCtl').hidden = false; $('#ctlPause').textContent = 'Pause'; $('#ctlPause').dataset.on = ''; }
+function ctlShow(rid, tacc){ ctlRid = rid; $('#runCtl').hidden = false; $('#runCtl').classList.toggle('tacc', !!tacc); $('#ctlPause').textContent = 'Pause'; $('#ctlPause').dataset.on = '';
+  $('#ctlFinish').disabled = false; }
 function ctlHide(){ ctlRid = null; $('#runCtl').hidden = true; awaitHide(); }
 async function ctl(op, value, turn){ if (!ctlRid) return {ok: false};
   try { const r = await fetch('/api/run/control', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: ctlRid, op, value, turn})}); return await r.json(); }
@@ -2346,7 +2382,9 @@ $('#ctlPause').onclick = async () => { const b = $('#ctlPause'), on = !b.dataset
 const sendHint = async () => { const i = $('#ctlHint'), v = i.value.trim(); if (!v) return; const d = await ctl('hint', v);
   if (d.ok){ i.value = ''; toast('Hint sent: the agent reads it on its next step'); } else toast('Could not send the hint: the run has ended'); };
 $('#ctlHintGo').onclick = sendHint; $('#ctlHint').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing){ e.preventDefault(); sendHint(); } });
-$('#ctlStop').onclick = async () => { await ctl('stop'); toast('Stopping after the current step'); };
+/* Finish: the run ends now (the card shows what it did so far); its TACC job is cancelled in the background, the session stays */
+$('#ctlFinish').onclick = async () => { const b = $('#ctlFinish'); b.disabled = true; const d = await ctl('finish');
+  if (!d.ok){ b.disabled = false; toast('This run has already ended'); } };
 function awaitShow(ev){
   awaitTurn = ev.turn; const card = $('#awaitCard'), editable = !!ev.field;
   card.innerHTML = `<div class="await" role="alertdialog" aria-label="A command is waiting for you"><div class="ah"><b>Step ${pad2(ev.turn)} is waiting for you</b><span>${esc(ev.action)}${ev.paused && !ev.step ? ' · paused' : ''}</span></div>`
@@ -2371,15 +2409,17 @@ let runPage = 'solve';
 function lockRun(on){ busy = on; if (on) runPage = page; railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); }
 function beginRun(label){ run = fresh(); openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); }
 function clearRunParam(){ if (new URLSearchParams(location.search).has('run')) history.replaceState(null, '', location.pathname + '#/' + page); }
-$('#run').onclick = async () => {
+let lastBackend = 'local';
+async function runLocal(hint){
   if (!sel || busy) return;
-  clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation}`);
+  lastBackend = 'local'; clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation}`);
   setStatus('Running', '', `${sel} · 00/${run.maxTurns}`);
-  try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }); }
+  try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, '', hint); }
   catch(e){ stopClock(); $('#mState').textContent = 'error'; $('#mState').className = 'badge bad';
     $('#verdict').innerHTML = verdictHTML('ERROR', e.message, 'bad'); setStatus('Error', 'bad', e.message); hair(null, 'off'); }
   finally { lockRun(false); }
-};
+}
+$('#run').onclick = () => runLocal('');
 
 /* ---------------- runs: render from cache, refresh quietly, prefetch when idle ---------------- */
 let HIST = null, histF = '', histSig = '';
@@ -2784,9 +2824,9 @@ async function startTacc(opt){
 $('#taccStart').onclick = () => startTacc({tiers: qs('[data-tier]').filter(x => x.checked).map(x => x.dataset.tier).join(','), limit: taccLimit});
 $('#taccStop').onclick = async () => { await fetch('/api/tacc/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); toast('Stopping: the GPU server job is being cancelled'); taccPoll(); };
 /* ---------------- Qwen on TACC: one server kept up to an hour; runs and chats go to it as small jobs ---------------- */
-let QW = {phase: 'idle'}, qwT = 0, pendingRun = null;
-async function qwenPoll(){
-  try { QW = await (await fetch('/api/tacc/session', {cache: 'no-store'})).json(); }
+let QW = {phase: 'idle'}, qwT = 0, pendingRun = null, pendingHint = '', qwAt = Date.now();
+async function qwenPoll(watch){
+  try { QW = await (await fetch('/api/tacc/session' + (watch ? '?watch=1' : ''), {cache: 'no-store'})).json(); qwAt = Date.now(); }
   catch(_){ clearTimeout(qwT); if (QW.phase === 'starting' || QW.phase === 'ready') qwT = setTimeout(qwenPoll, 15000); return; }
   const ph = QW.phase, mins = Math.ceil((QW.remaining || 0) / 60);
   const label = ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}${QW.queue ? ' · ' + (QSHORT[QW.queue] || QW.queue) : ''}`
@@ -2797,17 +2837,98 @@ async function qwenPoll(){
     c.querySelector('.tn').textContent = id === '#qwenChipAsk' && ph !== 'ready' && ph !== 'starting' ? `${/^mock/i.test(LOCALMODEL) ? 'Demo' : LOCALMODEL} · connect Qwen` : label;
     c.dataset.tip = (ph === 'starting' && QW.queue ? 'Queued: ' + queueWhy(QW.queue) + ' — ' : '') + (QW.log && QW.log.length ? QW.log[QW.log.length - 1] + ' — ' : '')
       + (ph === 'ready' ? 'click to disconnect and free the GPUs' : 'click to start Qwen 27B on two TACC GPUs (about 5 minutes)'); }
-  if (ph === 'ready' && pendingRun && !busy){ const t = pendingRun; pendingRun = null; if (sel === t) runOnTacc(); }
+  if (ph === 'ready' && pendingRun && !busy){ const t = pendingRun, h = pendingHint; pendingRun = null; pendingHint = ''; if (sel === t) runOnTacc(h); }
   if (ph === 'failed' && pendingRun){ pendingRun = null; toast('Could not start Qwen on TACC: ' + (QW.error || 'see the log')); }
   clearTimeout(qwT); if (ph === 'starting' || ph === 'ready') qwT = setTimeout(qwenPoll, ph === 'starting' ? 5000 : 15000);
 }
-async function qwenToggle(){
-  if (QW.phase === 'ready'){ if (!confirm('Disconnect and free the TACC GPUs?')) return; await fetch('/api/tacc/session/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
-  else if (QW.phase === 'starting'){ if (!confirm('Stop starting Qwen 27B on TACC?')) return; pendingRun = null; await fetch('/api/tacc/session/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
-  else if (QW.phase !== 'starting'){ await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); toast('Starting Qwen 27B on TACC — about 5 minutes'); }
-  qwenPoll();
+/* a question with two or three answers; resolves to the chosen value, null when dismissed (Esc, the backdrop) */
+function choose({title, body, buttons}){
+  return new Promise(res => {
+    const w = $('#dlgWrap'), prev = document.activeElement;
+    w.innerHTML = `<div class="back" data-v=""></div><div class="tp" role="alertdialog" aria-modal="true" aria-labelledby="dlgT" aria-describedby="dlgB">
+      <div class="hd"><h3 id="dlgT">${esc(title)}</h3></div><p class="dlgb" id="dlgB">${esc(body)}</p>
+      <div class="actions">${buttons.map((b, i) => `<button class="btn${b.primary ? ' primary' : ''}" type="button" data-v="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+    w.hidden = false; requestAnimationFrame(() => w.classList.add('open'));
+    const key = e => { if (e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); close(null); } };
+    const close = v => { document.removeEventListener('keydown', key, true); w.classList.remove('open');
+      setTimeout(() => { if (!w.classList.contains('open')){ w.hidden = true; w.innerHTML = ''; } }, 220); try { prev && prev.focus({preventScroll: true}); } catch(_){} res(v); };
+    document.addEventListener('keydown', key, true);
+    w.querySelectorAll('[data-v]').forEach(el => el.addEventListener('click', () => close(el.dataset.v === '' ? null : buttons[+el.dataset.v].value)));
+    (w.querySelector('.btn.primary') || w.querySelector('.btn')).focus({preventScroll: true});
+  });
 }
-$('#qwenChip').addEventListener('click', qwenToggle);
+const post0 = path => fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {});
+const clockS = s => { s = Math.max(0, Math.round(s || 0)); return s >= 60 ? `${Math.floor(s / 60)}:${pad2(s % 60)}` : `${s} s`; };
+/* the session is too close to its one-hour limit for this job: ask before starting a new one (a job submitted now could not finish) */
+async function renewThen(kind){
+  const left = Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000), when = left < 90 ? `${Math.round(left)} s` : `${Math.round(left / 60)} min`;
+  const what = kind === 'run' ? 'A run on TACC needs about 7 minutes' : 'A reply on TACC needs about 3 minutes';
+  const v = await choose({title: `This Qwen session ends in ${when}`,
+    body: `${what}, so it could not finish in this session. Start a new session now (about 5 to 6 minutes once two GPUs are free) and ${kind === 'run' ? 'run this challenge' : 'send your message'} as soon as it is ready?`,
+    buttons: [{label: kind === 'run' ? 'Start a new session and run' : 'Start a new session and send', value: 'renew', primary: true}, {label: 'Not now', value: null}]});
+  if (v !== 'renew') return false;
+  toast('Ending this session and starting a new one; click the Qwen chip to watch it start');
+  await post0('/api/tacc/session/stop'); await post0('/api/tacc/session/start'); await qwenPoll();
+  return true;
+}
+/* ---- the session panel: what it is doing right now, step by step ---- */
+let qwOpen = false, qwWT = 0, qwTick = 0;
+function qwDetail(id, p, cur){ const d = p.detail || {};
+  if (id === 'queue') return cur ? [(p.queue ? queueWhy(p.queue) : '') || 'asking the scheduler', p.ahead ? `${p.ahead} job${p.ahead > 1 ? 's' : ''} ahead` : ''].filter(Boolean).join(' · ') : '';
+  if (id === 'node') return [d.node, d.gpus].filter(Boolean).join(' · ');
+  if (id === 'vllm') return d.vllm ? `vLLM ${d.vllm}, loading Python from shared storage` : 'loading Python from shared storage';
+  if (id === 'engine') return 'two GPU workers, tensor parallel';
+  if (id === 'weights') return [d.weights_gib ? `${d.weights_gib} GB, AWQ 4-bit` : '', cur && d.weights_pct != null ? `${d.weights_pct}%` : ''].filter(Boolean).join(' · ');
+  if (id === 'compile') return d.compile_s ? `${Math.round(d.compile_s)} s, from the compile cache` : 'from the compile cache';
+  if (id === 'warmup') return d.kv_tokens ? `KV cache for ${d.kv_tokens.toLocaleString('en-US')} tokens` : 'KV cache, CUDA graphs';
+  return ''; }
+function renderQwen(){
+  const b = $('#qwBody'); if (!b || !qwOpen) return;
+  const ph = QW.phase, p = QW.progress || {}, since = (Date.now() - qwAt) / 1000, logOpen = !!(b.querySelector('.qlog') || {}).open;
+  const steps = (p.steps || []).map(s => { const cur = s.state === 'current', t = cur ? s.s + since : s.s, det = qwDetail(s.id, p, cur);
+    return `<li class="${s.state}"><span class="qi" aria-hidden="true"></span><span class="ql">${esc(s.label)}${det ? `<small>${esc(det)}</small>` : ''}</span><span class="qt">${s.state === 'todo' ? '~' + clockS(t) : clockS(t)}</span></li>`; }).join('');
+  const log = (p.tail && p.tail.length) ? `<details class="qlog"${logOpen ? ' open' : ''}><summary>Live log from the job</summary><pre>${esc(p.tail.join('\n'))}</pre></details>` : '';
+  let html;
+  if (ph === 'starting' || ph === 'stopping'){
+    const eta = p.eta != null ? Math.max(0, p.eta - since) : null, el = (p.elapsed || 0) + since, pct = eta != null ? Math.min(99, el / Math.max(1, el + eta) * 100) : null;
+    const head = ph === 'stopping' ? 'Stopping' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B';
+    html = `<p class="qline" aria-live="polite">${head} · ${clockS(el)} so far${eta != null ? ` · about ${clockS(eta)} left` : p.step === 'queue' ? ` · then about ${clockS(p.typical || 300)}` : ''}</p>`
+      + `<div class="qbar${pct == null ? ' ind' : ''}" role="progressbar" aria-label="Start-up progress"${pct == null ? '' : ` aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"`}><i${pct == null ? '' : ` style="width:${pct.toFixed(1)}%"`}></i></div>`
+      + `<ol class="qsteps">${steps}</ol>${log}<div class="actions"><button class="btn" type="button" data-qw="stop">Stop starting</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
+  } else if (ph === 'ready'){
+    const left = Math.max(0, (QW.remaining || 0) - since);
+    html = `<p class="qline">Connected on ${esc(QW.node || 'TACC')} · ${clockS(left)} left in this session</p>`
+      + `<p class="qsub">Runs and replies go to it as small jobs. The session ends by itself at the one-hour limit; a run needs about 7 minutes of it.</p>`
+      + (steps ? `<ol class="qsteps">${steps}</ol>` : '') + `<div class="actions"><button class="btn" type="button" data-qw="stop">Disconnect and free the GPUs</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
+  } else {
+    const failed = ph === 'failed';
+    html = `<p class="qline">${failed ? 'The last start did not work' : 'Not running'}</p>`
+      + (failed && QW.error ? `<p class="qsub bad">${esc(en(QW.error))}</p>` : '')
+      + `<p class="qsub">A session runs Qwen 27B on two GPUs of the course cluster for up to an hour. Starting takes about 5 to 6 minutes once two GPUs are free, and this panel shows every step as it happens.</p>`
+      + ((QW.log || []).length ? `<details class="qlog"${logOpen ? ' open' : ''}><summary>What happened</summary><pre>${esc(QW.log.slice(-12).join('\n'))}</pre></details>` : '')
+      + `<div class="actions"><button class="btn primary" type="button" data-qw="start">${failed ? 'Try again' : 'Start the session'}</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
+  }
+  b.innerHTML = html;
+}
+async function qwWatch(){ if (!qwOpen) return; await qwenPoll(true); renderQwen(); clearTimeout(qwWT); qwWT = setTimeout(qwWatch, 2000); }
+function openQwenPanel(){
+  const w = $('#qwWrap'); if (qwOpen){ return; } qwOpen = true; w.hidden = false; requestAnimationFrame(() => w.classList.add('open'));
+  w.__prev = document.activeElement; renderQwen(); qwWatch(); clearInterval(qwTick); qwTick = setInterval(renderQwen, 1000);
+  setTimeout(() => { const f = w.querySelector('[data-qw]') || w.querySelector('.close'); if (f) f.focus({preventScroll: true}); }, 30);
+}
+function closeQwenPanel(){ const w = $('#qwWrap'); if (!qwOpen) return; qwOpen = false; clearTimeout(qwWT); clearInterval(qwTick); w.classList.remove('open');
+  setTimeout(() => { if (!qwOpen) w.hidden = true; }, 220); try { w.__prev && w.__prev.focus({preventScroll: true}); } catch(_){} }
+$('#qwWrap').addEventListener('click', async e => {
+  if (e.target.closest('[data-qwclose]')) return closeQwenPanel();
+  const b = e.target.closest('[data-qw]'); if (!b) return;
+  if (b.dataset.qw === 'start'){ b.disabled = true; await post0('/api/tacc/session/start'); await qwenPoll(true); renderQwen(); return; }
+  if (b.dataset.qw === 'stop'){
+    if (QW.phase === 'ready' && await choose({title: 'Disconnect from TACC?', body: 'The Qwen session ends now and its two GPUs are freed. Starting a new one takes about 5 to 6 minutes.',
+      buttons: [{label: 'Disconnect', value: 'yes', primary: true}, {label: 'Keep it', value: null}]}) !== 'yes') return;
+    b.disabled = true; pendingRun = null; await post0('/api/tacc/session/stop'); await qwenPoll(true); renderQwen(); } });
+document.addEventListener('keydown', e => { if (qwOpen && e.key === 'Escape' && $('#dlgWrap').hidden){ e.preventDefault(); closeQwenPanel(); } });
+document.addEventListener('click', e => { if (e.target.closest('[data-qwopen]')) openQwenPanel(); });
+$('#qwenChip').addEventListener('click', openQwenPanel);
 /* ---------------- Ask: each conversation picks who answers (a hosted or local model, or Qwen 27B on TACC) ---------------- */
 const TACC_LABEL = 'qwen3.8-27b (TACC)', PICK_KEY = 'fp.ask.pick', PICKS_KEY = 'fp.ask.threads';
 let MODELS = [], PROVIDERS = [];
@@ -2844,7 +2965,7 @@ function openModelMenu(anchor){
   const m = document.createElement('div'); m.className = 'mmenu'; m.id = 'modelMenu'; m.setAttribute('role', 'menu'); m.setAttribute('aria-label', 'Who answers this conversation');
   m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), n === LOCALMODEL ? 'default' : '', r === 'local' && (n === cur || providerOf(n) === providerOf(cur)))).join('')
     + '<hr>' + row('tacc', 'Qwen 27B on TACC', ph === 'ready' ? `connected · ${mins} min left` : ph === 'starting' ? `starting · ${fmtClock(QW.elapsed)}` : 'starts in about 5 min', r === 'tacc')
-    + (ph === 'starting' ? row('stop', 'Stop starting Qwen', '', false, 'danger') : ph === 'ready' ? row('stop', 'Disconnect TACC', 'frees the GPUs', false, 'danger') : '');
+    + (ph === 'starting' ? row('progress', 'Show start-up progress', 'step by step', false) + row('stop', 'Stop starting Qwen', '', false, 'danger') : ph === 'ready' ? row('stop', 'Disconnect TACC', 'frees the GPUs', false, 'danger') : '');
   document.body.appendChild(m);
   const a = anchor.getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth, up = a.top - h - 10 >= 8;
   m.style.top = (up ? a.top - h - 10 : Math.min(innerHeight - h - 8, a.bottom + 10)) + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - w - 8, a.left)) + 'px';
@@ -2863,6 +2984,7 @@ function closeModelMenu(refocus){ document.removeEventListener('pointerdown', me
 /* the pick is changed in place, so a message on hold in this conversation follows the switch at once */
 async function pickModel(act){
   closeModelMenu(true); const pk = threadPick, post = path => fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {});
+  if (act === 'progress') return openQwenPanel();
   if (act === 'stop'){ const was = QW.phase; if (was === 'ready' && !confirm('Disconnect and free the TACC GPUs?')) return;
     if (askRouteOf(pk) === 'tacc'){ pk.route = 'local'; pk.model = pk.model || LOCALMODEL; rememberPick(chatId, pk); }
     await post('/api/tacc/session/stop'); toast(was === 'starting' ? 'Stopped starting Qwen; ' + prettyModel(modelOf(pk)) + ' answers here' : 'Disconnected from TACC'); qwenPoll(); syncAskChip(); return; }
@@ -2880,19 +3002,29 @@ function taccTick(){
     : run.taccStarted ? 'the job has started: loading the challenge, then the first answer' : (run.taccMsg || 'submitting the job');
   vl.textContent = `Qwen 27B on TACC · ${what} · ${s} s`;
 }
-async function runOnTacc(){
+async function runOnTacc(hint){
   if (!sel || busy) return;
+  lastBackend = 'tacc';
   clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation} · Qwen 27B on TACC`);
   setStatus('Running', '', `${sel} · TACC`); run.stageAt = Date.now();
   const tick = setInterval(taccTick, 1000);
-  try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, 'tacc'); loadHistory(true); }
+  try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, 'tacc', hint); loadHistory(true); }
   catch(e){ stopClock(); $('#verdict').innerHTML = verdictHTML('ERROR', e.message, 'bad'); setStatus('Error', 'bad', e.message); hair(null, 'off'); }
   finally { clearInterval(tick); lockRun(false); }
 }
-$('#runTacc').onclick = async () => { if (!sel) return;
-  if (QW.phase === 'ready') return runOnTacc();
-  pendingRun = sel; if (QW.phase !== 'starting'){ await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); }
-  toast('Starting Qwen 27B on TACC (about 5 minutes); the run starts by itself'); runningVerdict('Waiting for Qwen 27B on TACC …'); qwenPoll(); };
+$('#runTacc').__go = async hint => { if (!sel) return;
+  lastBackend = 'tacc';
+  const late = QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_run_s || 420);
+  if (QW.phase === 'ready' && !late) return runOnTacc(hint || '');
+  const t = sel;
+  if (late){ if (!(await renewThen('run'))) return; }
+  else if (QW.phase !== 'starting'){ await post0('/api/tacc/session/start'); }
+  pendingRun = t; pendingHint = hint || '';
+  toast('Starting Qwen 27B on TACC (about 5 to 6 minutes); the run starts by itself');
+  runningVerdict('Waiting for Qwen 27B on TACC to start …');
+  $('#verdict .verdict').insertAdjacentHTML('beforeend', '<button class="btn sm" type="button" data-qwopen>Show start-up progress<span class="arr">→</span></button>');
+  qwenPoll(); };
+$('#runTacc').onclick = () => $('#runTacc').__go('');
 pageHooks.lab = () => labShow(labTab);
 
 /* ---------------- upload ---------------- */
@@ -3318,7 +3450,8 @@ function taccStage(ev){ const why = queueWhy(ev.reason);
   return ev.stage === 'hold' ? `waiting for ${ev.busy || 'the current job'} to finish`
     : ev.stage === 'uploading' ? 'uploading to TACC'
     : ev.stage === 'queued' ? `queued on TACC${ev.job ? ' · job ' + ev.job : ''}${why ? ' · ' + why : ''}`
-    : ev.stage === 'running' ? `running on ${ev.node || 'TACC'}${ev.job ? ' · job ' + ev.job : ''}` : String(ev.stage || ''); }
+    : ev.stage === 'running' ? `running on ${ev.node || 'TACC'}${ev.job ? ' · job ' + ev.job : ''}`
+    : ev.stage === 'retrying' ? (ev.message ? ev.message.charAt(0).toLowerCase() + ev.message.slice(1) : 'TACC is busy; trying again') : String(ev.stage || ''); }
 function syncThreadsChip(){ const w = $('#chatWrap'), c = $('#threadsBtn'), shown = innerWidth <= 1100 ? w.classList.contains('showthreads') : !w.classList.contains('collapsed');
   c.setAttribute('aria-pressed', shown ? 'true' : 'false'); c.querySelector('.ar').textContent = shown ? '‹' : '›'; }
 function setThreads(show){ const w = $('#chatWrap'); if (innerWidth <= 1100){ w.classList.toggle('showthreads', show); syncThreadsChip(); return; }
@@ -3494,6 +3627,10 @@ async function exchange(it){
   if (pick.route === 'tacc' && QW.phase !== 'ready' && QW.phase !== 'starting'){
     await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {}); await qwenPoll(); }
   if (it.recalled) return;
+  if (askRouteOf(pick) === 'tacc' && QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_chat_s || 180)){
+    if (!(await renewThen('chat'))){ fail('<span class="bad">Not sent: this Qwen session on TACC is about to end. Start a new one from the menu, or pick another model, and send again.</span>', 'Qwen session ending');
+      done(false); setStatus('Ready'); return; } }
+  if (it.recalled) return;
   const waited = askRouteOf(pick) === 'tacc' && QW.phase === 'starting';
   stage(waited ? 'Waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
   onHold(waited ? 'waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'sending to Qwen 27B on TACC' : 'sending');
@@ -3578,7 +3715,7 @@ function cmdkItems(){
   add('Actions', 'Run a batch of challenges', 'Lab', 't yellow', () => { go('lab'); labShow('batch'); }, 'experiment heat map');
   add('Actions', 'Diff two runs', 'Lab', 't yellow', () => { go('lab'); labShow('diff'); }, 'compare steps');
   add('Actions', 'Find a challenge online', 'public CTF archive', 'red', () => { go('upload'); setTimeout(() => $('#impQ').focus(), 60); }, 'import github search archive');
-  add('Actions', QW.phase === 'ready' ? 'Disconnect Qwen on TACC' : QW.phase === 'starting' ? 'Stop starting Qwen on TACC' : 'Connect Qwen on TACC', 'two TACC GPUs', 'c blue', () => qwenToggle(), 'tacc qwen gpu');
+  add('Actions', QW.phase === 'ready' ? 'Qwen on TACC: time left, disconnect' : QW.phase === 'starting' ? 'Qwen on TACC: start-up progress' : 'Connect Qwen on TACC', 'two TACC GPUs', 'c blue', () => openQwenPanel(), 'tacc qwen gpu progress');
   for (const t of TASKS.concat(MINE)) add('Challenges', taskLabel(t), t.custom ? t.name : (t.title || t.category || ''), catOf(t.category)[1], () => { pick(t); go('solve'); }, `${t.name} ${t.category || ''} ${t.title || ''}`);
   for (const r of CMDK.extra.runs) add('Runs', `${en(r.task)} · ${String(r.verdict || '').toUpperCase()}`, `${r.ablation || ''} · ${prettyModel(r.model) || ''} · ${ago(r.ts)}`, toneGlyph(r.verdict), () => openReplay(r.id), 'run replay ' + (r.ablation || ''));
   for (const t of CMDK.extra.threads) add('Conversations', t.title, `${plural(t.turns, 'message')} · ${ago(t.ts)}`, t.model ? modelGlyph(t.model) : 'd ink', () => { go('chat'); openThread(t.id); }, 'thread chat ' + (t.model || ''));

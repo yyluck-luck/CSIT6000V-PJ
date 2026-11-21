@@ -179,7 +179,7 @@ def _job_scope() -> str:
 _SKIP = shutil.ignore_patterns("_private", "with-solutions", "solution", "__pycache__", ".DS_Store")
 
 
-def _stage(task: str, root: Path) -> str:
+def _stage(task: str, root: Path, hint: str = "") -> str:
     """把这道题按数据集格式放进 root（root/index/tasks.jsonl + root/tasks/…），返回作业里用的名字；不需要暂存返回原名。
 
     两种题要暂存，否则作业里一道都选不中（只打印"没有匹配到题目"，网页上只看到"没有结果"）：
@@ -187,6 +187,7 @@ def _stage(task: str, root: Path) -> str:
         过不了名字校验。只带 gold 的哈希，从不带明文答案。
       * 本机题库里 scope 不是作业所用 scope 的题（10 道 extra-gs）：原名照用，scope 改成作业的。
     作业一律带 --scope core 选题（deploy/tcloud/client/job.sh）：2026-11-21 上传的 babyrop 标成 custom，两次都没跑。
+    hint：结果卡上"带提示重跑"。TACC 作业没有中途插话的通道，提示接在题面后面（题目也就照样暂存一份）。
     """
     from flagpilot import custom
     scope = _job_scope()
@@ -212,12 +213,14 @@ def _stage(task: str, root: Path) -> str:
         except (OSError, ValueError):
             return task
         row = next((r for r in rows if r.get("name") == task), None)
-        if row is None or row.get("scope") == scope:
+        if row is None or (row.get("scope") == scope and not hint):
             return task
         row, name = {**row, "scope": scope}, task
         d = row.get("assets_dir") or task
         if (_tasks_root() / d).is_dir():
             shutil.copytree(_tasks_root() / d, root / d, ignore=_SKIP, dirs_exist_ok=True)
+    if hint:
+        row["query"] = (row.get("query") or row.get("title") or "").rstrip() + "\n\nHint from the user: " + hint
     (root / "index").mkdir(parents=True, exist_ok=True)
     (root / "index" / "tasks.jsonl").write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
     return name
@@ -683,7 +686,7 @@ def _download(remote: str, dest: Path, tries: int = 4) -> bool:
 
 def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], None],
              on_delta: Callable[[int, str], None] | None = None,
-             cancelled: Callable[[], bool] | None = None) -> Path | None:
+             cancelled: Callable[[], bool] | None = None, hint: str = "") -> Path | None:
     """单题：提交批次作业（只带这一道题），跟着日志把事件交给 on_event；结束后把运行目录下载回来。
 
     on_delta(turn, 文字)：作业日志里的 @@pd（模型逐字输出，约每秒一批）原样交给网页，不必等一整轮。
@@ -713,7 +716,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
                "FP_TIME": "00:30:00"}
         on_event({"type": "tacc", "stage": "uploading"})
         with tempfile.TemporaryDirectory(prefix="fp-task-") as d:
-            name = _stage(task, Path(d))
+            name = _stage(task, Path(d), hint)
             staged = (Path(d) / "index" / "tasks.jsonl").exists()
             bad = _preflight(Path(d) if staged else _tasks_root(), name, _job_scope())
             if bad:
