@@ -155,7 +155,9 @@ def list_chats(chat_root: Path, limit: int = 60) -> list[dict]:
                 rows = read_log(f)
             except Exception:
                 continue
-            users = [r for r in rows if r.get("type") == "user"]
+            from flagpilot.chat import recalled_turns
+            gone = recalled_turns(rows)
+            users = [r for r in rows if r.get("type") == "user" and r.get("turn") not in gone]
             if not users:
                 continue
             meta = next((r for r in rows if r.get("type") == "meta"), {})

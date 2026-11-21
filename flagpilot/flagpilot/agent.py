@@ -148,7 +148,9 @@ _SCRIPT_HINTS = {
     "hardcoded_no_material": "the script still printed the same flag after ./challenge/ "
                              "was emptied, or after the files were replaced with decoys "
                              "of the same names. Opening a file is not enough: the answer "
-                             "has to be computed from what is read.",
+                             "has to be computed from what is read. If the input is only in "
+                             "the challenge description, copy it into the script exactly as "
+                             "written and compute the flag from that copy.",
 }
 
 
@@ -873,6 +875,7 @@ def run_attempt(
     # 于是这两个目录一直没被加密。
     storage.seal_directory(run_dir / "no-material")
     storage.seal_directory(run_dir / "decoy-material")
+    storage.seal_directory(run_dir / "text-material")
     tr.close(summary)
     writeup.generate(run_dir)
     # 读记忆受 cfg.memory 控制，写记忆永远执行：批跑也能攒经验，

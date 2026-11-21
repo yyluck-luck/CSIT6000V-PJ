@@ -33,7 +33,7 @@ from pathlib import Path
 from flagpilot import client as llm_client
 from flagpilot import config, custom, probe, tagger, storage, writeup
 from flagpilot.agent import run_attempt
-from flagpilot.chat import ChatSession, read_log
+from flagpilot.chat import ChatSession, recalled_turns, read_log
 from flagpilot.config import (ABLATIONS, GEMINI, Budget, Policy, RunConfig,
                               SandboxLimits, gemini_api_key, get_ablation, is_gemini, make_model_spec, extra_endpoints, dotenv_value)
 from flagpilot.memory import MemoryStore
@@ -54,6 +54,7 @@ PARTIAL_MAX_CHARS = 6000    # 一轮的动作 JSON 不会这么长；超出部�
 
 STATE: dict[str, dict] = {}
 CHATS: dict[str, ChatSession] = {}
+TACC_TURNS: dict[str, int] = {}          # 交给 TACC 的答疑：每个会话本进程发出的最大轮次号
 LOCK = threading.Lock()
 SETTINGS = {"model": "mock", "base_url": "", "track": "L", "ablation": "B3"}
 
@@ -594,9 +595,10 @@ class Handler(BaseHTTPRequestHandler):
             sid = raw
             p = config.RUNS_ROOT / "chat" / sid / "chat.jsonl"
             rows = read_log(p) if sid and p.exists() else []
+            gone = recalled_turns(rows)
             return self._json(200, {"session_id": sid,
                                     "messages": [r for r in rows
-                                                 if r.get("type") in ("user", "reply", "error")],
+                                                 if r.get("type") in ("user", "reply", "error") and r.get("turn") not in gone],
                                     "model": runs_index.thread_model(rows),
                                     "exists": bool(rows)})
         if path.startswith("/api/catalog/"):
@@ -668,7 +670,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold",
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold", "/api/chat/recall",
                   "/api/catalog/import")
         if path not in routes:
             return self._json(404, {"error": "not found"})
@@ -704,6 +706,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._run_control(payload)
         if path == "/api/catalog/import":
             return self._catalog_import(payload)
+        if path == "/api/chat/recall":
+            sid, turn = str(payload.get("session_id") or ""), payload.get("turn")
+            if not _SID_RE.match(sid) or not isinstance(turn, int) or turn < 1:
+                return self._json(400, {"error": "session_id and turn required"})
+            path_ = config.RUNS_ROOT / "chat" / sid / "chat.jsonl"
+            if not path_.exists():
+                return self._json(404, {"error": "unknown conversation"})
+            storage.append_record(path_, {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "type": "recall", "turn": turn})
+            with LOCK:
+                sess = CHATS.pop(sid, None)       # 下一条消息从盘上重建会话：撤回的那轮不再进模型的上下文
+            if sess is not None:
+                sess.cancel(turn)                 # 撤回的正是还在回答的那一轮：做完当前这步就停
+            return self._json(200, {"ok": True, "turn": turn})
         if path == "/api/custom/gold":
             try:
                 t = custom.set_gold(str(payload.get("task") or ""), str(payload.get("gold") or ""))
@@ -926,7 +941,11 @@ class Handler(BaseHTTPRequestHandler):
         path = config.RUNS_ROOT / "chat" / sid / "chat.jsonl"
         rows = read_log(path) if path.exists() else []
         history, pending = [], None
+        gone = recalled_turns(rows)
+        turn = max([int(r.get("turn") or 0) for r in rows] + [0]) + 1     # 只增不重用：撤回过的轮次号不再出现
         for r in rows:
+            if r.get("turn") in gone:
+                continue
             if r.get("type") == "user":
                 pending = r.get("text") or ""
             elif r.get("type") == "reply" and pending:
@@ -934,6 +953,8 @@ class Handler(BaseHTTPRequestHandler):
                 pending = None
         q: queue.Queue = queue.Queue()
         with LOCK:
+            turn = max(turn, TACC_TURNS.get(sid, 0) + 1)       # 上一条的提问可能还没落盘：按本进程发出的号再往后排
+            TACC_TURNS[sid] = turn
             STATE[sid] = {"q": q, "summary": None, "kind": "chat"}
 
         def work() -> None:
@@ -942,7 +963,6 @@ class Handler(BaseHTTPRequestHandler):
             if not rows:
                 storage.append_record(path, {"ts": stamp(), "type": "meta", "task": task_name,
                                              "model": TACC_MODEL, "tools": use_tools})
-            turn = sum(1 for r in rows if r.get("type") == "user") + 1
             storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
             rep = tacc_live.chat(message, history, task_name, use_tools,
                                  on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),
@@ -965,7 +985,7 @@ class Handler(BaseHTTPRequestHandler):
             q.put(None)
 
         threading.Thread(target=work, daemon=True).start()
-        return self._json(200, {"session_id": sid, "backend": "tacc"})
+        return self._json(200, {"session_id": sid, "backend": "tacc", "turn": turn})
 
     def _chat(self, payload: dict) -> None:
         message = str(payload.get("message") or "").strip()
@@ -1026,6 +1046,8 @@ class Handler(BaseHTTPRequestHandler):
             if want:
                 sess.picked = want
             q = STATE[sid]["q"]
+            turn = sess.turns + 1                    # 这条消息的轮次号（撤回时用）
+            sess.turns = turn                        # 现在就占上：同一会话紧接着再来一条也拿不到同一个号
 
         def worker() -> None:
             try:
@@ -1033,20 +1055,21 @@ class Handler(BaseHTTPRequestHandler):
                     message,
                     on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),
                     hook=q.put,
+                    turn=turn,
                 )
                 q.put({"type": "chat_done", **reply.as_dict(),
                        "session_id": sid, "turns": sess.turns, "model": getattr(sess, "picked", None) or SETTINGS["model"],
                        "total_steps": sess.total_steps,
                        "task": sess.task.name if sess.task else ""})
             except Exception as e:
-                sess.log_error(f"{type(e).__name__}: {e}")
+                sess.log_error(f"{type(e).__name__}: {e}", turn=turn)
                 q.put({"type": "error", "message": f"{type(e).__name__}: {e}",
                        "trace": traceback.format_exc()[-1200:]})
             finally:
                 q.put(None)
 
         threading.Thread(target=worker, daemon=True).start()
-        return self._json(200, {"session_id": sid})
+        return self._json(200, {"session_id": sid, "turn": turn})
 
     def _probe(self, task_name: str, mode: str) -> None:
         """记忆探针：单轮、无工具，同步返回（一次调用，没必要走 SSE）。"""

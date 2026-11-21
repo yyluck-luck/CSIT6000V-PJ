@@ -111,6 +111,13 @@
   #island .flagl{display:none;font:600 14px var(--mono);color:rgba(255,255,255,.85);word-break:break-all}
   #island.card .big,#island.card .flagl{display:block}
   #island.card .row1{display:none}
+  /* notifications: the island grows to show the message for a moment, then shrinks back to whatever it was showing */
+  #island .row2{display:none;align-items:center;gap:12px;padding:11px 0;max-width:100%}
+  #island .row2 .ic{flex:0 0 10px;width:10px;height:10px;border-radius:50%;background:#6b8cff;box-shadow:0 0 0 4px rgba(107,140,255,.22)}
+  #island .row2.bad .ic{background:#ff5d5a;border-radius:0;box-shadow:0 0 0 4px rgba(255,93,90,.22)} #island .row2.ok .ic{background:#3ddc84;box-shadow:0 0 0 4px rgba(61,220,132,.22)}
+  #island .row2 .tx{font:600 15px/1.35 var(--font);white-space:normal;overflow-wrap:anywhere}
+  #island.note{flex-direction:row;align-items:center;border-radius:24px;padding:0 22px;min-width:0}
+  #island.note .row1,#island.note .big,#island.note .flagl{display:none} #island.note .row2{display:flex}
   .row1{display:flex;align-items:center;gap:12px;min-width:0}
   #hair{position:fixed;left:var(--rail);right:0;top:0;height:4px;z-index:35;pointer-events:none;opacity:0;transition:opacity var(--t2) ease}
   #hair.on{opacity:1}
@@ -222,8 +229,8 @@
   .hero2{display:block}
   #hero{position:relative;padding:6px 0 0}
   /* everything on the landing scales with the smaller of the window's width and height, so it fills the screen without spilling */
-  #hero h1{margin:0;font:800 clamp(44px,min(6.6vw,10.5vh),184px)/.98 var(--font);letter-spacing:-.045em}
-  #hero .actions{margin-top:clamp(24px,min(3vw,4.5vh),64px)}
+  #hero h1{margin:0;font:800 clamp(44px,min(6.6vw,10.5vh),184px)/1.12 var(--font);letter-spacing:-.045em}
+  #hero .actions{margin-top:clamp(34px,min(4vw,6vh),84px)}
   #hero .actions .btn{height:clamp(50px,min(3.7vw,6vh),84px);padding:0 clamp(22px,1.7vw,40px);font-size:clamp(15px,min(1.05vw,1.7vh),22px)}
   .latest{border:1.5px solid var(--ink);background:var(--white);box-shadow:5px 5px 0 var(--ink);padding:20px 22px 12px}
   .latest .lab{font:600 15px var(--font);color:var(--ink2);display:flex;justify-content:space-between;gap:10px}
@@ -234,11 +241,14 @@
   #hero h1 .ln2{display:block;color:var(--ink3)}
   /* the hero's word: a terminal box that backspaces and types the next word (about 1 s), glyphs flicker before they settle, rainbow ink */
   .flip{position:relative;display:inline-block;vertical-align:bottom;line-height:1.02;padding:0 .16em;margin:0 .04em;background:var(--ink);white-space:nowrap}
+  /* fixed lines: the heading is laid out once for the longest word (two lines if it fits, else the box starts line two; smaller
+     type only if even that is too wide), so the box can grow and shrink with the word without ever moving a line break */
+  #hero h1 .l1{display:block;white-space:nowrap} #hero h1.three .l1b{display:block} #hero h1.three .sp{display:none}
+  #hero h1{font-size:calc(clamp(44px,min(6.6vw,10.5vh),184px) * var(--fit,1))}
   .flip .tw{font-family:var(--mono);font-weight:800;letter-spacing:-.05em;background:linear-gradient(90deg,#ff3b3b,#ff9f1c,#ffe14d,#3ddc84,#2fa8ff,#7c5cff,#ff4dd2,#ff3b3b);
     background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:rainbow 2.4s linear infinite}
   .flip .caret{display:inline-block;width:.1em;height:.8em;margin-left:.05em;vertical-align:-.02em;background:#3ddc84;animation:caret 1s steps(1) infinite}
   @keyframes rainbow{to{background-position:200% 0}} @keyframes caret{50%{opacity:0}}
-  #hero .sub{font:500 clamp(18px,min(1.6vw,2.6vh),36px)/1.45 var(--font);color:var(--ink2);margin-top:clamp(18px,min(2vw,3vh),44px);max-width:44ch}
   /* features with skeletons (Aceternity) */
   .feats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gut);margin:0}
   .feat{border:1.5px solid var(--ink);background:var(--white);box-shadow:5px 5px 0 var(--ink);display:flex;flex-direction:column}
@@ -657,6 +667,26 @@
   .chip.qwen .cv{margin-left:2px;transition:transform var(--t2) var(--ease)} .chip.qwen[aria-expanded=true] .cv{transform:rotate(180deg)}
   .rcpt .now{margin-left:12px;border:0;background:none;padding:0;font:inherit;color:var(--blue);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
   .bub .who{margin:10px 0 0;font:500 15px var(--mono);color:var(--ink3)}
+  /* Markdown in replies */
+  .md{white-space:normal}
+  .md p{margin:0 0 10px} .md>:last-child,.md li>:last-child{margin-bottom:0}
+  .md h3,.md h4,.md h5{margin:18px 0 8px;font:800 19px/1.3 var(--font);letter-spacing:-.01em} .md h4{font-size:17px} .md h5{font-size:16px} .md>:first-child{margin-top:0}
+  .md ul,.md ol{margin:0 0 10px;padding-left:1.5em} .md li{margin:5px 0} .md li>ul,.md li>ol{margin:5px 0 2px}
+  .md ul{list-style:none} .md ul>li{position:relative} .md ul>li::before{content:'';position:absolute;left:-1.05em;top:.62em;width:6px;height:6px;background:currentColor}
+  .md ol>li::marker{font:700 15px var(--mono);color:var(--ink2)}
+  .md blockquote{margin:0 0 10px;padding:2px 0 2px 14px;border-left:4px solid var(--yellow);color:var(--ink2)}
+  .md hr{border:0;border-top:1.5px dashed var(--rule);margin:14px 0}
+  .md a{color:var(--blue);text-decoration:underline;text-underline-offset:3px} .md del{color:var(--ink3)} .md code{font-size:15px}
+  .md .tbl{max-width:100%;overflow:auto;margin:0 0 12px} .md table{border-collapse:collapse;font-size:15px;line-height:1.45}
+  .md th,.md td{border:1.5px solid var(--ink);padding:6px 11px;text-align:left;vertical-align:top} .md th{background:var(--paper);font-weight:700}
+  /* my messages: dashed until their reply has arrived, faded while still queued; recall sits beside each one (on hover or focus) */
+  .bub.me.queued{opacity:.62}
+  .bub.me .acts{position:absolute;right:100%;bottom:0;padding-right:12px;opacity:0;pointer-events:none;transition:opacity var(--t1) ease;user-select:none;white-space:nowrap}
+  .bub.me:hover .acts,.bub.me:focus-within .acts{opacity:1;pointer-events:auto}
+  .bub.me .recall{border:1.5px solid var(--ink);background:var(--white);color:var(--ink);font:600 15px var(--mono);padding:4px 10px;cursor:pointer;box-shadow:3px 3px 0 var(--ink);transition:transform var(--t1) var(--ease),box-shadow var(--t1) ease}
+  .bub.me .recall:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)} .bub.me .recall:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--ink)}
+  .bub.me .recall:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+  @media (hover:none){.bub.me .acts{opacity:.85;pointer-events:auto}}
   .thread b .g{width:9px;height:9px;margin-right:9px;vertical-align:1px} .thread.on b .g.ink{background:#fff}
   .phl{position:absolute;left:20px;top:18px;right:20px;pointer-events:none;color:var(--ink3);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .phl span{display:inline-block;animation:phin .25s var(--ease) both}
@@ -703,8 +733,6 @@
   .sheet .list{flex:1;overflow:auto}
 
   #tip{position:fixed;z-index:9999;display:none;max-width:360px;background:var(--ink);color:#fff;padding:8px 11px;font:13.5px/1.5 var(--font);pointer-events:none}
-  #toast{position:fixed;left:calc(50% + var(--rail) / 2);bottom:28px;transform:translateX(-50%) translateY(16px);opacity:0;z-index:60;background:var(--ink);color:#fff;padding:13px 20px;font:600 15px var(--font);transition:transform var(--t2) var(--ease),opacity var(--t1) ease;pointer-events:none;border-left:5px solid var(--yellow)}
-  #toast.show{transform:translateX(-50%);opacity:1}
 
   @media (max-width:1100px){
     .c8,.c4{grid-column:1/-1} .notes{position:static} .feats{grid-template-columns:1fr} .hero2{grid-template-columns:1fr} .tacc-steps{grid-template-columns:repeat(3,1fr)}
@@ -721,7 +749,7 @@
     #navPill::before{width:auto;height:4px;right:0;bottom:auto} .navbtn .nt{left:auto;right:calc(50% - 30px);top:16px}
     #stage{bottom:60px} .stats{grid-template-columns:1fr} .arms{grid-template-columns:repeat(2,1fr)}
     .step .body{padding-left:8px} .step>summary{grid-template-columns:30px 70px minmax(0,1fr) 12px 16px} .step .tm{display:none}
-    .conv{padding:80px 16px 16px} .bub{max-width:92%}
+    .conv{padding:80px 16px 16px} .bub{max-width:92%} .bub.me{max-width:calc(100% - 64px)} .bub.me .recall .t{display:none}
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
@@ -759,6 +787,7 @@
 <div id="island" class="idle" role="status" aria-live="polite" data-tip="Back to Solve">
   <div class="row1"><span class="dot"></span><span id="status">Ready</span><span class="more" id="islMore"></span></div>
   <div class="big" id="islBig"></div><div class="flagl" id="islFlag"></div>
+  <div class="row2" id="islNote"><span class="ic"></span><span class="tx"></span></div>
 </div>
 <div id="hair" aria-hidden="true"><div class="fill"></div></div>
 
@@ -769,8 +798,7 @@
       <div class="hero2">
       <header id="hero">
         <div class="in">
-          <h1 aria-label="FlagPilot solves crypto, forensics and general challenges, and proves every flag."><span aria-hidden="true">FlagPilot solves <span class="flip" id="flip"><span class="tw">crypto</span></span> challenges<span class="ln2">and proves every flag.</span></span></h1>
-          <p class="sub">Each submitted flag is replayed in a clean sandbox. Only flags that reproduce count.</p>
+          <h1 aria-label="FlagPilot solves crypto, forensics and general challenges, and proves every flag."><span aria-hidden="true"><span class="l1">FlagPilot solves<span class="sp"> </span><span class="l1b"><span class="flip" id="flip"><span class="tw">crypto</span></span> challenges</span></span><span class="ln2">and proves every flag.</span></span></h1>
           <div class="actions"><button class="btn primary" data-taskpill id="pickHero">Choose a challenge<span class="arr">→</span></button>
             <button class="btn" data-go="history">Replay a run<span class="arr">→</span></button></div>
         </div>
@@ -1027,7 +1055,6 @@
   <div id="cmdkList" role="listbox"></div>
   <div class="cmdk-ft"><span>↑↓ move</span><span>↵ open</span><span>esc close</span></div>
 </div></div>
-<div id="toast"></div>
 <script>
 const $ = s => document.querySelector(s);
 const qs = s => [...document.querySelectorAll(s)];
@@ -1050,12 +1077,15 @@ const V = {
 };
 /* no answer to check against: what the replay could and could not show */
 const UNCONFIRMED = {literal_flag: 'The script just prints a flag typed into it, so nothing was solved: the flag is probably made up',
-  hardcoded_no_material: 'The script prints a flag without reading the challenge files, so the flag is not backed by anything',
+  hardcoded_no_material: 'The script prints a flag that does not depend on the challenge material, so the flag is not backed by anything',
   script_error: 'There is no answer to check against, and the script failed in a clean sandbox',
   no_output: 'There is no answer to check against, and the script printed nothing in a clean sandbox',
   timeout: 'There is no answer to check against, and the script timed out in a clean sandbox'};
-const REPLAY_WHY = {literal_flag: 'the script has the flag written into it', hardcoded_no_material: 'it prints the flag without reading the files',
+const REPLAY_WHY = {literal_flag: 'the script has the flag written into it', hardcoded_no_material: 'it prints the flag even with the challenge material taken away',
   script_error: 'the script failed', no_output: 'it printed nothing', timeout: 'it timed out'};
+/* right flag, script ran: what is missing is where the flag came from */
+const PROVENANCE = {literal_flag: 'Right flag, but the script only prints it: the flag is typed into the script, so nothing shows how it was found',
+  hardcoded_no_material: 'Right flag, but the script does not compute it: it still prints the flag with the challenge files removed and its copy of the challenge text changed'};
 /* why a run stopped (the engine's reason codes), in words; the failure tagger's root cause is shown separately as "likely cause" */
 const BUDGET_WHY = {invalid_action: 'Stopped: three replies were not valid JSON actions', max_turns: 'Used every turn without a valid submission',
   wall_time: 'Ran out of time before a valid submission', context: 'The context filled up before a valid submission',
@@ -1063,7 +1093,7 @@ const BUDGET_WHY = {invalid_action: 'Stopped: three replies were not valid JSON 
   thinking_overflow: 'Reasoning kept using up the output limit'};
 const STOPPED = {invalid_action: 'stopped after three replies outside the JSON protocol', max_turns: 'all turns used', wall_time: 'time budget used',
   context: 'context full', completion_tokens: 'output-token budget used', truncated: 'replies cut at the output limit', thinking_overflow: 'reasoning filled the output limit',
-  wrong_flag: 'the flag does not match the answer', hardcoded_no_material: 'the script prints a flag without reading the files', literal_flag: 'the script contains the flag itself',
+  wrong_flag: 'the flag does not match the answer', hardcoded_no_material: 'the flag does not depend on the challenge material', literal_flag: 'the script contains the flag itself',
   script_error: 'the replay script failed', no_output: 'the replay printed nothing', timeout: 'the replay timed out', empty_flag: 'no flag was submitted',
   reproduced_no_gold: 'reproduced; there is no answer to check it against'};
 const FAIL = {ok: 'verified', reproduced: 'reproduced, no gold', model_error: 'model call failed', thinking_overflow: 'empty reply (reasoning used the budget)',
@@ -1081,7 +1111,18 @@ const stripRuns = s => String(s || '').replace(/<run>[\s\S]*?<\/run>/gi, '').rep
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const pad2 = n => String(n).padStart(2, '0');
 function fresh(){ return {turns: [], byKey: new Map(), submit: null, replay: null, done: null, ctok: 0, ptok: 0, modelMs: 0, ttfts: [], maxTurns: 20}; }
-function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 2000); }
+/* notifications go through the Dynamic Island at the top: it grows to show the message, then returns to its status (a tap closes it early) */
+let noteT = 0;
+function toast(msg, tone){
+  const i = $('#island'), n = $('#islNote'), text = String(msg == null ? '' : msg);
+  tone = tone || (/^(could not|failed|error|request failed|pick at least)/i.test(text) ? 'bad' : /^(imported|experiment finished|tacc batch finished|deleted)/i.test(text) ? 'ok' : 'info');
+  clearTimeout(noteT);
+  morph(i, () => { i.classList.add('note'); n.className = 'row2 ' + tone; n.querySelector('.tx').textContent = text; });
+  if (!reduced()) n.animate([{opacity: 0, transform: 'translateY(6px) scale(.98)'}, {opacity: 1, transform: 'none'}], {duration: 320, easing: SPRING_EASE()});
+  noteT = setTimeout(noteClose, Math.min(5200, 1900 + text.length * 32));
+}
+function noteClose(){ clearTimeout(noteT); const i = $('#island'); if (i.classList.contains('note')) morph(i, () => i.classList.remove('note')); }
+const SPRING_EASE = () => (getComputedStyle(document.documentElement).getPropertyValue('--spring').trim() || 'cubic-bezier(.34,1.4,.5,1)');
 /* Wilson 95% interval for k successes out of n */
 function wilson(k, n){ if (!n) return null; const z = 1.96, p = k / n, d = 1 + z * z / n, c = p + z * z / (2 * n), m = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)); return [(c - m) / d, (c + m) / d]; }
 
@@ -1304,13 +1345,13 @@ function setStatus(t, cls, more, card){
   const tone = cls === 'bad' ? 'bad' : live ? 'run' : /^(ready|idle)$/i.test(t) ? 'idle' : cls === 'warn' ? 'warn' : 'ok';
   clearTimeout(notchT);
   morph(i, () => {
-    i.className = tone + (card ? ' card' : '');
+    i.className = tone + (card ? ' card' : '') + (i.classList.contains('note') ? ' note' : '');     // a notification on show stays until its own timer
     $('#status').textContent = t; $('#islMore').textContent = more || '';
     $('#islBig').textContent = card ? card.big : ''; $('#islFlag').textContent = card ? (card.flag || card.sub || '') : '';
   });
   if (card) notchT = setTimeout(() => morph(i, () => { i.classList.remove('card'); }), 4200);
 }
-$('#island').addEventListener('click', () => go('solve'));
+$('#island').addEventListener('click', () => { if ($('#island').classList.contains('note')){ noteClose(); return; } go('solve'); });
 function hair(p, mode){ const h = $('#hair'); h.classList.toggle('on', mode !== 'off'); h.classList.toggle('run', mode === 'run'); if (p != null) h.style.setProperty('--p', Math.max(0, Math.min(1, p))); }
 
 /* ======================= Router + geometric colour-block wipe ======================= */
@@ -1442,6 +1483,18 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
   const words = ['crypto', 'forensics', 'general'], GL = '01{}<>_#$%&*+=/\\|';
   box.innerHTML = `<span class="tw">${words[0]}</span><i class="caret" aria-hidden="true"></i>`;
   const tw = box.querySelector('.tw'); let k = 0, typing = false;
+  /* measure the worst case (the widest word in the box) once per width: two lines, else three, else smaller type */
+  const h1 = box.closest('h1'), l1 = h1.querySelector('.l1'), l1b = h1.querySelector('.l1b');
+  let laidW = -1;
+  function layout(){
+    const W = h1.clientWidth; if (!W || W === laidW) return; laidW = W;
+    const keep = tw.textContent, widest = () => Math.max(...words.map(w => { tw.textContent = w; return (h1.classList.contains('three') ? l1b : l1).scrollWidth; }));
+    h1.style.setProperty('--fit', '1'); h1.classList.remove('three');
+    if (widest() > W){ h1.classList.add('three'); const need = widest(); if (need > W) h1.style.setProperty('--fit', (W / need * .98).toFixed(4)); }
+    tw.textContent = keep;
+  }
+  new ResizeObserver(layout).observe(h1);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { laidW = -1; layout(); });
   const wait = ms => new Promise(r => setTimeout(r, ms));
   async function next(){
     if (typing) return; typing = true; k = (k + 1) % words.length;
@@ -1966,7 +2019,7 @@ function showDone(ev){
   const noGold = ((run && run.replay) || {}).gold_checked === false || !!(selTask && selTask.custom && !selTask.has_gold);
   if (ev.verdict === 'unverified'){
     if (noGold){ code = 'NOT CONFIRMED'; label = UNCONFIRMED[ev.reason] || 'There is no answer to check this flag against, and the script did not reproduce it'; }
-    else label = 'Right flag, but the script did not reproduce it in a clean sandbox' + (REPLAY_WHY[ev.reason] ? ': ' + REPLAY_WHY[ev.reason] : ''); }
+    else label = PROVENANCE[ev.reason] || ('Right flag, but the script did not reproduce it in a clean sandbox' + (REPLAY_WHY[ev.reason] ? ': ' + REPLAY_WHY[ev.reason] : '')); }
   const flag = (run && run.submit && run.submit.flag) || ev.flag || '', who = sel || ev.task || ev.run_id || ev.web_run_id || '';
   setStatus(code.charAt(0) + code.slice(1).toLowerCase(), tone === 'ok' ? '' : (tone === 'warn' ? 'warn' : 'bad'), `${who} · ${ev.turns} turns`,
             R.bulk ? null : {big: code, flag: flag || label});
@@ -2061,6 +2114,9 @@ const EN = [
   ['重放复现成功；但该题没有标准答案（gold），无法判定答案是否正确', 'the replay reproduced it; without a gold flag correctness cannot be judged'],
   ['重放无输出（exit=', 'replay printed nothing (exit='], ['脚本在干净目录里跑通了，打印出 ', 'The script ran in a clean directory and printed '],
   [' 个 flag 形态。如果这就是你要提交的答案，可以 submit 了。', ' flag-shaped string(s). If that is the answer, submit it.'], ['没有提供脚本', 'no script provided'],
+  ['脚本不读附件，答案由题面里的材料算出：把取自题面的 ', 'the script reads no attachments; the answer comes from the challenge text: with the '],
+  ['脚本打开了附件但没有用它，答案由题面里的材料算出：把取自题面的 ', 'the script opens an attachment without using it; the answer comes from the challenge text: with the '],
+  [' 处字面量改掉后，同一个 flag 不再出现', ' value(s) copied from the challenge text changed, the flag no longer comes out'],
   ['重放超时（', 'replay timed out ('], ['超时（', 'timeout ('], ['脚本含 flag 的 ', 'the script contains the flag in '], [' 形态', ' form'], ['重放复现出同一个 flag', 'the replay reproduced the same flag'],
   ['spawn failed: 无法创建捕获文件 ', 'spawn failed: cannot create capture file '], ['(无输出)', '(no output)'], [' 步已折叠（原文为省上下文删除，下面是摘要）：', ' earlier steps folded to save context (summary below):'],
   [' 更早的 ', ' '], ['- …另有 ', '- … '], [' 步未展开', ' more steps not shown'], [': 系统警告过同一个动作重复执行', ': the system warned about a repeated action'],
@@ -2801,16 +2857,101 @@ $('#impUrl').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preven
 $('#sheetOnline').onclick = () => { closeSheet(); go('upload'); setTimeout(() => $('#impQ').focus({preventScroll: false}), 60); };
 
 /* ---------------- ask: threads on the left, a back-and-forth conversation on the right ---------------- */
-function mdLite(text){ return String(text || '').split(/```/).map((p, i) => {
-  if (i % 2){ const m = p.match(/^([a-zA-Z0-9]*)\n/), lang = m ? m[1] : ''; return codeBlock(p.replace(/^[a-zA-Z0-9]*\n/, ''), lang || 'text', lang || 'snippet'); }
-  return esc(p).replace(/`([^`\n]+)`/g, '<code>$1</code>'); }).join(''); }
+/* ---------------- Markdown for the tutor's replies (and archive READMEs) ----------------
+   Fenced code, headings, lists (nested by indentation), quotes, tables, rules, bold, italic, strike, inline code and http(s)
+   links. The text is escaped first, so nothing in it becomes markup except these. Underscores and asterisks only make emphasis
+   at word edges, so flags such as picoCTF{a_b_c} stay as they are. A fence still open at the end (a reply being streamed) is
+   shown as code up to the end. */
+const MD_L = String.raw`(^|[\s(\[>;"'　-〿一-鿿＀-￯])`, MD_R = String.raw`(?=$|[^\w])`;
+const MD_EM = [
+  [new RegExp(MD_L + String.raw`\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*` + MD_R, 'g'), '$1<strong>$2</strong>'],
+  [new RegExp(MD_L + String.raw`__(?!\s)([^_\n]+?)(?<!\s)__` + MD_R, 'g'), '$1<strong>$2</strong>'],
+  [new RegExp(MD_L + String.raw`\*(?![\s*])([^*\n]+?)(?<!\s)\*` + MD_R, 'g'), '$1<em>$2</em>'],
+  [new RegExp(MD_L + String.raw`_(?![\s_])([^_\n]+?)(?<!\s)_` + MD_R, 'g'), '$1<em>$2</em>'],
+  [new RegExp(MD_L + String.raw`~~(?!\s)([^~\n]+?)(?<!\s)~~` + MD_R, 'g'), '$1<del>$2</del>']];
+const MD_FENCE = /^(\s*)(`{3,}|~{3,})(.*)$/, MD_HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/, MD_ITEM = /^(\s*)([-*+]|\d{1,3}[.)])(\s+)(.*)$/;
+const MD_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/, MD_HEAD = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/, MD_QUOTE = /^\s{0,3}>/;
+const mdIndent = l => (l.match(/^\s*/)[0] || '').replace(/\t/g, '    ').length;
+function mdInline(s){
+  const codes = [];
+  let h = esc(s).replace(/`([^`\n]+)`/g, (_, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+  h = h.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`)
+       .replace(/(^|[\s(])(https?:\/\/[^\s<]+?)(?=[.,;:!?)]*(?:\s|$|<))/g, (_, a, u) => `${a}<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+  for (const [re, to] of MD_EM) h = h.replace(re, to);
+  return h.replace(/\u0000(\d+)\u0000/g, (_, k) => '<code>' + codes[+k] + '</code>');
+}
+const mdTable = (lines, i) => lines[i].includes('|') && i + 1 < lines.length && lines[i + 1].includes('|') && lines[i + 1].includes('-') && MD_SEP.test(lines[i + 1]);
+const mdStarts = (lines, i) => MD_FENCE.test(lines[i]) || MD_HEAD.test(lines[i]) || MD_HR.test(lines[i]) || MD_QUOTE.test(lines[i]) || MD_ITEM.test(lines[i]) || mdTable(lines, i);
+function mdCells(l){ let t = l.trim(); if (t.startsWith('|')) t = t.slice(1); if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
+  return t.split(/(?<!\\)\|/).map(c => c.trim().replace(/\\\|/g, '|')); }
+function mdList(lines, i){
+  const first = lines[i].match(MD_ITEM), base = mdIndent(lines[i]), ordered = /\d/.test(first[2]), items = [];
+  const sibling = m => m && mdIndent(m[0]) <= base + 1 && /\d/.test(m[2]) === ordered;
+  let cur = null, blank = false;
+  while (i < lines.length){
+    const l = lines[i], m = l.match(MD_ITEM);
+    if (sibling(m)){ cur = {start: ordered ? parseInt(m[2], 10) : 1, pad: mdIndent(l) + m[2].length + Math.min(4, m[3].length), lines: [m[4]]}; items.push(cur); blank = false; i++; continue; }
+    if (m && mdIndent(l) <= base + 1) break;                                   // a list of the other kind starts here
+    if (!l.trim()){                                                            // a blank line: the list goes on if what follows belongs to it
+      let j = i + 1; while (j < lines.length && !lines[j].trim()) j++;
+      if (j < lines.length && (sibling(lines[j].match(MD_ITEM)) || mdIndent(lines[j]) >= Math.min(cur.pad, base + 2))){ for (; i < j; i++) cur.lines.push(''); blank = true; continue; }
+      break; }
+    const ind = mdIndent(l);
+    if (ind >= Math.min(cur.pad, base + 2)){ cur.lines.push(l.replace(/\t/g, '    ').slice(Math.min(ind, cur.pad))); i++; continue; }   // indented: part of this item
+    if (!blank && !mdStarts(lines, i)){ cur.lines.push(l.trim()); i++; continue; }                                              // a lazy continuation line
+    break;
+  }
+  const tag = ordered ? 'ol' : 'ul', start = ordered && items[0].start !== 1 ? ` start="${items[0].start}"` : '';
+  return [`<${tag}${start}>` + items.map(it => `<li>${mdLite(it.lines.join('\n')).replace(/^<p>([\s\S]*?)<\/p>/, '$1')}</li>`).join('') + `</${tag}>`, i];
+}
+function mdLite(text){
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n'), out = [];
+  let i = 0, m;
+  while (i < lines.length){
+    const l = lines[i];
+    if (!l.trim()){ i++; continue; }
+    if ((m = l.match(MD_FENCE))){
+      const ind = m[1].length, close = new RegExp('^\\s*' + (m[2][0] === '`' ? '`' : '~') + '{' + m[2].length + ',}\\s*$'), lang = m[3].trim().split(/\s+/)[0] || '', body = [];
+      for (i++; i < lines.length && !close.test(lines[i]); i++) body.push(lines[i].replace(new RegExp('^ {0,' + ind + '}'), ''));
+      i++; out.push(codeBlock(body.join('\n'), lang || 'text', lang || 'snippet')); continue; }
+    if ((m = l.match(MD_HEAD))){ const n = m[1].length, tag = n <= 2 ? 'h3' : n === 3 ? 'h4' : 'h5'; out.push(`<${tag}>${mdInline(m[2])}</${tag}>`); i++; continue; }
+    if (MD_HR.test(l)){ out.push('<hr>'); i++; continue; }
+    if (MD_QUOTE.test(l)){ const q = []; while (i < lines.length && MD_QUOTE.test(lines[i])) q.push(lines[i++].replace(/^\s{0,3}>\s?/, ''));
+      out.push(`<blockquote>${mdLite(q.join('\n'))}</blockquote>`); continue; }
+    if (mdTable(lines, i)){
+      const head = mdCells(l), al = mdCells(lines[i + 1]).map(c => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : ''), rows = [];
+      for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes('|'); i++) rows.push(mdCells(lines[i]));
+      const cell = (tag, c, k) => `<${tag}${al[k] ? ` style="text-align:${al[k]}"` : ''}>${mdInline(c)}</${tag}>`;
+      out.push(`<div class="tbl"><table><thead><tr>${head.map((c, k) => cell('th', c, k)).join('')}</tr></thead><tbody>`
+        + rows.map(r => `<tr>${head.map((_, k) => cell('td', r[k] || '', k)).join('')}</tr>`).join('') + '</tbody></table></div>'); continue; }
+    if (MD_ITEM.test(l)){ const [html, j] = mdList(lines, i); out.push(html); i = j; continue; }
+    const p = [];
+    while (i < lines.length && lines[i].trim() && (!p.length || !mdStarts(lines, i))) p.push(lines[i++]);
+    out.push(`<p>${p.map(x => mdInline(x.replace(/^\s+/, ''))).join('<br>')}</p>`);
+  }
+  return out.join('');
+}
+/* a reply as it streams: rendered whole on each frame; only what is new since the last frame fades in (Text Generate) */
+function mdTextNodes(el){ const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {acceptNode: n => n.parentElement && n.parentElement.closest('.cb-hd') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT});
+  const out = []; let n; while ((n = w.nextNode())) out.push(n); return out; }
+function mdPaint(el, text, prev){
+  el.innerHTML = mdLite(text);
+  const nodes = mdTextNodes(el), now = nodes.map(n => n.nodeValue).join('');
+  if (reduced()) return now;
+  let k = 0; const lim = Math.min(prev.length, now.length); while (k < lim && prev.charCodeAt(k) === now.charCodeAt(k)) k++;
+  let pos = 0;
+  for (const t of nodes){ const len = t.nodeValue.length, end = pos + len;
+    if (end > k && len){ const off = Math.max(0, k - pos), tail = off ? t.splitText(off) : t, s = document.createElement('span'); s.className = 'tg'; tail.replaceWith(s); s.appendChild(tail); }
+    pos = end; }
+  return now;
+}
 const nearBottom = el => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
 let chatStarted = false;
 function started(on){ if (chatStarted === on) return; chatStarted = on; $('#chatCol').classList.toggle('started', on); if (!on) matrixKick(); }
-function bubble(role, html, animate = true){
+function bubble(role, html, animate = true, after = null){
   started(true);
   const el = document.createElement('div'); el.className = 'bub ' + (role === 'user' ? 'me' : 'bot') + (animate && !reduced() ? ' in' : '');
-  el.innerHTML = html; $('#chatLog').appendChild(el); scrollChat(true); return el;
+  el.innerHTML = html; if (after && after.isConnected) after.after(el); else $('#chatLog').appendChild(el); scrollChat(true); return el;
 }
 function scrollChat(force){ const l = $('#chatLog'); if (force || nearBottom(l)) l.scrollTop = l.scrollHeight; }
 function saveChatId(id){ chatId = id || null; try { id ? localStorage.setItem(CHAT_KEY, id) : localStorage.removeItem(CHAT_KEY); } catch(_){} $('#rcStore').textContent = id ? ('runs/chat/' + id) : '—'; }
@@ -2823,20 +2964,23 @@ async function loadThreads(){
   $('#threadsShow .n').textContent = $('#threadsBtn .n').textContent = THREADS.length || '';
 }
 async function openThread(sid){
-  if (chatBusy) return;
+  if (chatBusy){ toast('A reply is still coming in; open another conversation when it is done'); return; }
   $('#chatLog').innerHTML = ''; chatTurns = 0; chatSteps = 0;
   try {
     const d = await (await fetch('/api/chat/history?id=' + encodeURIComponent(sid))).json();
     const msgs = (d.messages || []).filter(m => m.type === 'user' || m.type === 'reply' || m.type === 'error');
     if (!msgs.length){ started(false); saveChatId(null); loadThreads(); return; }
+    let cur = null;
     for (let i = 0; i < msgs.length; i++){ const m = msgs[i], nx = msgs[i + 1];
-      if (m.type === 'user'){ const b = bubble('user', esc(m.text || ''), false);
-        if (nx && nx.type === 'error'){ const never = NOT_SENT.test(nx.error || ''), rc = document.createElement('div');
-          if (never) b.classList.add('fail'); rc.className = 'rcpt fail'; rc.textContent = never ? 'Not sent' : 'No reply'; b.after(rc); }
-        else if (!nx || nx.type === 'user'){ const rc = document.createElement('div'); rc.className = 'rcpt fail'; rc.textContent = 'No reply'; b.after(rc); } }
-      else if (m.type === 'error') bubble('bot', `<span class="bad">${NOT_SENT.test(m.error || '') ? 'Not sent' : 'No reply'}: ${esc(en(m.error || 'the request failed'))}</span>`, false);
+      if (m.type === 'user'){ const b = bubble('user', esc(m.text || ''), false); let rc = null;
+        if (nx && nx.type === 'error'){ const never = NOT_SENT.test(nx.error || ''); rc = document.createElement('div');
+          b.classList.add(never ? 'fail' : 'hold'); rc.className = 'rcpt fail'; rc.textContent = never ? 'Not sent' : 'No reply'; b.after(rc); }
+        else if (!nx || nx.type === 'user'){ rc = document.createElement('div'); b.classList.add('hold'); rc.className = 'rcpt fail'; rc.textContent = 'No reply'; b.after(rc); }
+        cur = chatItem(b, m.text || '', {rc, turn: m.turn, sid, state: rc ? 'failed' : 'replied'}); }
+      else if (m.type === 'error'){ const eb = bubble('bot', `<span class="bad">${NOT_SENT.test(m.error || '') ? 'Not sent' : 'No reply'}: ${esc(en(m.error || 'the request failed'))}</span>`, false); if (cur && cur.turn === m.turn) cur.bot = eb; }
       else { const steps = (m.steps || []).map(s => termBlock(s[0], null, {exit: s[1], note: s[2] ? 'reused' : ''})).join('');
-        bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + ((m.picked || m.model) ? `<p class="who">${esc(prettyModel(m.picked || m.model))}</p>` : ''), false); chatTurns++; chatSteps += (m.steps || []).length; }
+        const rb = bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + ((m.picked || m.model) ? `<p class="who">${esc(prettyModel(m.picked || m.model))}</p>` : ''), false);
+        if (cur && cur.turn === m.turn) cur.bot = rb; chatTurns++; chatSteps += (m.steps || []).length; }
     }
     saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true);
   } catch(_){}
@@ -2952,23 +3096,74 @@ pageHooks.chat = () => {
 const growInput = () => { const t = $('#chatInput'); t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight) + 'px'; $('#chatPh').hidden = !!t.value; };
 $('#chatInput').addEventListener('input', growInput);
 /* Enter sends; Shift+Enter adds a line; never send while an input method is composing */
-$('#chatInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); sendChat(); } });
+$('#chatInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); sendChat(); }
+  else if (e.key === 'ArrowUp' && !e.target.value && chatQ.length){ e.preventDefault(); recall(chatQ[chatQ.length - 1]); } });
+/* Ask sends one message at a time, in order. While a reply is coming in you can keep writing: each new message waits under it
+   ("Queued") and goes out when the reply above is done. A message stays dashed until its own reply has arrived. Any message can
+   be recalled: it and its reply leave the conversation and what the model sees from then on, and its text comes back to the
+   box to change and send again (↑ in an empty box takes back the last queued one). */
+const chatQ = [];
+function chatItem(me, text, o = {}){
+  const it = {me, text, rc: o.rc || null, bot: o.bot || null, turn: o.turn ?? null, sid: o.sid || null, state: o.state || 'queued', recalled: false, abort: null, sentP: null};
+  me._it = it; if (it.turn != null) me.dataset.turn = it.turn;
+  const a = document.createElement('span'); a.className = 'acts';
+  a.innerHTML = '<button type="button" class="recall" aria-label="Recall this message" data-tip="Take this message and its reply back; the text returns to the box">↩<span class="t"> Recall</span></button>';
+  me.appendChild(a);
+  return it;
+}
+function leave(el){
+  if (!el || !el.isConnected) return Promise.resolve();
+  if (reduced()){ el.remove(); return Promise.resolve(); }
+  const h = el.offsetHeight; el.style.overflow = 'hidden'; el.style.pointerEvents = 'none';
+  return el.animate([{opacity: 1, height: h + 'px', transform: 'none'}, {opacity: 0, height: '0px', paddingTop: '0px', paddingBottom: '0px', marginTop: '-14px', transform: 'scale(.94)'}],
+    {duration: 240, easing: 'cubic-bezier(.4,0,.2,1)'}).finished.then(() => el.remove(), () => el.remove());
+}
+async function recall(it){
+  if (!it || it.recalled) return;
+  it.recalled = true;
+  const qi = chatQ.indexOf(it); if (qi >= 0) chatQ.splice(qi, 1);
+  const live = it.state === 'live';
+  if (live && it.abort) it.abort();                       // stop listening; the server stops after the step it is on and drops the reply
+  Promise.all([it.me, it.rc, it.bot].map(leave)).then(() => { if (!$('#chatLog .bub')) started(false); });
+  const box = $('#chatInput'); box.value = box.value.trim() ? it.text + '\n' + box.value : it.text; growInput(); box.focus();
+  box.setSelectionRange(it.text.length, it.text.length);
+  /* the server forgets the turn (its number is known once the send itself has come back); the next message waits for that */
+  let turn = it.turn, sid = it.sid || chatId;
+  if (live && turn == null && it.sentP){ const d = await it.sentP; if (d){ turn = d.turn ?? null; sid = d.session_id || sid; } }
+  if (turn != null && sid){ try { await fetch('/api/chat/recall', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: sid, turn})}); } catch(_){} }
+  toast(it.state === 'queued' ? 'Taken back before it went out; the text is in the box' : 'Recalled: the message and its reply are gone; the text is in the box');
+  loadThreads();
+  if (live) pump();
+}
+$('#chatLog').addEventListener('click', e => { const b = e.target.closest('.recall'); if (b) recall((b.closest('.bub.me') || {})._it); });
+function pump(){ if (chatBusy) return; const nx = chatQ.shift(); if (nx) exchange(nx); }
 async function sendChat(){
   const box = $('#chatInput'), text = box.value.trim();
-  if (!text || chatBusy) return;
-  chatBusy = true; const sb = $('#sendChat'); sb.disabled = true; initChatFx(); sendPix.busy(true); pixLabel(sb, 'Replying…'); railMark('chat', 'working');
-  vanish(text); box.value = ''; growInput();
-  /* conversation on hold: the bubble stays dashed until the message has actually gone out, then fills in;
-     the receipt under it keeps saying what the conversation is waiting for until the reply is complete */
+  if (!text) return;
+  initChatFx(); vanish(text); box.value = ''; growInput();
   const me = bubble('user', esc(text)), rc = document.createElement('div'); me.classList.add('hold'); rc.className = 'rcpt'; me.after(rc);
-  const onHold = t => { rc.className = 'rcpt'; rc.innerHTML = '<span class="dot"></span>On hold · ' + esc(t); };
-  const sent = () => me.classList.remove('hold');
-  const settle = (ok, why) => { if (ok){ sent(); rc.remove(); return; }
-    const never = me.classList.contains('hold') || NOT_SENT.test(why || ''); me.classList.remove('hold'); if (never) me.classList.add('fail');
+  const it = chatItem(me, text, {rc});
+  if (chatBusy){ me.classList.add('queued'); rc.innerHTML = '<span class="dot"></span>Queued · goes out after the reply above'; chatQ.push(it); return; }
+  exchange(it);
+}
+async function exchange(it){
+  const {text, me, rc} = it, sb = $('#sendChat');
+  chatBusy = true; it.state = 'live'; me.classList.remove('queued');
+  initChatFx(); sendPix.busy(true); pixLabel(sb, 'Queue ↵'); railMark('chat', 'working');
+  let acc = '', shownTxt = '', closed = false, raf = 0, attached = false, es = null, over = false, fetching = false, resolveSent = () => {};
+  it.sentP = new Promise(r => { resolveSent = r; });
+  /* dashed until the reply is complete; the receipt under it says what the conversation is waiting for */
+  const onHold = t => { if (it.recalled) return; rc.className = 'rcpt'; rc.innerHTML = '<span class="dot"></span>On hold · ' + esc(t); };
+  let wentOut = false; const sent = () => { wentOut = true; };
+  const settle = (ok, why) => { if (it.recalled) return;
+    if (ok){ me.classList.remove('hold'); rc.remove(); it.state = 'replied'; return; }
+    const never = !wentOut || NOT_SENT.test(why || ''); it.state = 'failed';
+    if (never){ me.classList.remove('hold'); me.classList.add('fail'); }          // never went out: red; went out but no reply came: stays dashed
     rc.className = 'rcpt fail'; rc.textContent = never ? 'Not sent' : 'No reply'; };
-  /* the reply starts as typing dots; tapping them opens a live panel (stage, elapsed, commands, the text as it streams) */
+  /* the reply starts as typing dots, right under its own message (later ones may be queued below); tapping them opens a live panel */
   const bot = bubble('bot', '<button type="button" class="typing" aria-expanded="false" aria-label="Replying. Tap to watch it stream in" data-tip="Tap to watch the reply stream in">'
-    + '<span class="dots"><i></i><i></i><i></i></span></button><div class="peek" hidden><p class="lstat"><span class="st">Thinking</span><span class="el"></span></p></div>');
+    + '<span class="dots"><i></i><i></i><i></i></span></button><div class="peek" hidden><p class="lstat"><span class="st">Thinking</span><span class="el"></span></p></div>', true, rc);
+  it.bot = bot;
   const body = document.createElement('div'), typing = bot.querySelector('.typing'), live = bot.querySelector('.peek'), t0 = Date.now();
   body.className = 'md';
   const stage = t => { const st = live.querySelector('.st'); if (st) st.textContent = t; };
@@ -2980,12 +3175,16 @@ async function sendChat(){
   const finish = () => { clearInterval(tick); typing.remove(); const ls = live.querySelector('.lstat'); if (ls) ls.remove(); live.hidden = false; live.classList.add('done'); };
   const fail = (html, why) => { clearInterval(tick); bot.innerHTML = html; settle(false, why); };
   setStatus('Thinking', '', sel || 'concept question');
-  const done = ok => { chatBusy = false; sb.disabled = false; ok ? sendPix.done() : sendPix.busy(false); pixLabel(sb, 'Send ↵'); railMark('chat', ok ? 'ok' : 'bad'); loadThreads(); };
+  const done = ok => { if (over) return; over = true; clearInterval(tick); if (!fetching) resolveSent(null);
+    chatBusy = false; ok ? sendPix.done() : sendPix.busy(false); pixLabel(sb, 'Send ↵'); railMark('chat', ok === false ? 'bad' : 'ok'); loadThreads();
+    if (!it.recalled) pump(); };
+  it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) setStatus('Ready'); };
   let r;
   /* this conversation's pick decides who answers. Qwen still starting: hold the message until it is up, unless this conversation is switched to another model */
   const pick = threadPick;
   if (pick.route === 'tacc' && QW.phase !== 'ready' && QW.phase !== 'starting'){
     await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {}); await qwenPoll(); }
+  if (it.recalled) return;
   const waited = askRouteOf(pick) === 'tacc' && QW.phase === 'starting';
   stage(waited ? 'Waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
   onHold(waited ? 'waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'sending to Qwen 27B on TACC' : 'sending');
@@ -2993,31 +3192,34 @@ async function sendChat(){
     const now = document.createElement('button'); now.type = 'button'; now.className = 'now'; now.textContent = 'Use ' + prettyModel(pick.model || LOCALMODEL) + ' now';
     now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(chatId, pick); if (pick === threadPick) syncAskChip(); };
     rc.appendChild(now);
-    await new Promise(res => { const t0 = Date.now(), tick = () => (QW.phase === 'starting' && askRouteOf(pick) === 'tacc' && Date.now() - t0 < 47 * 60000) ? setTimeout(tick, 300) : res(); tick(); }); }
+    await new Promise(res => { const tw = Date.now(), wait = () => (!it.recalled && QW.phase === 'starting' && askRouteOf(pick) === 'tacc' && Date.now() - tw < 47 * 60000) ? setTimeout(wait, 300) : res(); wait(); }); }
+  if (it.recalled) return;
   const viaTacc = askRouteOf(pick) === 'tacc' && QW.phase === 'ready', switched = waited && pick.route === 'local';
   if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); setStatus('Ready'); return; }
   if (viaTacc){ setStatus('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
   else if (switched){ stage('Sending to ' + prettyModel(modelOf(pick))); onHold('sending to ' + prettyModel(modelOf(pick))); }
+  fetching = true;
   try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: sel || '', session_id: chatId, tools: $('#chatTools').checked,
     backend: viaTacc ? 'tacc' : '', ...(viaTacc ? {} : {model: modelOf(pick)})})}); }
-  catch(e){ fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); setStatus('Ready'); return; }
-  if (!r.ok){ const d = await r.json().catch(() => ({})); fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); setStatus('Ready'); return; }
-  const d = await r.json(); saveChatId(d.session_id); if (pick.route !== 'auto') rememberPick(d.session_id, pick);
+  catch(e){ fetching = false; resolveSent(null); if (it.recalled) return; fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); setStatus('Ready'); return; }
+  const d = await r.json().catch(() => ({}));
+  fetching = false; resolveSent(r.ok ? d : null);
+  if (it.recalled) return;                                  // recall() takes it from here: it now knows which turn to drop
+  if (!r.ok){ fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); setStatus('Ready'); return; }
+  it.turn = d.turn ?? null; it.sid = d.session_id || null; if (it.turn != null) me.dataset.turn = it.turn;
+  saveChatId(d.session_id); if (pick.route !== 'auto') rememberPick(d.session_id, pick);
   if (viaTacc) onHold('uploading to TACC'); else { sent(); onHold('replying'); }
-  const es = new EventSource('/api/stream?id=' + chatId);
-  let acc = '', shown = 0, closed = false, raf = 0, attached = false;
+  es = new EventSource('/api/stream?id=' + chatId);
   const attach = () => { if (attached) return; attached = true; live.appendChild(body); };
-  /* Text Generate (Aceternity): only the newly arrived slice fades in */
-  const paint = () => { raf = 0; attach(); const stick = nearBottom($('#chatLog')), txt = stripRuns(acc);
-    if (shown > txt.length || /```/.test(txt.slice(Math.max(0, shown - 3)))){ body.innerHTML = mdLite(txt); shown = txt.length; }
-    else if (txt.length > shown){ body.insertAdjacentHTML('beforeend', `<span class="tg">${esc(txt.slice(shown))}</span>`); shown = txt.length; }
-    if (stick) scrollChat(true); };
+  /* Markdown as it streams; Text Generate (Aceternity): only the newly arrived characters fade in */
+  const paint = () => { raf = 0; if (closed) return; attach(); const stick = nearBottom($('#chatLog')); shownTxt = mdPaint(body, stripRuns(acc), shownTxt); if (stick) scrollChat(true); };
   es.onmessage = e => {
+    if (closed) return;
     let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
     if (ev.type === 'chat_delta'){ if (!acc){ stage('Writing'); sent(); onHold('replying'); } acc += ev.text || ''; if (!raf) raf = requestAnimationFrame(paint); }
     else if (ev.type === 'chat_stage'){ const msg = taccStage(ev); stage(cap(msg)); onHold(msg); if (ev.stage === 'queued' || ev.stage === 'running') sent(); }
     else if (ev.type === 'chat_coach'){ if (ev.on) bot.insertAdjacentHTML('afterbegin', '<p class="note">Hint mode: flags are hidden in this reply.</p>'); }
-    else if (ev.type === 'chat_check'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } acc = ''; shown = 0; body.innerHTML = '';
+    else if (ev.type === 'chat_check'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } acc = ''; shownTxt = ''; body.innerHTML = '';
       stage('That flag did not check out; deriving it'); onHold('checking the flag'); }
     else if (ev.type === 'chat_tool'){ const holder = document.createElement('div'); holder.className = 'toolcall';
       holder.innerHTML = termBlock(ev.cmd, en(ev.output || '(no output)'), ev.cached ? {note: 'reused'} : {exit: ev.exit_code, ms: ev.duration_ms, note: ev.timed_out ? 'timed out' : ''});
@@ -3031,13 +3233,12 @@ async function sendChat(){
   /* the stream dropped: the server keeps going and writes the reply into the thread, so pick it up from there instead of giving up */
   es.onerror = () => { if (closed) return; es.close(); stage('Connection dropped; picking the reply up again'); onHold('reconnecting'); resume(); };
   const resume = async () => {
-    const t0r = Date.now(), sid = chatId; let turn = null;
+    const t0r = Date.now(), sid = chatId, turn = it.turn;
     while (!closed && Date.now() - t0r < 12 * 60000){
       await sleep(2000);
       let d; try { d = await (await fetch('/api/chat/history?id=' + encodeURIComponent(sid), {cache: 'no-store'})).json(); } catch(_){ continue; }
-      const ms = d.messages || [];
-      if (turn == null){ const u = ms.filter(m => m.type === 'user').pop(); if (!u) continue; turn = u.turn; }
-      const r = ms.find(m => (m.type === 'reply' || m.type === 'error') && m.turn === turn); if (!r || closed) continue;
+      const ms = d.messages || [], want = turn != null ? turn : ((ms.filter(m => m.type === 'user').pop() || {}).turn);
+      const r = ms.find(m => (m.type === 'reply' || m.type === 'error') && m.turn === want); if (!r || closed) continue;
       closed = true; if (raf){ cancelAnimationFrame(raf); raf = 0; }
       if (r.type === 'reply'){ attach(); body.innerHTML = markFlags(mdLite(r.answer || '(no content)'), r.flag_checks) + ((r.picked || r.model) ? `<p class="who">${esc(prettyModel(r.picked || r.model))}</p>` : '');
         finish(); settle(true); chatTurns += 1; done(true); }
@@ -3050,7 +3251,7 @@ async function sendChat(){
 }
 $('#sendChat').onclick = sendChat;
 $('#chatTools').onchange = showMount;
-$('#newChat').onclick = () => { if (chatBusy) return; chatId = null; chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); $('#chatLog').innerHTML = ''; started(false); loadThreads(); $('#chatInput').focus(); };
+$('#newChat').onclick = () => { if (chatBusy){ toast('A reply is still coming in; start a new conversation when it is done'); return; } chatId = null; chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); $('#chatLog').innerHTML = ''; started(false); loadThreads(); $('#chatInput').focus(); };
 
 /* ---------------- keyboard: / to search, Enter to run or send, Esc to close ---------------- */
 /* ---------------- Cmd/Ctrl+K: search and commands ---------------- */

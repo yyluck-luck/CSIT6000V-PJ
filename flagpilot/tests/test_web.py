@@ -360,6 +360,56 @@ class TestWebAPI(unittest.TestCase):
         self.assertEqual(hist["messages"][-1]["type"], "error")
         self.assertIn("RuntimeError: boom", hist["messages"][-1]["error"])
 
+    def test_recall_drops_a_turn_everywhere(self):
+        """撤回：那一轮（提问 + 回答）从历史、线程列表、之后的模型上下文里消失；轮次号不重用；全撤回的线程不再列出。"""
+        from unittest import mock
+        from flagpilot import chat as chat_mod
+        from flagpilot.client import Completion, ServerMetrics
+        seen = []
+
+        class Echo:
+            def __init__(self, spec):
+                pass
+
+            def scrape_metrics(self):
+                return ServerMetrics(error="not configured")
+
+            def complete(self, messages, max_tokens=None, on_delta=None):
+                seen.append([m["content"] for m in messages if m["role"] in ("user", "assistant")])
+                return Completion(text=f"reply {len(seen)}", prompt_tokens=1, completion_tokens=1,
+                                  ttft_ms=1, latency_ms=1, finish_reason="stop", usage_source="estimated")
+
+        with mock.patch.object(chat_mod, "build_client", side_effect=lambda spec: Echo(spec)):
+            r1 = self.post("/api/chat", {"message": "first question", "tools": False, "model": "mock"})
+            sid = r1["session_id"]
+            self.assertEqual(r1["turn"], 1)
+            self.stream_chat(sid)
+            r2 = self.post("/api/chat", {"message": "second question", "tools": False, "session_id": sid, "model": "mock"})
+            self.assertEqual(r2["turn"], 2)
+            self.stream_chat(sid)
+            self.assertTrue(self.post("/api/chat/recall", {"session_id": sid, "turn": 1})["ok"])
+            r3 = self.post("/api/chat", {"message": "third question", "tools": False, "session_id": sid, "model": "mock"})
+            self.assertEqual(r3["turn"], 3, "turn numbers are never reused")
+            self.stream_chat(sid)
+        hist = json.loads(self.get(f"/api/chat/history?id={sid}"))
+        self.assertEqual([(m["type"], m["turn"]) for m in hist["messages"]],
+                         [("user", 2), ("reply", 2), ("user", 3), ("reply", 3)])
+        self.assertEqual(seen[-1], ["second question", "reply 2", "third question"], "the model no longer sees the recalled turn")
+        row = {t["id"]: t for t in json.loads(self.get("/api/chat/sessions"))["sessions"]}[sid]
+        self.assertEqual((row["title"], row["turns"]), ("second question", 2))
+        for t in (2, 3):
+            self.post("/api/chat/recall", {"session_id": sid, "turn": t})
+        self.assertNotIn(sid, {t["id"] for t in json.loads(self.get("/api/chat/sessions"))["sessions"]})
+        for bad in ({"session_id": sid}, {"session_id": "../x", "turn": 1}, {"session_id": sid, "turn": "1"}, {"session_id": sid, "turn": 0}):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post("/api/chat/recall", bad)
+            self.assertEqual(ctx.exception.code, 400)
+            ctx.exception.close()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.post("/api/chat/recall", {"session_id": "abcdefabcdef", "turn": 1})
+        self.assertEqual(ctx.exception.code, 404)
+        ctx.exception.close()
+
     def test_each_thread_keeps_its_own_model(self):
         """Ask：每个线程用自己的模型，线程中途也能换；回答、历史、线程列表都标出是哪个模型答的。"""
         from unittest import mock

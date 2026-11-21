@@ -43,15 +43,18 @@ class Task:
         return bool((self.gold_sha256 or "").strip())
 
     @property
+    def real_assets(self) -> list[str]:
+        """真正的附件。题库给"没有文件"的题放了一个空的 .placeholder，它不算材料。"""
+        return [a for a in self.assets if a != ".placeholder"]
+
+    @property
     def brief(self) -> str:
         """给模型看的题面。注意：这里绝对不能拼接任何 gold 信息。"""
         head = self.brief_override.strip() or self.title.strip() or self.query.strip()
         lines = [head, ""]
-        if self.assets:
+        if self.real_assets:      # 只有占位文件时原来会写一行 "Files provided:" 而下面一个文件都没有
             lines.append("Files provided (in ./challenge/):")
-            for a in self.assets:
-                if a == ".placeholder":
-                    continue
+            for a in self.real_assets:
                 lines.append(f"  - {a}")
         else:
             lines.append("No files are provided for this challenge.")

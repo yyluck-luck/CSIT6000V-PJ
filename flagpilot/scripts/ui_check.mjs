@@ -71,8 +71,16 @@ try {
   const fill = await js("(() => { const F = document.querySelector('#feats').getBoundingClientRect(); return {table: !!document.querySelector('#latest'), right: Math.round(innerWidth - F.right), bottom: Math.round(F.bottom), vh: innerHeight, ox: document.documentElement.scrollWidth - innerWidth}; })()");
   check("landing fills the window: no side table, cards span the width, one screen", !fill.table && fill.right < 120 && fill.bottom <= fill.vh && fill.ox <= 0, JSON.stringify(fill));
   const smallLanding = await js(SMALL); check("no small text on the landing", !smallLanding.length, smallLanding.join(" | "));
-  const w0 = await js("document.querySelector('#flip').textContent");
-  check("layout text flip cycles", await until(`document.querySelector('#flip').textContent.trim() !== ${JSON.stringify(w0.trim())}`, 4000));
+  const w0 = await js("document.querySelector('#flip .tw').textContent");
+  const lay = []; for (let i = 0; i < 34; i++){ lay.push(await js("(() => { const h = document.querySelector('#hero h1'), b = h.querySelector('.l1b').getBoundingClientRect(); return Math.round(h.getBoundingClientRect().height) + ':' + Math.round(b.top); })()")); await sleep(100); }
+  check("layout text flip cycles", await until(`document.querySelector('#flip .tw').textContent.trim() !== ${JSON.stringify(w0.trim())}`, 4000));
+  check("hero: typing the next word never moves a line break", new Set(lay).size === 1, [...new Set(lay)].join(' '));
+  // notifications come from the Dynamic Island at the top (there is no bottom pop-up any more); a tap closes one early
+  await js("toast('Hello from the island')");
+  const islOpen = await until("document.querySelector('#island').classList.contains('note') && /Hello from the island/.test(document.querySelector('#islNote').textContent) && !document.querySelector('#toast')", 1500);
+  await js("document.querySelector('#island').click()");
+  const islShut = await until("!document.querySelector('#island').classList.contains('note') && document.querySelector('.page.on').dataset.page === 'solve'", 1500);
+  check("notifications show in the Dynamic Island; a tap closes them", islOpen && islShut, JSON.stringify({islOpen, islShut}));
   await noCJK("landing");
 
   // 2. page switch latency: the new page must be committed inside the click handler
@@ -354,8 +362,8 @@ try {
   const want = [/^Uploading to TACC/, /^Queued on TACC · job 30120 · your two-job limit is in use/, /^Running on 10-0-3-11 · job 30120/, /^Writing.*\| Replay $/, /^Writing.*\| Replay runs solve\.py again\.$/, /^ \| Replay runs solve\.py again\.$/];
   check("open panel follows TACC stages and streams the reply", seen.length === 6 && want.every((re, i) => re.test(seen[i])), JSON.stringify(seen));
   const meSeen = await js("window.__me");
-  const meWant = [/^dashed \| On hold · uploading to TACC$/, /^solid \| On hold · queued on TACC · job 30120 · your two-job limit is in use$/, /^solid \| On hold · running on 10-0-3-11/, /^solid \| On hold · replying$/, /^solid \| On hold · replying$/, /^solid \| -$/];
-  check("my bubble: dashed until the job is queued, then solid; the hold receipt lasts until the reply", meSeen.length === 6 && meWant.every((re, i) => re.test(meSeen[i])), JSON.stringify(meSeen));
+  const meWant = [/^dashed \| On hold · uploading to TACC$/, /^dashed \| On hold · queued on TACC · job 30120 · your two-job limit is in use$/, /^dashed \| On hold · running on 10-0-3-11/, /^dashed \| On hold · replying$/, /^dashed \| On hold · replying$/, /^solid \| -$/];
+  check("my bubble: dashed until its reply has arrived; the receipt says what it waits for", meSeen.length === 6 && meWant.every((re, i) => re.test(meSeen[i])), JSON.stringify(meSeen));
   // flags the tutor states come back checked: a wrong one triggers a retry that clears the draft; the final reply marks each flag
   await js("document.querySelector('#newChat').click()");
   await js(`(() => { window.__ES = window.EventSource; window.__chk = [];
@@ -393,6 +401,62 @@ try {
   const recovered = await until("(() => { const b = [...document.querySelectorAll('#chatLog .bub.bot')].pop(), md = b && b.querySelector('.md'); return md && md.textContent.length > 20 && !/interrupted|did not come back/.test(b.textContent) && b.querySelector('.who') && !document.querySelector('#chatLog .rcpt'); })()", 15000);
   await js("window.EventSource = window.__ES");
   check("Ask: a dropped stream does not lose the reply; it is picked up from the thread", recovered);
+  // several messages in a row: later ones wait under the reply (faded, dashed, "Queued"), go out in order, each reply lands under its own message (Markdown)
+  await js("document.querySelector('#newChat').click()"); await sleep(200);
+  await js(`(() => { window.__F = window.fetch; window.__ES = window.EventSource; window.__posts = []; window.__gates = []; window.__recalls = []; window.__log = [];
+    window.fetch = (u, o) => { if (u === '/api/chat' && o && o.method === 'POST'){ const b = JSON.parse(o.body); window.__posts.push(b.message); window.__log.push('post:' + b.message);
+        return Promise.resolve(new Response(JSON.stringify({session_id: 'cccccccccccc', turn: window.__posts.length}), {headers: {'Content-Type': 'application/json'}})); }
+      if (u === '/api/chat/recall'){ const b = JSON.parse(o.body); window.__recalls.push(b); window.__log.push('recall:' + b.turn);
+        return new Promise(res => setTimeout(() => res(new Response('{"ok":true}', {headers: {'Content-Type': 'application/json'}})), 150)); }
+      return window.__F(u, o); };
+    window.EventSource = class { constructor(){ const n = window.__posts.length; window.__gates[n - 1] = () => this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: '**Answer ' + n + '**\\n\\n- point one\\n- point \`two\`', turns: n})}); } close(){} }; })()`);
+  const shape = "[...document.querySelectorAll('#chatLog .bub.me')].map(b => (b.classList.contains('queued') ? 'queued' : b.classList.contains('hold') ? 'dashed' : 'solid') + ':' + b.firstChild.textContent + ':' + ((b.nextElementSibling && b.nextElementSibling.classList.contains('rcpt')) ? b.nextElementSibling.textContent : '-'))";
+  await typeMsg("first"); await until("window.__posts.length === 1", 2000);
+  await typeMsg("second"); await typeMsg("third"); await sleep(150);
+  const qShape = await js(shape), qPosts = await js("window.__posts.length"), qLabel = await js("document.querySelector('#sendChat').textContent.trim()");
+  await js("window.__gates[0]()"); await until("window.__posts.length === 2", 2000);
+  await js("window.__gates[1]()"); await until("window.__posts.length === 3", 2000);
+  await js("window.__gates[2]()");
+  const qDone = await until("!document.querySelector('#chatLog .bub.me.hold') && !document.querySelector('#chatLog .rcpt')", 3000);
+  const qOrder = await js("[...document.querySelectorAll('#chatLog .bub')].map(b => b.classList.contains('me') ? b.firstChild.textContent : ((b.querySelector('.md strong') || {}).textContent || '?'))");
+  const qMd = await js("(() => { const m = document.querySelector('#chatLog .bub.bot .md'); return !!(m && m.querySelector('strong') && m.querySelectorAll('ul li').length === 2 && m.querySelector('li code') && !/\\*\\*/.test(m.textContent)); })()");
+  check("Ask: messages sent during a reply queue up, go out in order and stay dashed until answered",
+    JSON.stringify(qShape) === JSON.stringify(["dashed:first:On hold · replying", "queued:second:Queued · goes out after the reply above", "queued:third:Queued · goes out after the reply above"])
+      && qPosts === 1 && /Queue/.test(qLabel) && qDone && JSON.stringify(qOrder) === JSON.stringify(["first", "Answer 1", "second", "Answer 2", "third", "Answer 3"]) && JSON.stringify(await js("window.__posts")) === JSON.stringify(["first", "second", "third"]),
+    JSON.stringify({qShape, qPosts, qLabel, qDone, qOrder}));
+  check("Ask: replies render Markdown (bold, lists, inline code)", qMd);
+  // recall: a queued message comes back to the box without reaching the server; an answered one is dropped on the server too;
+  // one still being answered is dropped and the next queued message goes out only after the server has been told
+  await typeMsg("fourth"); await until("window.__posts.length === 4", 2000);
+  await typeMsg("fifth"); await sleep(100);
+  await js("[...document.querySelectorAll('#chatLog .bub.me')].pop().querySelector('.recall').click()");
+  const rQueued = await until("document.querySelector('#chatInput').value === 'fifth' && document.querySelectorAll('#chatLog .bub.me').length === 4", 2000);
+  await js("(() => { const t = document.querySelector('#chatInput'); t.value = ''; t.dispatchEvent(new Event('input', {bubbles: true})); })()");
+  await js("window.__gates[3]()"); await until("!document.querySelector('#chatLog .bub.me.hold')", 2000);
+  const rNoServer = await js("window.__posts.length === 4 && window.__recalls.length === 0");
+  await js("[...document.querySelectorAll('#chatLog .bub.me')][1].querySelector('.recall').click()");
+  const rAnswered = await until("document.querySelector('#chatInput').value === 'second' && document.querySelectorAll('#chatLog .bub.me').length === 3 && document.querySelectorAll('#chatLog .bub.bot').length === 3 && window.__recalls.length === 1 && window.__recalls[0].turn === 2 && window.__recalls[0].session_id === 'cccccccccccc'", 2500);
+  await js("(() => { const t = document.querySelector('#chatInput'); t.value = ''; t.dispatchEvent(new Event('input', {bubbles: true})); })()");
+  await typeMsg("sixth"); await until("window.__posts.length === 5", 2000);
+  await typeMsg("seventh"); await sleep(100);
+  await js("[...document.querySelectorAll('#chatLog .bub.me')].find(b => b.firstChild.textContent === 'sixth').querySelector('.recall').click()");
+  const rLive = await until("window.__posts.length === 6 && window.__posts[5] === 'seventh'", 3000);
+  const rOrder = await js("window.__log.slice(-2)");
+  await js("window.__gates[5]()");
+  const rEnd = await until("!document.querySelector('#chatLog .bub.me.hold') && ![...document.querySelectorAll('#chatLog .bub.me')].some(b => b.firstChild.textContent === 'sixth') && document.querySelector('#chatInput').value === 'sixth'", 2500);
+  await js("window.fetch = window.__F; window.EventSource = window.__ES; (() => { const t = document.querySelector('#chatInput'); t.value = ''; t.dispatchEvent(new Event('input', {bubbles: true})); })()");
+  check("Ask: recall takes back a queued, an answered or an in-flight message; the text returns to the box",
+    rQueued && rNoServer && rAnswered && rLive && JSON.stringify(rOrder) === JSON.stringify(["recall:5", "post:seventh"]) && rEnd,
+    JSON.stringify({rQueued, rNoServer, rAnswered, rLive, rOrder, rEnd}));
+  // and against the real server: a recalled turn is gone from the thread's history
+  await js("document.querySelector('#newChat').click()"); await sleep(200);
+  await typeMsg("recall me for real");
+  await until("document.querySelector('#chatLog .bub.bot .md') && !document.querySelector('#chatLog .bub.me.hold')", 15000);
+  const sidR = await js("chatId");
+  await js("document.querySelector('#chatLog .bub.me .recall').click()");
+  let leftR = -1; for (let i = 0; i < 30 && leftR !== 0; i++){ await sleep(150); leftR = await js(`fetch('/api/chat/history?id=${sidR}', {cache: 'no-store'}).then(r => r.json()).then(d => (d.messages || []).length)`); }
+  check("Ask: a recalled turn is gone from the thread on the server", !!sidR && leftR === 0, JSON.stringify({sidR, leftR}));
+  await js("(() => { const t = document.querySelector('#chatInput'); t.value = ''; t.dispatchEvent(new Event('input', {bubbles: true})); })()");
   // who answers is chosen per conversation: a menu on the chip; a message held for Qwen can go to another model at once
   await js("document.querySelector('#newChat').click(); localStorage.removeItem('fp.ask.pick'); localStorage.removeItem('fp.ask.threads'); useThreadPick(newPick())");
   await sleep(300);                                   // let the page's own focus-the-input frame pass first

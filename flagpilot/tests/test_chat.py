@@ -175,6 +175,65 @@ class TestChatSession(unittest.TestCase):
         self.assertIn("第一问的回答", blob)
 
 
+class TestRecall(unittest.TestCase):
+    """撤回：日志只追加一条 recall；恢复会话时那一轮不进上下文；轮次号只增不重用；正在答的那一轮做完当前这步就停。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fp-recall-"))
+        self.cfg = RunConfig(model=make_model_spec("mock"), limits=SandboxLimits(action_timeout_s=15))
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+
+    def _patch(self, fake):
+        old = chat.build_client
+        chat.build_client = lambda spec: fake
+        self.addCleanup(lambda: setattr(chat, "build_client", old))
+
+    def test_resume_skips_recalled_turns_and_keeps_numbering(self):
+        fake = FakeClient(["first answer", "second answer", "third answer"])
+        self._patch(fake)
+        wd = self.tmp / "s"
+        sess = chat.ChatSession(self.cfg, task=None, workdir=wd, use_tools=False)
+        sess.ask("first question")
+        sess.ask("second question")
+        from flagpilot import storage
+        storage.append_record(wd / "chat.jsonl", {"type": "recall", "turn": 1})
+        again = chat.ChatSession.resume(self.cfg, None, wd, use_tools=False)
+        self.assertEqual(again.turns, 2, "the next turn is 3, never a reused 1")
+        said = [m["content"] for m in again.messages[1:]]
+        self.assertEqual(said, ["second question", "second answer"])
+        again.ask("third question", turn=None)
+        rows = chat.read_log(wd / "chat.jsonl")
+        self.assertEqual([r["turn"] for r in rows if r.get("type") == "user"], [1, 2, 3])
+        self.assertEqual(chat.recalled_turns(rows), {1})
+
+    def test_error_row_has_the_turn_of_its_question(self):
+        sess = chat.ChatSession(self.cfg, task=None, workdir=self.tmp / "e", use_tools=False)
+        sess.turns = 4            # the web server reserved turn 4, then ask() blew up
+        sess.log_error("RuntimeError: boom", turn=4)
+        sess.log_error("RuntimeError: again")
+        errs = [r["turn"] for r in chat.read_log(self.tmp / "e" / "chat.jsonl") if r.get("type") == "error"]
+        self.assertEqual(errs, [4, 4])
+
+    def test_cancel_stops_after_the_current_step(self):
+        holder = {}
+
+        class Recalling(FakeClient):
+            def complete(self, messages, max_tokens=None, on_delta=None):
+                comp = super().complete(messages, max_tokens, on_delta)
+                holder["sess"].cancel(7)          # the person recalls this turn while the model is answering
+                return comp
+
+        fake = Recalling(["<run>echo step</run>\nlooking", "never asked"])
+        self._patch(fake)
+        sess = chat.ChatSession(self.cfg, task=None, workdir=self.tmp / "c", use_tools=True)
+        holder["sess"] = sess
+        reply = sess.ask("go", turn=7)
+        self.assertEqual(fake.calls, 1, "no further model call after the recall")
+        self.assertIn("recalled", reply.error)
+        sess.cancel(99)                           # recalling another turn never stops the one in progress
+        self.assertFalse(getattr(sess, "_stop", False) and sess._live == 99)
+
+
 class TestFlagCheck(unittest.TestCase):
     """导师报的 flag 要核验：答错/来路不明 → 追加一轮让它用命令推出来；结果随回复带给页面。"""
 

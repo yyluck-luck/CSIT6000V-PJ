@@ -6,6 +6,11 @@
     3. 在一个全新目录（只含题目附件）里重跑 solve.py    → 输出含该 flag 才算 verified
     4. 把题目附件清空再跑一次                          → 还能打印出该 flag 就是没在用材料
 
+只有占位文件（.placeholder）的题算"没有附件"，不做第 4 条。第 4 条还有一个例外（5）：材料只写在**题面**里的题（如 ROT13 题把密文写在题目描述里，附件只是个
+工具脚本），脚本只能把题面里的密文抄进来——清空附件当然还能打印 flag。这时改做"题面依赖检验"：
+把脚本里取自题面的字面量逐字符改掉再跑，flag 随之消失才算"答案由题面材料算出"；仍然打印 flag
+就说明那段题面只是摆设，照旧判 hardcoded_no_material。
+
 第 4 条是"字面量检查"的补丁。字面量检查只能抓住它认识的那几种编码
 （原文 / hex / base64 / 反转 / rot13），换一种写法就漏了；而"删掉材料
 还能答对"是与编码无关的判据——答案要么来自材料，要么来自模型自己的记忆。
@@ -17,6 +22,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import codecs
 import hashlib
@@ -106,11 +112,12 @@ def scan_script(script: str, flag: str, material: str = "") -> str | None:
     if not script:
         return None
     norm = script.replace("\\n", "\n")
+    dense = "".join(material.split()) if material else ""      # 题面里折行的长块（base64、hex）拼回一行再比
     for name, variant in literal_variants(flag).items():
         hit = variant in norm or (name in ("hex", "base64") and variant.lower() in norm.lower())
         if not hit:
             continue
-        if material and variant in material:
+        if material and (variant in material or variant in dense):
             continue
         return name
     return None
@@ -307,6 +314,10 @@ def survives_without_material(
 
     返回 (是否可疑, 说明)。只在题目**确实有附件**时调用——没有附件的题
     本来就不该读材料，拿这条去判它是误伤。
+
+    第一段打印出 flag 时还要再问一句：材料是不是本来就只在题面里（见模块说明第 5 条）。
+    答案随题面字面量一起变，就不算可疑，返回 (False, 说明)，第二段也不必再跑——
+    这种脚本从头到尾就不读附件。
     """
     flag = (submitted_flag or "").strip()
     if not flag:
@@ -325,6 +336,9 @@ def survives_without_material(
     _stage(empty, task, tasks_root, with_material=False)
     res = _run_script(empty, script, timeout_s, limits)
     if not res.timed_out and flag in (res.stdout or ""):
+        note = derived_from_text(task, script, flag, _dir("text-material"), timeout_s, limits)
+        if note:
+            return False, note
         return True, "清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的"
 
     # 第二段：材料在，但内容被换掉
@@ -332,9 +346,117 @@ def survives_without_material(
     _stage_decoy(decoy, task, tasks_root)
     res2 = _run_script(decoy, script, timeout_s, limits)
     if not res2.timed_out and flag in (res2.stdout or ""):
+        # 读了附件却没用它——可能是因为真正的材料在题面里（crypto-005：打开 rot13.py 看一眼，解的是题面密文）
+        note = derived_from_text(task, script, flag, _dir("text-material"), timeout_s, limits,
+                                 stage=lambda d: _stage_decoy(d, task, tasks_root), lead="脚本打开了附件但没有用它")
+        if note:
+            return False, note
         return True, ("把 challenge/ 换成同名的假材料后仍打印出同一个 flag："
                       "脚本读了材料却没有用它，答案仍是硬编码的")
     return False, ""
+
+
+# ---------- 题面依赖检验 ----------
+
+_TEXT_MIN = 8          # 至少这么长的字面量才算"抄自题面"（太短的到处都是：'flag'、'picoCTF{'）
+
+
+def _squash(s: str) -> str:
+    return " ".join(str(s).split())
+
+
+def text_literals(script: str, text: str, flag: str) -> list:
+    """脚本里取自题面的字面量（字符串、字节串、长整数）：返回 AST 节点。
+
+    跳过 f-string 内部的片段（改不了它们的源码而不破坏语法），跳过 flag 本身的片段
+    （'picoCTF{' 这类前缀改掉会让"打印前检查格式"的硬编码脚本也"失去"flag，造成误放），
+    要求至少 3 个字母或数字（全是标点的串改不动）。空白归一后比对：题面里的密文常被折行。
+    """
+    try:
+        tree = ast.parse(script)
+    except (SyntaxError, ValueError):
+        return []
+    inside_f = {id(n) for js in ast.walk(tree) if isinstance(js, ast.JoinedStr) for n in ast.walk(js)}
+    hay, flag = _squash(text), (flag or "").strip()
+    hay_dense = "".join(hay.split())
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or id(node) in inside_f or isinstance(node.value, bool):
+            continue
+        v = node.value
+        if isinstance(v, (str, bytes)):
+            s = _squash(v.decode("latin-1") if isinstance(v, bytes) else v)
+        elif isinstance(v, int):
+            s = str(abs(v))
+        else:
+            continue
+        dense = "".join(s.split())
+        found = s in hay or (len(dense) >= _TEXT_MIN and dense in hay_dense)      # 题面里折行的长块，脚本里常是拼好的一行
+        if (len(s) < _TEXT_MIN or sum(c.isalnum() for c in s) < 3 or not found
+                or (flag and (s in flag or flag in s))):
+            continue
+        out.append(node)
+    return out
+
+
+def _shift(c: str) -> str:
+    for lo, hi in (("a", "z"), ("A", "Z"), ("0", "9")):
+        if lo <= c <= hi:
+            return lo if c == hi else chr(ord(c) + 1)
+    return c
+
+
+def _perturbed(v):
+    """同长度、同字符类的另一个值：字母和数字各自往后挪一位（z→a、9→0），其余字符不动。"""
+    if isinstance(v, bytes):
+        return v.decode("latin-1").translate({i: _shift(chr(i)) for i in range(256)}).encode("latin-1")
+    if isinstance(v, int):
+        return v + 1 if v >= 0 else v - 1
+    return "".join(_shift(c) for c in v)
+
+
+def perturb_literals(script: str, nodes: list) -> str:
+    """把这些字面量在源码里换成改过的值（按 UTF-8 字节偏移从后往前换，位置不会错位）。"""
+    raw = script.encode("utf-8")
+    starts = [0]
+    for line in raw.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    spans = []
+    for n in nodes:
+        a = starts[n.lineno - 1] + n.col_offset
+        b = starts[n.end_lineno - 1] + n.end_col_offset
+        spans.append((a, b, repr(_perturbed(n.value)).encode("utf-8")))
+    for a, b, rep in sorted(spans, reverse=True):
+        raw = raw[:a] + rep + raw[b:]
+    return raw.decode("utf-8")
+
+
+def derived_from_text(task: Task, script: str, flag: str, dest: Path,
+                      timeout_s: float, limits: SandboxLimits | None, stage=None,
+                      lead: str = "脚本不读附件") -> str:
+    """脚本离了附件（或附件换成假的）也能打印 flag 时的最后一问：flag 是不是由题面里的材料算出来的？
+
+    把取自题面的字面量全部改掉，在**同样的条件**下再跑（stage 摆出与触发这一问时相同的 challenge/：
+    第一段是空目录，第二段是同名假材料——否则"打开文件失败"会冒充"依赖题面"）：
+    flag 消失（算出别的东西或报错）→ 答案依赖题面材料，返回说明；flag 还在 → 那段题面只是摆设，返回空串。
+    """
+    nodes = text_literals(script, f"{task.query or ''}\n{task.title or ''}", flag)
+    if not nodes:
+        return ""
+    try:
+        changed = perturb_literals(script, nodes)
+        ast.parse(changed)
+    except (SyntaxError, ValueError, IndexError):
+        return ""
+    if stage is not None:
+        stage(dest)
+    else:
+        (dest / "challenge").mkdir(parents=True, exist_ok=True)   # 和第一段一样：附件全无
+    res = _run_script(dest, changed, timeout_s, limits)
+    if res.timed_out or flag in (res.stdout or ""):
+        return ""
+    return (f"{lead}，答案由题面里的材料算出：把取自题面的 {len(nodes)} 处字面量改掉后，"
+            "同一个 flag 不再出现")
 
 
 def _stderr_tail(stderr: str, replay_dir: Path, limit: int = 1200) -> str:
@@ -405,7 +527,7 @@ def evaluate(
     if target and target in res.stdout:
         # 第四道：材料缺失重放。只在这一步做——它比正常重放更严格，
         # 放在前面会把"脚本跑不起来"和"脚本不需要材料"两种失败混在一起。
-        if material_free and task.assets:
+        if material_free and task.real_assets:          # 只有 .placeholder 的题等于没有附件：材料全在题面里
             suspect, why = survives_without_material(
                 task, script, target, tasks_root, timeout_s, limits,
                 parent=replay_dir.parent)
@@ -413,8 +535,11 @@ def evaluate(
                 return ReplayResult("unverified", "hardcoded_no_material", why,
                                     res.stdout, res.exit_code, res.duration_ms,
                                     gold_checked=gold_known)
+            note = why          # 非空 = 答案由题面材料算出（题面依赖检验通过）
+        else:
+            note = ""
         if gold_known:
-            return ReplayResult("verified", "match", "重放复现出同一个 flag",
+            return ReplayResult("verified", "match", "重放复现出同一个 flag" + (f"；{note}" if note else ""),
                                 res.stdout, res.exit_code, res.duration_ms)
         return ReplayResult(
             "reproduced", "reproduced_no_gold",

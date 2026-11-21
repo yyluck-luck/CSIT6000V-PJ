@@ -188,6 +188,11 @@ class ChatReply:
         }
 
 
+def recalled_turns(rows: list[dict]) -> set:
+    """用户撤回过的轮次（日志只追加：撤回记一条 recall，读的时候跳过那一轮的提问、回答和错误）。"""
+    return {r.get("turn") for r in rows if r.get("type") == "recall"}
+
+
 def read_log(path: Path) -> list[dict]:
     """读会话日志。半行（进程被杀/磁盘满）跳过，不让整段历史失效。"""
     rows: list[dict] = []
@@ -271,9 +276,17 @@ class ChatSession:
         self.client = build_client(spec)
         self._log({"type": "model", "model": spec.name})
 
-    def log_error(self, message: str) -> None:
-        """这一轮没答成：记一条 error，重开线程时看得到失败原因（不参与恢复上下文）。"""
-        self._log({"type": "error", "turn": self.turns + 1, "error": str(message)[:400]})
+    def log_error(self, message: str, turn: int | None = None) -> None:
+        """这一轮没答成：记一条 error，重开线程时看得到失败原因（不参与恢复上下文）。
+
+        轮次号与那条提问相同（ask 一开始就把 turns 加上了；原来这里写 turns + 1，错位一格）。
+        """
+        self._log({"type": "error", "turn": self.turns if turn is None else turn, "error": str(message)[:400]})
+
+    def cancel(self, turn: int) -> None:
+        """用户撤回了正在回答的那一轮：当前这一步做完就停，不再调模型、不再跑命令（回答照样落盘，读的时候被跳过）。"""
+        if getattr(self, "_live", None) == turn:
+            self._stop = True
 
     def history(self) -> list[dict]:
         return read_log(self.path)
@@ -292,12 +305,15 @@ class ChatSession:
             return None
         sess = cls(cfg, task=task, workdir=workdir, use_tools=use_tools)
         sess.messages = [{"role": "system", "content": sess._system()}]
+        gone = recalled_turns(rows)          # 撤回的轮次：模型不再看到它们
         for r in rows:
+            sess.turns = max(sess.turns, int(r.get("turn") or 0))      # 轮次号只增不重用：撤回之后也不会撞号
+            if r.get("turn") in gone:
+                continue
             if r.get("type") == "user" and str(r.get("text") or "").strip():
                 sess.messages.append({"role": "user", "content": str(r["text"])})
             elif r.get("type") == "reply" and str(r.get("answer") or "").strip():
                 sess.messages.append({"role": "assistant", "content": str(r["answer"])})
-                sess.turns += 1
                 sess.total_steps += len(r.get("steps") or [])
         return sess
 
@@ -324,8 +340,12 @@ class ChatSession:
         text: str,
         on_delta: Callable[[str], None] | None = None,
         hook: Callable[[dict], None] | None = None,
+        turn: int | None = None,
     ) -> ChatReply:
-        self.turns += 1
+        # 轮次号：网页服务在收到消息时就占好（同一会话连着来两条也不会撞号）；直接调用时顺延
+        turn = self.turns + 1 if turn is None else turn
+        self.turns = max(self.turns, turn)
+        self._live, self._stop = turn, False
         reply = ChatReply(answer="")
         t0 = time.monotonic()
         nt = "\n/no_think" if self.cfg.model.soft_no_think else ""
@@ -334,7 +354,7 @@ class ChatSession:
             hook({"type": "chat_coach", "on": coach})
         self.messages.append({"role": "user",
                               "content": text + (_COACH_RULE if coach else "") + nt})
-        self._log({"type": "user", "turn": self.turns, "text": text[:4000],
+        self._log({"type": "user", "turn": turn, "text": text[:4000],
                    "coach": coach})
         self._rounds(reply, coach, nt, on_delta, hook)
 
@@ -358,7 +378,8 @@ class ChatSession:
         # 答案落盘时保留完整文本（提示模式的脱敏已在上面做完）；
         # 命令只记"命令 + 退出码 + 是否复用"，输出本身不进日志——
         # 里面有可能是 flag，答疑日志不该成为第二个答案库。
-        self._log({"type": "reply", "turn": self.turns,
+        self._live = None
+        self._log({"type": "reply", "turn": turn,
                    "answer": reply.answer[:4000], "rounds": reply.rounds,
                    # 实际回答的型号（模型链可能换过）给日志和报告；界面只显示这个对话选的提供商（picked）
                    "model": getattr(self.client, "last_model", self.cfg.model.name), "picked": getattr(self, "picked", "") or "",
@@ -377,6 +398,9 @@ class ChatSession:
                 on_delta: Callable[[str], None] | None, hook: Callable[[dict], None] | None) -> None:
         """模型 ↔ 命令的往返，最多 max_rounds 轮命令；最后一句不带命令的话就是回答。"""
         for rnd in range(self.max_rounds + 1):
+            if getattr(self, "_stop", False):
+                reply.error = reply.error or "recalled by the user"
+                break
             reply.rounds += 1
             comp = self.client.complete(self.messages, on_delta=on_delta)
             reply.prompt_tokens += comp.prompt_tokens
