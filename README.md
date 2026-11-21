@@ -657,7 +657,7 @@ attempts first hit the free tier's per-minute quota; they were re-run and are co
 
 **TACC batch `v6`: four tiers, two repeats** (Qwen 3.8 27B AWQ, the same 20 dev-split challenges,
 n = 40 per tier, 2026-11-20). "Then" is the verdict recorded at run time; "re-scored" replays every
-attempt's final submission through today's verifier (`python3 scripts/rescore.py runs/tacc/v6`), which
+attempt's final submission through today's verifier (`scripts/rescore.py results/tacc/v6`, see above), which
 counts material written in the challenge text (see *How an attempt is judged*):
 
 | Tier | Verified then | 95% CI | Verified, re-scored | 95% CI |
@@ -691,15 +691,16 @@ each, n = 40 per tier, 2026-11-21, commit `103411e`; records in `flagpilot/resul
 the full statement, counts material written in the statement, and cuts off a reply that is stuck
 repeating itself. B0 is the bare model and B3 the full agent.
 
-| Tier | Verified as run | 95% CI | Re-scored | Mean turns | Mean tokens | Median wall time |
-|---|---|---|---|---|---|---|
-| B0 bare model | 33/40 · 82.5% | 68.0–91.2% | 33/40 | 5.5 | 16,148 | 29 s |
-| B3 + full rules | 35/40 · 87.5% | 73.9–94.5% | 36/40 (76.9–96.0%) | 5.9 | 20,947 | 34 s |
+| Tier | Verified as run | 95% CI | Mean turns | Mean tokens | Median wall time |
+|---|---|---|---|---|---|
+| B0 bare model | 33/40 · 82.5% | 68.0–91.2% | 5.5 | 16,148 | 29 s |
+| B3 + full rules | 35/40 · 87.5% | 73.9–94.5% | 5.9 | 20,947 | 34 s |
 
 B0 against B3 on matched attempts: 3 against 1 discordant pairs, exact McNemar p = 0.63; on 20
 challenges the two tiers are not distinguishable. Re-scoring changes one B3 attempt (`crypto-072`, the
 Caesar key search described above), which is also the only correct flag of `v7` the verifier
-rejected: raw flag accuracy is 82.5% (B0) and 90.0% (B3) as run.
+rejected: raw flag accuracy is 82.5% (B0) and 90.0% (B3) as run, and re-scored B3 verifies 36/40
+(90.0%, 76.9–96.0%) while B0 stays at 33/40.
 
 Against `v6`, on the same challenges and repeats, as run: B3 rose from 25 to 35 of 40 (10 attempts
 gained, none lost, p = 0.002) and B0 from 26 to 33 (10 gained, 3 lost, p = 0.09). About half of the
