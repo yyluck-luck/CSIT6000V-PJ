@@ -160,6 +160,17 @@ def restore(path: Path) -> bool:
     except (OSError, ValueError):
         return False
     jid = str(d.get("serve") or "")
+    if d.get("phase") == "starting" and jid and time.time() < float(d.get("t0") or 0) + 45 * 60 + SESSION_S:
+        # 重启前还在启动（排队或开服）：作业还在就接着等，不再丢下一个孤儿作业白占 GPU 和名额
+        state = next((c[4] for c in (l.split() for l in _sdk("ps", timeout=60).splitlines()) if c[:1] == [jid] and len(c) >= 5), "")
+        if state not in ("R", "PD", "CF"):
+            return False
+        with _L:
+            if S["phase"] != "idle":
+                return False
+            S.update(phase="starting", serve=jid, node=None, url="", t0=float(d["t0"]), ready=0.0, log=[], busy="", error="", queue="")
+        threading.Thread(target=_serve_loop, kwargs={"adopt": (jid, float(d["t0"]))}, daemon=True).start()
+        return True
     if d.get("phase") != "ready" or not jid or not d.get("url") or time.time() > float(d.get("t0") or 0) + SESSION_S:
         return False
     running = any(c[:1] == [jid] and len(c) >= 5 and c[4] == "R" for c in (l.split() for l in _sdk("ps", timeout=60).splitlines()))
@@ -204,19 +215,25 @@ def _fail(msg: str) -> None:
     _save()
 
 
-def _serve_loop() -> None:
+def _serve_loop(adopt: tuple[str, float] | None = None) -> None:
+    """起服务作业并等到就绪。adopt=(作业号, 提交时刻)：网页服务重启前已经在启动的作业，接着等，不重交。"""
     excl = os.environ.get("FLAGPILOT_TACC_EXCLUDE", BAD_NODES)
     poll = float(os.environ.get("FLAGPILOT_TACC_POLL", "15"))
     for attempt in range(1, 5):
-        t_sub = time.time()
-        jid, why = _submit("serve", {"FP_EXCLUDE": excl})
-        if not jid:
-            return _fail("serve submission failed" + (f": {why}" if why else ""))
-        # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
-        # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
-        with _L:
-            S.update(serve=jid, t0=t_sub)
-        _log(f"serve job {jid} submitted (attempt {attempt})")
+        if adopt and attempt == 1:
+            jid, t_sub = adopt
+            _log(f"reconnected to serve job {jid}, which was starting before a restart")
+        else:
+            t_sub = time.time()
+            jid, why = _submit("serve", {"FP_EXCLUDE": excl})
+            if not jid:
+                return _fail("serve submission failed" + (f": {why}" if why else ""))
+            # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
+            # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
+            with _L:
+                S.update(serve=jid, t0=t_sub)
+            _save()                       # 提交了就落盘：此刻重启网页服务，也能把这个作业接回来，而不是留下孤儿作业
+            _log(f"serve job {jid} submitted (attempt {attempt})")
         deadline, retry, quiet, running = time.time() + 45 * 60, False, t_sub, False
         while time.time() < deadline:
             if S["phase"] == "stopping":
@@ -246,6 +263,7 @@ def _serve_loop() -> None:
                 node = (re.search(r"PRECHECK_FAIL node=([^:\s]+)", L) or [None, ""])[1]
                 _log(f"node {node} is busy; retrying elsewhere")
                 excl = f"{excl},{node}" if node else excl
+                _cancel(jid)                  # 换节点重交之前先停掉这一个：不然它照样占着名额
                 retry = True
                 break
             if "Application startup complete" in L and m:
@@ -261,6 +279,7 @@ def _serve_loop() -> None:
                 if m and ("Free memory on device" in L or "Address already in use" in L):
                     excl = f"{excl},{m.group(2)}"
                     _log(f"node {m.group(2)} is busy; retrying elsewhere")
+                    _cancel(jid)
                     retry = True
                     break
                 _sdk("cancel", "-j", jid)

@@ -124,8 +124,10 @@ class TaccLiveCase(unittest.TestCase):
         t_before = time.time()
         self.ready()
         rec = self.record().splitlines()
-        self.assertEqual([l.split()[1] for l in rec], ["job=501", "job=502"])
-        self.assertTrue(rec[1].endswith(",10-0-1-12"))                 # 第二次提交排除了占卡节点
+        subs = [l for l in rec if " job=" in l]
+        self.assertEqual([l.split()[1] for l in subs], ["job=501", "job=502"])
+        self.assertIn("cancel 501", rec, "the failed serve job is cancelled before retrying elsewhere (it used to hold a slot)")
+        self.assertTrue(subs[1].endswith(",10-0-1-12"))                # 第二次提交排除了占卡节点
         self.assertGreater(tacc_live.status()["t0"], t_before + 0.015)  # 时钟按第二次提交重算
 
     def test_uploaded_challenge_goes_up_as_a_dataset_copy(self):
@@ -200,6 +202,45 @@ class TaccLiveCase(unittest.TestCase):
         self.assertEqual(rep["error"], "the TACC session ended before the job started")
         self.assertIn("cancel 502", self.record())
         self.assertNotIn("502", (st / "ps").read_text())   # 确认取消生效（ps 里已经没有它）
+
+    def test_a_starting_session_is_saved_and_picked_up_after_a_restart(self):
+        """2026-11-20：网页服务在 Qwen 还没起来时重启，提交的服务作业没人管，排到了就白占 GPU 一小时。
+        现在提交即落盘；重启后作业还在排队 / 运行就接着等（不重交），作业没了就不接。"""
+        st = self.tmp / "state"
+        os.environ["FAKE_QUEUE"] = "1000"                  # 一直排队：日志文件还不存在
+        self.assertTrue(tacc_live.start()["ok"])
+        t = time.time()
+        while time.time() - t < 5 and not (self.tmp / "session.json").exists():
+            time.sleep(0.02)
+        saved = json.loads((self.tmp / "session.json").read_text())
+        self.assertEqual((saved["phase"], saved["serve"]), ("starting", "501"))
+        # 模拟重启：先让原来的启动线程正常退出（不然它会在后面的测试里继续跑），再把内存里的会话清空
+        tacc_live.stop()
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.status()["phase"] != "idle":
+            time.sleep(0.02)
+        time.sleep(0.1)
+        tacc_live.S.update(phase="idle", serve=None, node=None, url="", t0=0.0, ready=0.0, log=[], busy="")
+        (self.tmp / "session.json").write_text(json.dumps(saved))
+        os.environ["FAKE_QUEUE"] = "0"
+        (st / "ps").write_text("             501      tacc run.slur   yliutz PD       0:00      1 (Priority)\n")
+        submitted = self.record().count("serve job=")
+        self.assertTrue(tacc_live.restore(self.tmp / "session.json"))
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.status()["phase"] != "ready":
+            time.sleep(0.02)
+        s = tacc_live.status()
+        self.assertEqual((s["phase"], s["serve"]), ("ready", "501"))
+        self.assertEqual(self.record().count("serve job="), submitted, "the waiting job is picked up, not submitted again")
+        self.assertTrue(any("reconnected to serve job 501" in x for x in s["log"]))
+        tacc_live.stop()                                     # 收拾干净：接回来的会话也要停掉
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.status()["phase"] != "idle":
+            time.sleep(0.02)
+        # 作业已经不在了：不接
+        (self.tmp / "session.json").write_text(json.dumps(saved))
+        (st / "ps").write_text("")
+        self.assertFalse(tacc_live.restore(self.tmp / "session.json"))
 
     def test_session_survives_a_web_server_restart(self):
         """网页服务重启：状态落盘，重启后核实服务作业还在跑就接回来，否则不接（以前一重启就丢下一个白占 GPU 的作业）。"""
