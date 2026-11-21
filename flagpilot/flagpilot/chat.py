@@ -359,7 +359,9 @@ class ChatSession:
         # 命令只记"命令 + 退出码 + 是否复用"，输出本身不进日志——
         # 里面有可能是 flag，答疑日志不该成为第二个答案库。
         self._log({"type": "reply", "turn": self.turns,
-                   "answer": reply.answer[:4000], "rounds": reply.rounds, "model": self.cfg.model.name,
+                   "answer": reply.answer[:4000], "rounds": reply.rounds,
+                   # 实际回答的型号（模型链可能换过）给日志和报告；界面只显示这个对话选的提供商（picked）
+                   "model": getattr(self.client, "last_model", self.cfg.model.name), "picked": getattr(self, "picked", "") or "",
                    "steps": [[s.cmd[:200], s.exit_code, bool(s.cached)] for s in reply.steps],
                    "prompt_tokens": reply.prompt_tokens,
                    "completion_tokens": reply.completion_tokens,

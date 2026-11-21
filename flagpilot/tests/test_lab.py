@@ -50,7 +50,8 @@ class TestStats(unittest.TestCase):
         self.assertLess(lab.mcnemar(10, 0), 0.01)
 
     def test_pretty_model(self):
-        self.assertEqual(lab.pretty_model("gemini-flash-lite-latest"), "Gemini Flash-Lite")
+        self.assertEqual(lab.pretty_model("gemini-flash-lite-latest"), "Gemini")
+        self.assertEqual(lab.pretty_model("provider:deepseek"), "DeepSeek")
         self.assertEqual(lab.pretty_model("mock"), "Demo model")
 
 

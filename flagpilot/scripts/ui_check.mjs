@@ -30,7 +30,7 @@ const check = (name, ok, detail = "") => { results.push({ name, ok: !!ok, detail
 
 // ---------- server ----------
 const port = await freePort();
-const env = { ...process.env, FLAGPILOT_RUNS: join(work, "runs"), FLAGPILOT_TASKS: join(ROOT, "demo-tasks"), FLAGPILOT_MEMORY: join(work, "mem"), PYTHONDONTWRITEBYTECODE: "1" };
+const env = { ...process.env, FLAGPILOT_RUNS: join(work, "runs"), FLAGPILOT_TASKS: join(ROOT, "demo-tasks"), FLAGPILOT_MEMORY: join(work, "mem"), PYTHONDONTWRITEBYTECODE: "1", FLAGPILOT_NO_DOTENV: "1" };   // never the real keys in .env
 const srv = spawn(process.env.PYTHON || "python3", ["-m", "flagpilot", "web", "--host", "127.0.0.1", "--port", String(port), "--model", "mock"], { cwd: ROOT, env, stdio: "ignore" });
 const base = `http://127.0.0.1:${port}`;
 for (let i = 0; i < 100; i++) { try { if ((await fetch(base + "/api/tasks")).ok) break; } catch {} await sleep(100); }
@@ -410,11 +410,11 @@ try {
   await js("QW = {phase: 'idle'}");
   const sidA = await js("chatId");
   await js("document.querySelector('#newChat').click()"); await sleep(300);
-  await js(`(() => { MODELS = ['mock', 'gemini-flash-lite-latest']; window.__F = window.fetch; window.__sent = [];
+  await js(`(() => { PROVIDERS = [{id: 'provider:gemini', label: 'Gemini'}]; MODELS = ['provider:gemini']; window.__F = window.fetch; window.__sent = [];
     window.fetch = (u, o) => { if (u === '/api/chat' && o && o.method === 'POST'){ window.__sent.push(JSON.parse(o.body)); return Promise.resolve(new Response(JSON.stringify({session_id: 'bbbbbbbbbbbb'}), {headers: {'Content-Type': 'application/json'}})); } return window.__F(u, o); };
-    window.__ES = window.EventSource; window.EventSource = class { constructor(){ setTimeout(() => this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Hi.', turns: 1, model: 'gemini-flash-lite-latest'})}), 50); } close(){} }; })()`);
+    window.__ES = window.EventSource; window.EventSource = class { constructor(){ setTimeout(() => this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Hi.', turns: 1, model: 'provider:gemini'})}), 50); } close(){} }; })()`);
   await js("document.querySelector('#modelMenu') || document.querySelector('#qwenChipAsk').click()"); await until("document.querySelector('#modelMenu')", 1500);
-  await js("([...document.querySelectorAll('#modelMenu button')].find(b => /Gemini Flash-Lite/.test(b.textContent)) || {click(){}}).click()");
+  await js("([...document.querySelectorAll('#modelMenu button')].find(b => /^.?Gemini/.test(b.textContent)) || {click(){}}).click()");
   const chipG = await js("document.querySelector('#qwenChipAsk .tn').textContent");
   await typeMsg("hello gemini");
   await until("window.__sent.length === 1 && document.querySelector('#chatLog .bub.bot .who')", 3000);
@@ -424,10 +424,10 @@ try {
   if (hasA) await js(`document.querySelector('#threadList .thread[data-sid="${sidA}"]').click()`);
   const chipA = hasA && await until("/Demo model/.test(document.querySelector('#qwenChipAsk .tn').textContent)", 3000);
   const chipB = await js("(useThreadPick(pickForThread('bbbbbbbbbbbb')), document.querySelector('#qwenChipAsk .tn').textContent)");
-  await js("localStorage.removeItem('fp.ask.pick'); localStorage.removeItem('fp.ask.threads'); MODELS = ['mock']; useThreadPick(newPick())");
+  await js("localStorage.removeItem('fp.ask.pick'); localStorage.removeItem('fp.ask.threads'); PROVIDERS = []; MODELS = []; useThreadPick(newPick())");
   check("Ask: each conversation keeps its own model; a held message can go to another model at once",
     menu && mrows.includes("Demo model") && mrows.includes("Qwen 27B on TACC") && menuClosed && /^Use Demo model now$/.test(nowText) && released
-      && chipG === "Gemini Flash-Lite" && sentModel === "gemini-flash-lite-latest" && chipA && chipB === "Gemini Flash-Lite",
+      && chipG === "Gemini" && sentModel === "provider:gemini" && chipA && chipB === "Gemini",
     JSON.stringify({menu, mrows, menuClosed, nowText, released, chipG, sentModel, chipA, chipB}));
   check("Ask composer: one focus frame (no outline inside it)", await js("(() => { const t = document.querySelector('#chatInput'); t.focus(); return getComputedStyle(t).outlineStyle === 'none'; })()"));
   await noCJK("ask");

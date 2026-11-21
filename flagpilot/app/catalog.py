@@ -44,7 +44,8 @@ _SOLUTION_DIR = re.compile(r"^(solutions?|writeups?|write-ups?|solve|solver|expl
 _FLAG = re.compile(r"^[A-Za-z0-9_]{2,20}\{[^}\n]{2,200}\}$")
 # 原比赛里是网络服务的题（pwn / web 常见）：沙箱没有网络，智能体只能看文件、连不上服务，基本拿不到 flag
 _SERVICE_FILE = re.compile(r"^(dockerfile|docker-compose\.ya?ml|xinetd.*|.*\.xinetd|ctf\.xinetd)$", re.I)
-_SERVICE_TEXT = re.compile(r"\bnc\s+[\w.-]+\s+\d{2,5}\b|\bhttps?://[\w.-]+:\d{2,5}\b|\bconnect(ion)? to\b.{0,40}\b(port|server|service)\b", re.I)
+_SERVICE_TEXT = re.compile(r"\bnc\s+[\w.-]+\s+\d{2,5}\b|\bhttps?://[\w.-]+:\d{2,5}\b|\bconnect(ion)? to\b.{0,40}\b(port|server|service)\b|"
+                           r"\b(this|the|our|a) (service|server|remote)\b|\bremote(ly)?\b|\bnetcat\b", re.I)
 SERVICE_NOTE = ("Note: in the original CTF this challenge ran as a network service. The sandbox here has no network, so the "
                 "service cannot be reached; study the files, and do not try to install packages or connect anywhere.")
 
@@ -64,8 +65,11 @@ def readme_title(text: str) -> str:
     return ""
 
 
-def is_service(files: list[list], readme: str) -> bool:
-    return any(_SERVICE_FILE.match(rel.rpartition("/")[2]) for rel, _ in files) or bool(_SERVICE_TEXT.search(readme or ""))
+def is_service(files: list[list], readme: str, path: str = "") -> bool:
+    """原比赛里是不是网络服务：带 Dockerfile / xinetd，题面提到服务 / 远程 / nc，或者是 pwn / web 类（归档里这两类几乎都是服务）。"""
+    if any(_SERVICE_FILE.match(rel.rpartition("/")[2]) for rel, _ in files) or _SERVICE_TEXT.search(readme or ""):
+        return True
+    return any(p.lower() in ("pwn", "web", "exploitation", "binary") for p in path.split("/"))
 _FAKE = re.compile(r"fake|placeholder|dummy|redacted|example|test|xxx|not_?the|real_?flag|local|sample|flag_?here|your_?flag", re.I)
 
 
@@ -317,7 +321,7 @@ def preview(path: str) -> dict:
     return {"path": path, "ctf": ctf, "readme": readme[:4000], "files": [{"name": r, "size": s} for r, s in keep],
             "title": readme_title(readme) or path.rstrip("/").rpartition("/")[2],
             "source": f"https://github.com/{REPO}/tree/{BRANCH}/{urllib.parse.quote(path)}",
-            "service": is_service(files, readme),
+            "service": is_service(files, readme, path),
             "skipped": skip + ([{"name": flag_file, "why": "kept out; used as the gold flag" if gold else "kept out; does not look like a real flag"}] if flag_file else []),
             "gold": bool(gold)}
 
@@ -382,7 +386,7 @@ def import_url(url: str) -> dict:
         gold = gold_from(_get(raw(flag_file), limit=400, accept="*/*").decode("utf-8", "replace")) if flag_file else ""
         name = path.rstrip("/").rpartition("/")[2]
         cat = next((CATS[p.lower()] for p in path.split("/")[:-1] if p.lower() in CATS), "")
-        service = is_service(files, text)
+        service = is_service(files, text, path)
         task = _create(readme_title(text) or name, (text.strip() or f"Challenge {name}") + f"\n\n(Imported from {url})" + ("\n\n" + SERVICE_NOTE if service else ""), cat, got, gold, url)
         return {"task": task, "gold": bool(gold), "service": service, "skipped": skip, "source": url}
     m = _GH_BLOB.match(url)

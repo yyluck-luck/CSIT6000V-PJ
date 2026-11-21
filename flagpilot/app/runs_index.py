@@ -124,8 +124,8 @@ def thread_model(rows: list[dict]) -> str:
     """线程现在用的模型：最后一次换模型 / 最后一条回答的模型，都没有就用建线程时的。"""
     model = ""
     for r in rows:
-        if r.get("type") in ("meta", "model", "reply") and r.get("model"):
-            model = str(r["model"])
+        if r.get("type") in ("meta", "model", "reply") and (r.get("picked") or r.get("model")):
+            model = str(r.get("picked") or r["model"])        # 选的是提供商就报提供商：链换到了哪个型号不往界面上放
     return model
 
 

@@ -269,7 +269,8 @@ class ChatClient:
             if kind == "day":
                 return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
                                   error="HTTP 429: the daily free quota for this model is used up; try again tomorrow or use another model")
-            if e.code in BUSY_CODES and _busy_retries < (QUOTA_RETRIES if kind == "minute" else BUSY_RETRIES):
+            limit = (QUOTA_RETRIES if kind == "minute" else BUSY_RETRIES) if getattr(self, "busy_retries", None) is None else self.busy_retries
+            if e.code in BUSY_CODES and _busy_retries < limit:
                 time.sleep(busy_wait_s(body, e.headers.get("Retry-After") if e.headers else None, _busy_retries,
                                        cap=QUOTA_WAIT_CAP_S if kind == "minute" else BUSY_WAIT_CAP_S))
                 retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
@@ -491,7 +492,94 @@ class MockClient(ChatClient):
                           latency_ms=2, finish_reason="stop", usage_source="estimated")
 
 
-def build_client(spec: ModelSpec) -> ChatClient:
+# ---------------------------------------------------------------- 备援
+# 主模型在接口层面失败（不是模型答错）时，这一轮就换备援模型重发，之后整次运行 / 整个对话都用它；
+# 刚失败过的主模型记一阵子（按天的额度 1 小时、过载 1 分钟），这期间新开的运行直接用备援，不再先撞一次 429。
+FALLBACK_RESOLVER = None          # 网页服务注册：模型名 → 带端点和密钥的 ModelSpec
+_FAILOVER = re.compile(r"^(HTTP (401|403|404|408|429|5\d\d)|URLError|TimeoutError|timeout|ConnectionError|"
+                       r"RemoteDisconnected|IncompleteRead|stream error)", re.I)
+DOWN: dict[str, tuple[float, str]] = {}
+
+
+def failover_reason(err: str) -> str:
+    """该不该换备援；该换就给一句给人看的原因，否则空串。"""
+    e = err or ""
+    if not _FAILOVER.match(e):
+        return ""
+    if "daily free quota" in e or "PerDay" in e:
+        return "its daily free quota is used up"
+    if e.startswith("HTTP 429"):
+        return "it is rate-limited"
+    if re.match(r"HTTP 5\d\d", e):
+        return "it is overloaded"
+    if e.startswith("HTTP 404"):
+        return "the model is not available"
+    if re.match(r"HTTP 40[13]", e):
+        return "the key was refused"
+    return "it could not be reached"
+
+
+def _down_s(err: str) -> float:
+    r = failover_reason(err)
+    return {"its daily free quota is used up": 3600, "the model is not available": 600, "the key was refused": 600}.get(r, 60)
+
+
+class FallbackClient:
+    """一条模型链（便宜的在前）：当前这个在接口层面失败就换下一个，这一轮当场重发；之后一直用换到的那个。
+    对调用方和 ChatClient 一样：complete / scrape_metrics / spec。"""
+
+    def __init__(self, primary, spec: ModelSpec):
+        self.spec = spec
+        self.chain = [spec.name] + [m for m in dict.fromkeys(x.strip() for x in (spec.fallback or "").split(",")) if m and m != spec.name]
+        self.clients = {spec.name: primary}
+        self.i = 0
+        self.switched: dict | None = None         # {"from", "to", "reason"}：最近一次换到了谁
+        self.last_model = spec.name
+
+    def scrape_metrics(self):
+        return self.clients[self.chain[0]].scrape_metrics()
+
+    def _client(self, name):
+        if name not in self.clients:
+            self.clients[name] = build_client(FALLBACK_RESOLVER(name), chain=False)
+        return self.clients[name]
+
+    def _next(self, reason: str) -> None:
+        self.i += 1
+        if self.i < len(self.chain):
+            self.switched = {"from": self.chain[0], "to": self.chain[self.i], "reason": reason}
+
+    def complete(self, messages, max_tokens=None, on_delta=None):
+        comp = None
+        while self.i < len(self.chain):
+            name, last = self.chain[self.i], self.i == len(self.chain) - 1
+            down = DOWN.get(name)
+            if down and down[0] > time.time() and not last:
+                self._next(down[1])
+                continue
+            try:
+                c = self._client(name)
+            except Exception as e:
+                if last:
+                    return Completion(text="", error=f"no model in the chain could be reached ({e})")
+                self._next("unavailable")
+                continue
+            c.busy_retries = None if last else 0      # 还有下一家时别在这儿干等：429 / 503 立刻换
+            comp = c.complete(messages, max_tokens, on_delta=on_delta)
+            why = failover_reason(comp.error) if comp.error else ""
+            if not why or last:
+                self.last_model = name
+                return comp
+            DOWN[name] = (time.time() + _down_s(comp.error), why)
+            self._next(why)
+        return comp or Completion(text="", error="no model left in the chain")
+
+
+def build_client(spec: ModelSpec, chain: bool = True):
     if spec.name == "mock":
-        return MockClient()
-    return ChatClient(spec)
+        base = MockClient()
+    else:
+        base = ChatClient(spec)
+    if chain and getattr(spec, "fallback", "") and FALLBACK_RESOLVER is not None:
+        return FallbackClient(base, spec)
+    return base

@@ -232,9 +232,12 @@
   .latest .row{padding:11px 0;grid-template-columns:12px minmax(0,1fr) auto;gap:12px}
   .latest .row:hover{background:transparent} .latest .row:hover .nm{text-decoration:underline}
   #hero h1 .ln2{display:block;color:var(--ink3)}
-  .flip{position:relative;display:inline-block;vertical-align:bottom;height:1.02em;overflow:hidden;padding:0 .14em;margin:0 .04em;background:var(--blue);color:#fff;transition:width var(--t3) var(--spring),background var(--t3) ease}
-  .flip span{display:block;white-space:nowrap}
-  .flip.yellow{background:var(--yellow);color:var(--ink)} .flip.red{background:var(--red)}
+  /* the hero's word: a terminal box that backspaces and types the next word (about 1 s), glyphs flicker before they settle, rainbow ink */
+  .flip{position:relative;display:inline-block;vertical-align:bottom;line-height:1.02;padding:0 .16em;margin:0 .04em;background:var(--ink);white-space:nowrap}
+  .flip .tw{font-family:var(--mono);font-weight:800;letter-spacing:-.05em;background:linear-gradient(90deg,#ff3b3b,#ff9f1c,#ffe14d,#3ddc84,#2fa8ff,#7c5cff,#ff4dd2,#ff3b3b);
+    background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:rainbow 2.4s linear infinite}
+  .flip .caret{display:inline-block;width:.1em;height:.8em;margin-left:.05em;vertical-align:-.02em;background:#3ddc84;animation:caret 1s steps(1) infinite}
+  @keyframes rainbow{to{background-position:200% 0}} @keyframes caret{50%{opacity:0}}
   #hero .sub{font:500 clamp(18px,min(1.6vw,2.6vh),36px)/1.45 var(--font);color:var(--ink2);margin-top:clamp(18px,min(2vw,3vh),44px);max-width:44ch}
   /* features with skeletons (Aceternity) */
   .feats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gut);margin:0}
@@ -356,6 +359,7 @@
   .verdict.run{border-style:dashed}
   .vbar{display:flex;flex-wrap:wrap;align-items:center;gap:16px 20px;padding:20px 0 0;font:500 15px var(--mono);color:var(--ink2)}
   .vbar .gap{flex:1}
+  .goldin{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:10px} .goldin input{flex:1 1 320px;min-width:0;font:15px var(--mono);padding:9px 12px;border:1.5px solid var(--ink);background:var(--white)}
 
   /* ---------- Pixel Prompt Button ---------- */
   .pixbtn{position:relative;height:48px;min-width:210px;padding:0 24px;border:0;border-radius:999px;background:var(--ink);color:#fff;cursor:pointer;font:700 14px var(--font);letter-spacing:.03em;overflow:hidden;display:inline-flex;align-items:center;justify-content:center;gap:9px;isolation:isolate}
@@ -765,7 +769,7 @@
       <div class="hero2">
       <header id="hero">
         <div class="in">
-          <h1>FlagPilot solves <span class="flip" id="flip"><span>crypto</span></span> challenges<span class="ln2">and proves every flag.</span></h1>
+          <h1 aria-label="FlagPilot solves crypto, forensics and general challenges, and proves every flag."><span aria-hidden="true">FlagPilot solves <span class="flip" id="flip"><span class="tw">crypto</span></span> challenges<span class="ln2">and proves every flag.</span></span></h1>
           <p class="sub">Each submitted flag is replayed in a clean sandbox. Only flags that reproduce count.</p>
           <div class="actions"><button class="btn primary" data-taskpill id="pickHero">Choose a challenge<span class="arr">→</span></button>
             <button class="btn" data-go="history">Replay a run<span class="arr">→</span></button></div>
@@ -1044,6 +1048,14 @@ const V = {
   budget:     ['Budget exhausted before a valid submission', 'bad', 'BUDGET'],
   error:      ['Run error', 'bad', 'ERROR'],
 };
+/* no answer to check against: what the replay could and could not show */
+const UNCONFIRMED = {literal_flag: 'The script just prints a flag typed into it, so nothing was solved: the flag is probably made up',
+  hardcoded_no_material: 'The script prints a flag without reading the challenge files, so the flag is not backed by anything',
+  script_error: 'There is no answer to check against, and the script failed in a clean sandbox',
+  no_output: 'There is no answer to check against, and the script printed nothing in a clean sandbox',
+  timeout: 'There is no answer to check against, and the script timed out in a clean sandbox'};
+const REPLAY_WHY = {literal_flag: 'the script has the flag written into it', hardcoded_no_material: 'it prints the flag without reading the files',
+  script_error: 'the script failed', no_output: 'it printed nothing', timeout: 'it timed out'};
 /* why a run stopped (the engine's reason codes), in words; the failure tagger's root cause is shown separately as "likely cause" */
 const BUDGET_WHY = {invalid_action: 'Stopped: three replies were not valid JSON actions', max_turns: 'Used every turn without a valid submission',
   wall_time: 'Ran out of time before a valid submission', context: 'The context filled up before a valid submission',
@@ -1424,22 +1436,28 @@ const logoTurn = (function(){
 addEventListener('popstate', () => go(routeOf(location.hash), {push: false}));
 document.addEventListener('click', e => { const g = e.target.closest('[data-go]'); if (g) go(g.dataset.go); });
 
-/* ================= Layout Text Flip (Aceternity): the flipping word resizes its box and the line reflows smoothly ================= */
+/* ================= Typewriter: backspace the word, type the next one (about 1 s), each glyph flickers before it settles ================= */
 (function(){
   const box = $('#flip'); if (!box) return;
-  const words = [['crypto', ''], ['forensics', 'red'], ['general', 'yellow']]; let k = 0;
+  const words = ['crypto', 'forensics', 'general'], GL = '01{}<>_#$%&*+=/\\|';
+  box.innerHTML = `<span class="tw">${words[0]}</span><i class="caret" aria-hidden="true"></i>`;
+  const tw = box.querySelector('.tw'); let k = 0, typing = false;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  async function next(){
+    if (typing) return; typing = true; k = (k + 1) % words.length;
+    const w = words[k]; let cur = tw.textContent;
+    const del = 300 / Math.max(1, cur.length), type = 640 / w.length;
+    while (cur.length){ cur = cur.slice(0, -1); tw.textContent = cur; await wait(del); }
+    for (let i = 1; i <= w.length; i++){
+      tw.textContent = w.slice(0, i - 1) + GL[(Math.random() * GL.length) | 0]; await wait(type * .45);
+      tw.textContent = w.slice(0, i); await wait(type * .55); }
+    typing = false;
+  }
   setInterval(() => {
-    if (page !== 'solve' || $('#landing').hidden || document.hidden || reduced()) return;
-    k = (k + 1) % words.length; const [w, tone] = words[k], old = box.firstElementChild, w0 = box.getBoundingClientRect().width;
-    const nu = document.createElement('span'); nu.textContent = w;
-    box.style.width = w0 + 'px'; box.appendChild(nu); box.className = 'flip ' + tone;
-    const w1 = nu.getBoundingClientRect().width + parseFloat(getComputedStyle(box).paddingLeft) * 2;
-    old.animate([{transform: 'none'}, {transform: 'translateY(-105%)'}], {duration: 380, easing: EASE, fill: 'forwards'}).onfinish = () => old.remove();
-    nu.style.position = 'absolute'; nu.style.left = getComputedStyle(box).paddingLeft; nu.style.top = '0';
-    nu.animate([{transform: 'translateY(105%)'}, {transform: 'none'}], {duration: 380, easing: EASE});
-    requestAnimationFrame(() => { box.style.width = w1 + 'px'; });
-    setTimeout(() => { nu.style.position = ''; nu.style.left = ''; nu.style.top = ''; box.style.width = ''; }, 520);
-  }, 2400);
+    if (page !== 'solve' || $('#landing').hidden || document.hidden) return;
+    if (reduced()){ k = (k + 1) % words.length; tw.textContent = words[k]; return; }
+    next();
+  }, 2600);
 })();
 
 /* ======================= Challenges / picker ======================= */
@@ -1460,12 +1478,14 @@ function renderAblations(list){
 $('#ablSeg').addEventListener('click', e => { const b = e.target.closest('button[data-name]'); if (b) setAblation(b.dataset.name); });
 async function loadModels(){
   try {
-    const m = await getJSON('/api/models', 'models'), s = $('#modelSel'); MODELS = m.models || [m.current];
-    s.innerHTML = (m.models || [m.current]).map(n => `<option value="${esc(n)}"${n === m.current ? ' selected' : ''}>${esc(n)}</option>`).join('');
+    const m = await getJSON('/api/models', 'models'), s = $('#modelSel');
+    PROVIDERS = (m.providers || []).filter(x => x && x.id); MODELS = PROVIDERS.map(x => x.id);
+    const opts = MODELS.includes(m.current) ? MODELS : [m.current, ...MODELS];
+    s.innerHTML = opts.map(n => `<option value="${esc(n)}"${n === m.current ? ' selected' : ''}>${esc(prettyModel(n))}</option>`).join('');
     s.onchange = async () => {
       const d = await (await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: s.value})})).json();
       if (d.error){ setStatus('Error', 'bad', d.error); return; }
-      $('#rcModel').textContent = d.model; toast('Model: ' + d.model + ' (new runs)'); loadTasks();
+      $('#rcModel').textContent = d.model; toast(prettyModel(d.model) + ' answers new runs'); loadTasks();
     };
   } catch(e){ /* listing models is optional */ }
 }
@@ -1480,7 +1500,7 @@ async function loadTasks(){
   const mock = /^mock/i.test(d.model || ''), rb = $('#run'), tb = $('#runTacc'); LOCALMODEL = d.model || 'mock';
   rb.classList.toggle('primary', !mock); tb.classList.toggle('primary', mock);
   rb.lastChild.previousSibling && (rb.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = mock ? 'Demo run' : 'Run'; }));
-  rb.dataset.tip = mock ? 'Offline mock model: a demo of the pipeline, not a real agent' : 'Run with ' + d.model;
+  rb.dataset.tip = mock ? 'Offline mock model: a demo of the pipeline, not a real agent' : 'Run with ' + prettyModel(d.model);
   renderTaskList();
   if (sel){ const t = taskByName(sel); if (t) selTask = t; else pick(null); }
   showMount(); renderArms(); syncAskChip();
@@ -1942,6 +1962,11 @@ function showDone(ev){
   let [label, tone, code] = V[ev.verdict] || [String(ev.verdict || ''), 'warn', String(ev.verdict || '?').toUpperCase()];
   if (ev.verdict === 'error' && ev.reason) label = en(ev.reason);
   if (ev.verdict === 'budget' && BUDGET_WHY[ev.reason]) label = BUDGET_WHY[ev.reason];
+  /* "unverified" only means "right flag, not reproduced" when there is an answer to check it against */
+  const noGold = ((run && run.replay) || {}).gold_checked === false || !!(selTask && selTask.custom && !selTask.has_gold);
+  if (ev.verdict === 'unverified'){
+    if (noGold){ code = 'NOT CONFIRMED'; label = UNCONFIRMED[ev.reason] || 'There is no answer to check this flag against, and the script did not reproduce it'; }
+    else label = 'Right flag, but the script did not reproduce it in a clean sandbox' + (REPLAY_WHY[ev.reason] ? ': ' + REPLAY_WHY[ev.reason] : ''); }
   const flag = (run && run.submit && run.submit.flag) || ev.flag || '', who = sel || ev.task || ev.run_id || ev.web_run_id || '';
   setStatus(code.charAt(0) + code.slice(1).toLowerCase(), tone === 'ok' ? '' : (tone === 'warn' ? 'warn' : 'bad'), `${who} · ${ev.turns} turns`,
             R.bulk ? null : {big: code, flag: flag || label});
@@ -1957,6 +1982,7 @@ function showDone(ev){
   $('#verdict').innerHTML = verdictHTML(code, label, tone, flag ? '<div class="vflag" id="vflag"></div>' : '')
     + (bare ? '' : `<div class="vbar"><span>${said.join(' · ')}</span><span class="gap"></span>
        ${ev.verdict === 'error' && /^model:/.test(ev.reason || '') ? '<button class="btn" id="changeModel" type="button">Change model<span class="arr">→</span></button>' : ''}
+       ${selTask && selTask.custom && !selTask.has_gold ? '<button class="btn" id="addGold" type="button" data-tip="Paste the real flag once: later runs are judged right or wrong">Add the answer<span class="arr">→</span></button>' : ''}
        <button class="pixbtn" id="promptBtn" type="button"><canvas></canvas><span class="pl">Copy explainer prompt</span></button>
        ${ev.web_run_id ? `<a id="writeupDownload" class="btn sm" href="/api/writeup?id=${encodeURIComponent(ev.web_run_id)}" download>Writeup<span class="arr">↓</span></a>` : ''}</div>`);
   const vd = $('#verdict .verdict');
@@ -1964,6 +1990,19 @@ function showDone(ev){
   flipText(vd.querySelector('.vcode'), code);
   if (flag) decrypt($('#vflag'), flag, 520);
   if ($('#promptBtn')) PixelButton($('#promptBtn'));
+  if ($('#addGold')) $('#addGold').onclick = () => {
+    const bar = $('#addGold').closest('.vbar'); if (bar.querySelector('.goldin')) return;
+    bar.insertAdjacentHTML('beforeend', '<div class="goldin"><input id="goldIn" placeholder="The real flag, e.g. picoCTF{...}" autocomplete="off" spellcheck="false" aria-label="The real flag"><button class="btn primary" id="goldSave" type="button">Save</button><span class="hint">Only its hash is kept.</span></div>');
+    const save = async () => { const g = $('#goldIn').value.trim(); if (!g) return;
+      try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, gold: g, flag: (run && run.submit && run.submit.flag) || ''})}); const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);
+        if (selTask) selTask.has_gold = true; await loadTasks();
+        $('.goldin').innerHTML = d.match === true ? '<span class="ok">Saved. The flag from this run matches the answer: it was right.</span>'
+          : d.match === false ? '<span class="bad">Saved. The flag from this run does not match the answer: it was wrong.</span>' : '<span class="hint">Saved. Later runs are judged against it.</span>';
+        $('#addGold').remove(); }
+      catch(e){ toast(e.message); } };
+    $('#goldSave').onclick = save; $('#goldIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } }); $('#goldIn').focus();
+  };
   if ($('#changeModel')) $('#changeModel').onclick = () => { toggleInsp(true); setTimeout(() => { const m = $('#modelSel'); if (m){ m.focus(); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } }, 260); };
   const rb = $('#run'); if (tone === 'ok' && !reduced()){ rb.classList.add('done'); setTimeout(() => rb.classList.remove('done'), 1400); }
   if (!R.bulk && page === 'solve' && !reduced()) requestAnimationFrame(() => $('#verdict').scrollIntoView({behavior: 'smooth', block: 'nearest'}));
@@ -2180,7 +2219,7 @@ function renderHistory(animate){
     const tone = verdictTone(h.verdict), shape = tone === 'ok' ? 'c blue' : tone === 'bad' ? 'red' : tone === 'warn' ? 't yellow' : tone === 'run' ? 'spin' : 'ring';
     const q = `${h.task} ${h.model || ''} ${h.ablation || ''} ${h.verdict}`.toLowerCase(), t = h.e2e_s != null ? h.e2e_s : h.wall_s;
     html += `<div class="row" data-id="${esc(h.id)}" data-tone="${tone}" data-q="${esc(q)}" title="${esc((h.model || '') + ' · ' + (h.ablation || ''))}"><span class="g ${shape}"></span>`
-      + `<div style="min-width:0"><div class="nm">${esc(en(taskLabel(h.task)))}</div><div class="ds">${esc(h.model || '—')} · ${esc(h.ablation || '—')}${h.source === 'replay' ? ' · mounted' : ''}</div></div>`
+      + `<div style="min-width:0"><div class="nm">${esc(en(taskLabel(h.task)))}</div><div class="ds">${esc(prettyModel(h.model) || '—')} · ${esc(h.ablation || '—')}${h.source === 'replay' ? ' · mounted' : ''}</div></div>`
       + `<span><span class="badge ${tone === 'idle' ? '' : tone}">${esc(h.verdict)}</span></span>`
       + `<span class="tcell col-t"><span>${h.turns != null ? h.turns + ' turns' : '—'}${t != null ? ' · ' + (+t).toFixed(1) + ' s' : ''}</span><span class="bar ${tone}"><i style="--w:${t != null ? Math.max(.02, (+t) / maxT).toFixed(3) : 0}"></i></span></span>`
       + `<span class="ago col-a">${ago(h.ts)}</span><span class="chev-r">›</span></div>`;
@@ -2207,7 +2246,7 @@ function renderLatest(){
   speed($('#latestRate'), n ? ok / n * 100 : null, v => v.toFixed(1) + '%');
   $('#latestCi').textContent = n ? `${ok} of ${n} real-model runs verified · 95% CI ${(ci[0] * 100).toFixed(1)}–${(ci[1] * 100).toFixed(1)}%` : 'No real-model runs yet.';
   $('#latestList').innerHTML = H.slice(0, 6).map(h => { const tone = verdictTone(h.verdict), shape = tone === 'ok' ? 'c blue' : tone === 'bad' ? 'red' : tone === 'warn' ? 't yellow' : tone === 'run' ? 'spin' : 'ring';
-    return `<div class="row" data-id="${esc(h.id)}"><span class="g ${shape}"></span><div style="min-width:0"><div class="nm">${esc(en(taskLabel(h.task)))}</div><div class="ds">${esc(h.model || '—')} · ${esc(h.ablation || '—')} · ${ago(h.ts)}</div></div><span class="badge ${tone === 'idle' ? '' : tone}">${esc(h.verdict)}</span></div>`; }).join('');
+    return `<div class="row" data-id="${esc(h.id)}"><span class="g ${shape}"></span><div style="min-width:0"><div class="nm">${esc(en(taskLabel(h.task)))}</div><div class="ds">${esc(prettyModel(h.model) || '—')} · ${esc(h.ablation || '—')} · ${ago(h.ts)}</div></div><span class="badge ${tone === 'idle' ? '' : tone}">${esc(h.verdict)}</span></div>`; }).join('');
 }
 
 function filterHistory(){
@@ -2570,12 +2609,17 @@ async function qwenToggle(){
 $('#qwenChip').addEventListener('click', qwenToggle);
 /* ---------------- Ask: each conversation picks who answers (a hosted or local model, or Qwen 27B on TACC) ---------------- */
 const TACC_LABEL = 'qwen3.8-27b (TACC)', PICK_KEY = 'fp.ask.pick', PICKS_KEY = 'fp.ask.threads';
-let MODELS = [];
+let MODELS = [], PROVIDERS = [];
+/* the menus list providers only; which model of a provider answers (cheapest first, another when one fails) is the server's business */
+const FAMILY = [[/^(gemini|gemma)-/i, 'gemini'], [/^deepseek-/i, 'deepseek'], [/^glm-/i, 'glm'], [/^qwen/i, 'qwen'], [/^gpt-/i, 'gpt'], [/^claude-/i, 'claude'], [/^(mistral|codestral)/i, 'mistral']];
+const providerOf = m => /^provider:/.test(m || '') ? String(m).slice(9) : ((FAMILY.find(([rx]) => rx.test(m || '')) || [])[1] || '');
+const PLABEL = {gemini: 'Gemini', deepseek: 'DeepSeek', glm: 'GLM', qwen: 'Qwen', gpt: 'GPT', claude: 'Claude', mistral: 'Mistral'};
 const isTaccName = m => /\(TACC\)$/.test(m || '');
 const prettyModel = m => !m ? '' : isTaccName(m) ? 'Qwen 27B on TACC' : /^mock/i.test(m) ? 'Demo model'
-  : String(m).replace(/^models\//, '').replace(/-latest$/, '').split('-').map(w => /^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ').replace('Flash Lite', 'Flash-Lite');
-const modelKind = m => isTaccName(m) ? 'tacc' : /^mock/i.test(m || '') ? 'demo' : /^(gemini|gemma)-/i.test(m || '') ? 'hosted' : 'local';
-const modelGlyph = m => ({tacc: 'c blue', demo: 'ring', hosted: 'ink', local: 't yellow'})[modelKind(m)];
+  : ((PROVIDERS.find(x => x.id === m) || {}).label || PLABEL[providerOf(m)] || String(m).replace(/^provider:/, ''));
+const modelKind = m => isTaccName(m) ? 'tacc' : /^mock/i.test(m || '') ? 'demo' : providerOf(m) ? 'provider' : 'local';
+const modelGlyph = m => isTaccName(m) ? 'c blue' : /^mock/i.test(m || '') ? 'ring'
+  : ({gemini: 'c blue', deepseek: 'ink', glm: 't yellow', qwen: 'red', gpt: 'd ink'})[providerOf(m)] || 'ring';
 /* 'auto' = never picked: Qwen while its session is up or starting, otherwise the local model (the behaviour before picks) */
 const askRouteOf = pk => pk.route === 'auto' ? ((QW.phase === 'ready' || QW.phase === 'starting') ? 'tacc' : 'local') : pk.route;
 const modelOf = pk => pk.route === 'local' && pk.model ? pk.model : LOCALMODEL;
@@ -2594,10 +2638,10 @@ function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; const ph = 
     : prettyModel(modelOf(threadPick)); }
 function openModelMenu(anchor){
   closeModelMenu(); const ph = QW.phase, r = askRouteOf(threadPick), cur = modelOf(threadPick), mins = Math.ceil((QW.remaining || 0) / 60);
-  const list = [...new Set([...MODELS, LOCALMODEL].filter(Boolean))], SUB = {hosted: 'hosted · seconds', demo: 'offline demo', local: 'local endpoint'};
+  const list = [...new Set([...MODELS, ...(/^mock/i.test(LOCALMODEL) ? [LOCALMODEL] : [])].filter(Boolean))];
   const row = (act, name, sub, on, cls) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-act="${esc(act)}"${cls ? ` class="${cls}"` : ''}><span class="ck">✓</span><span class="nm">${esc(name)}</span><span class="sub">${esc(sub)}</span></button>`;
   const m = document.createElement('div'); m.className = 'mmenu'; m.id = 'modelMenu'; m.setAttribute('role', 'menu'); m.setAttribute('aria-label', 'Who answers this conversation');
-  m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), SUB[modelKind(n)], r === 'local' && n === cur)).join('')
+  m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), n === LOCALMODEL ? 'default' : '', r === 'local' && (n === cur || providerOf(n) === providerOf(cur)))).join('')
     + '<hr>' + row('tacc', 'Qwen 27B on TACC', ph === 'ready' ? `connected · ${mins} min left` : ph === 'starting' ? `starting · ${fmtClock(QW.elapsed)}` : 'starts in about 5 min', r === 'tacc')
     + (ph === 'starting' ? row('stop', 'Stop starting Qwen', '', false, 'danger') : ph === 'ready' ? row('stop', 'Disconnect TACC', 'frees the GPUs', false, 'danger') : '');
   document.body.appendChild(m);
@@ -2792,7 +2836,7 @@ async function openThread(sid){
         else if (!nx || nx.type === 'user'){ const rc = document.createElement('div'); rc.className = 'rcpt fail'; rc.textContent = 'No reply'; b.after(rc); } }
       else if (m.type === 'error') bubble('bot', `<span class="bad">${NOT_SENT.test(m.error || '') ? 'Not sent' : 'No reply'}: ${esc(en(m.error || 'the request failed'))}</span>`, false);
       else { const steps = (m.steps || []).map(s => termBlock(s[0], null, {exit: s[1], note: s[2] ? 'reused' : ''})).join('');
-        bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + (m.model ? `<p class="who">${esc(prettyModel(m.model))}</p>` : ''), false); chatTurns++; chatSteps += (m.steps || []).length; }
+        bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + ((m.picked || m.model) ? `<p class="who">${esc(prettyModel(m.picked || m.model))}</p>` : ''), false); chatTurns++; chatSteps += (m.steps || []).length; }
     }
     saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true);
   } catch(_){}
@@ -2995,7 +3039,7 @@ async function sendChat(){
       if (turn == null){ const u = ms.filter(m => m.type === 'user').pop(); if (!u) continue; turn = u.turn; }
       const r = ms.find(m => (m.type === 'reply' || m.type === 'error') && m.turn === turn); if (!r || closed) continue;
       closed = true; if (raf){ cancelAnimationFrame(raf); raf = 0; }
-      if (r.type === 'reply'){ attach(); body.innerHTML = markFlags(mdLite(r.answer || '(no content)'), r.flag_checks) + (r.model ? `<p class="who">${esc(prettyModel(r.model))}</p>` : '');
+      if (r.type === 'reply'){ attach(); body.innerHTML = markFlags(mdLite(r.answer || '(no content)'), r.flag_checks) + ((r.picked || r.model) ? `<p class="who">${esc(prettyModel(r.picked || r.model))}</p>` : '');
         finish(); settle(true); chatTurns += 1; done(true); }
       else { attach(); body.innerHTML = `<span class="bad">${esc(en(r.error || 'the request failed'))}</span>`; finish(); settle(false, r.error); done(false); }
       setStatus('Ready'); scrollChat(); return;

@@ -30,11 +30,12 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from flagpilot import client as llm_client
 from flagpilot import config, custom, probe, tagger, storage, writeup
 from flagpilot.agent import run_attempt
 from flagpilot.chat import ChatSession, read_log
 from flagpilot.config import (ABLATIONS, GEMINI, Budget, Policy, RunConfig,
-                              SandboxLimits, gemini_api_key, get_ablation, is_gemini, make_model_spec)
+                              SandboxLimits, gemini_api_key, get_ablation, is_gemini, make_model_spec, extra_endpoints, dotenv_value)
 from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
@@ -66,24 +67,73 @@ RUNNING = 0
 
 
 def _base_url() -> str:
-    """当前端点。gemini-* 模型没给端点时走 Google 的 OpenAI 兼容端点（与 make_model_spec 同一条规则）。"""
+    """当前端点。gemini-* 模型没给端点时走 Google 的 OpenAI 兼容端点（与 make_model_spec 同一条规则）；
+    别的端点（.env 里的 NAME_BASE_URL）上的模型走那个端点。"""
     if SETTINGS["base_url"]:
         return SETTINGS["base_url"]
+    r = _route(str(SETTINGS["model"]))
+    if r:
+        return r["base_url"]
     return GEMINI["base_url"] if str(SETTINGS["model"]).lower().startswith("gemini") else "http://127.0.0.1:8000/v1"
 
 
+# ---- 别的 OpenAI 兼容端点（.env：NAME_BASE_URL + NAME_API_KEY）：每个端点的模型表决定一个模型走哪里 ----
+_EXTRA: dict[str, dict] = {}
+_ROUTES: dict[str, str] = {}          # 模型 → 端点名
+_ROUTES_AT = [0.0]
+_NOT_CHAT_EXTRA = ("image", "tts", "embed", "whisper", "audio", "moderation", "review", "dall-e", "rerank")
+
+
+def _load_routes(force: bool = False) -> None:
+    """读 .env 里的端点并向每个端点要模型表（缓存 5 分钟；列不出来时用 NAME_MODELS 声明的）。"""
+    if not force and _ROUTES_AT[0] and time.time() - _ROUTES_AT[0] < 300:
+        return
+    _ROUTES_AT[0] = time.time()
+    extra = extra_endpoints()
+    routes: dict[str, str] = {}
+    for name, e in extra.items():
+        ids = list(e.get("models") or [])
+        try:
+            req = urllib.request.Request(e["base_url"] + "/models", headers={"Authorization": "Bearer " + e["api_key"], "User-Agent": "FlagPilot/0.1.0"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                ids += [str(m.get("id")) for m in (json.loads(r.read().decode()).get("data") or []) if m.get("id")]
+        except Exception:
+            pass
+        for i in ids:
+            if not any(k in i.lower() for k in _NOT_CHAT_EXTRA) and not i.lower().startswith(("gemini-", "gemma-")):
+                routes.setdefault(i, name)
+    _EXTRA.clear()
+    _EXTRA.update(extra)
+    _ROUTES.clear()
+    _ROUTES.update(routes)
+
+
+def _route(model: str) -> dict | None:
+    if not _ROUTES_AT[0]:
+        _load_routes()
+    name = _ROUTES.get(model or "")
+    return _EXTRA.get(name) if name else None
+
+
 def _api_key(base: str | None = None) -> str:
-    """服务端用的密钥：FLAGPILOT_API_KEY；对 Gemini 端点没设时用 GEMINI_API_KEY（环境变量或根目录 .env）。"""
+    """服务端用的密钥：别的端点用它自己的 NAME_API_KEY；否则 FLAGPILOT_API_KEY；Gemini 端点没设时用 GEMINI_API_KEY。"""
+    b = base or _base_url()
+    for e in _EXTRA.values():
+        if b == e["base_url"]:
+            return e["api_key"]
     key = os.environ.get("FLAGPILOT_API_KEY", "")
-    if (not key or key == "EMPTY") and is_gemini(base or _base_url()):
+    if (not key or key == "EMPTY") and is_gemini(b):
         key = gemini_api_key()
     return key or "EMPTY"
 
 
 def _base_for(model: str) -> str:
-    """某一个模型的端点（答疑每个线程可以用不同模型）：gemini-* / gemma-* 走 Google，其余走配置的端点。"""
+    """某一个模型的端点（答疑每个线程可以用不同模型）：gemini-* / gemma-* 走 Google，别的端点列出的模型走那个端点，其余走配置的端点。"""
     if model.lower().startswith(("gemini-", "gemma-")):
         return SETTINGS["base_url"] if is_gemini(SETTINGS["base_url"] or "") else GEMINI["base_url"]
+    r = _route(model)
+    if r:
+        return r["base_url"]
     return SETTINGS["base_url"] or "http://127.0.0.1:8000/v1"
 
 
@@ -96,6 +146,79 @@ TACC_MODEL = "qwen3.8-27b (TACC)"
 # 只留 gemini- / gemma- 开头的，再去掉这些专用的
 _NOT_CHAT = ("tts", "image", "audio", "live", "embedding", "transcribe", "computer-use", "robotics",
              "lyria", "banana", "imagen", "veo", "aqa", "omni", "customtools")
+
+
+# 菜单里只列提供商；具体用哪个型号由这里决定：便宜的在前（按名字估：lite / flash 在前，pro / max 在后），
+# 换不了就下一个，最后是 FLAGPILOT_FALLBACK_MODEL（默认 DeepSeek V4.1 Flash）。切换不在界面上显示，只记进轨迹。
+PROVIDERS = (("gemini", "Gemini", r"^(gemini|gemma)-"), ("deepseek", "DeepSeek", r"^deepseek-"), ("glm", "GLM", r"^glm-"),
+             ("qwen", "Qwen", r"^qwen"), ("gpt", "GPT", r"^gpt-"), ("claude", "Claude", r"^claude-"), ("mistral", "Mistral", r"^(mistral|codestral)"))
+CHAIN_LEN = 3
+
+
+def provider_of(model: str) -> str:
+    m = str(model or "").removeprefix("provider:")
+    if str(model or "").startswith("provider:"):
+        return m
+    return next((pid for pid, _, rx in PROVIDERS if re.match(rx, m, re.I)), "")
+
+
+def _cost_rank(model: str) -> tuple:
+    m = model.lower()
+    words = set(re.split(r"[-_.:/]", m))             # 按整词比："gemini" 里有 "mini"，按子串比会把所有 Gemini 都当成最便宜的
+    tier = (0 if words & {"lite", "nano", "mini", "air", "small", "tiny"} else 1 if words & {"flash", "turbo", "haiku"}
+            else 3 if words & {"pro", "max", "plus", "ultra", "opus", "large"} else 2)
+    if m.startswith("gemma-"):
+        tier = 1.5                                   # 免费但慢：排在 Gemini 的 lite 之后
+    shaky = 1 if re.search(r"preview|exp|beta", m) else 0
+    alias = 0 if m.endswith("-latest") else 1
+    ver = [-float(x) for x in re.findall(r"\d+(?:\.\d+)?", m)[:1]] or [0.0]
+    return (tier, shaky, alias, ver[0], m)
+
+
+def provider_chain(pid: str) -> list[str]:
+    """一个提供商的型号，便宜的在前（最多 CHAIN_LEN 个），后面接全局备援。"""
+    models = _MODELS.get(("all",), all_models)["models"]
+    mine = sorted((m for m in models if provider_of(m) == pid), key=_cost_rank)[:CHAIN_LEN]
+    fb = _fallback_model()
+    return list(dict.fromkeys(mine + ([fb] if fb else [])))
+
+
+def _fallback_model() -> str:
+    """出错 / 没额度时最后换到的型号：.env / 环境变量 FLAGPILOT_FALLBACK_MODEL；没设就看有没有 DeepSeek V4.1 Flash。"""
+    name = os.environ.get("FLAGPILOT_FALLBACK_MODEL") or dotenv_value("FLAGPILOT_FALLBACK_MODEL")
+    if name:
+        return name
+    _load_routes()
+    return "deepseek-v4.1-flash" if "deepseek-v4.1-flash" in _ROUTES else ""
+
+
+def provider_list() -> list[dict]:
+    models = _MODELS.get(("all",), all_models)["models"]
+    have = {provider_of(m) for m in models}
+    return [{"id": f"provider:{pid}", "label": label} for pid, label, _ in PROVIDERS if pid in have]
+
+
+def all_models() -> dict:
+    """界面的模型表：当前端点的 + Gemini 的（有密钥、当前又不是它时）+ .env 里别的端点的；每个模型注明来自哪个端点。"""
+    models = list_models()
+    if gemini_api_key() and not is_gemini(_base_url()):
+        models += [m for m in _list_at(GEMINI["base_url"], gemini_api_key(), gemini=True) if m not in models]
+    _load_routes()
+    models += [m for m in sorted(_ROUTES) if m not in models]
+    return {"models": models, "current": SETTINGS["model"], "providers": {m: n for m, n in _ROUTES.items() if m in models}}
+
+
+def _list_at(base: str, key: str, gemini: bool = False) -> list[str]:
+    try:
+        req = urllib.request.Request(base.rstrip("/") + "/models", headers={"Authorization": "Bearer " + key, "User-Agent": "FlagPilot/0.1.0"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            ids = [str(m.get("id")) for m in (json.loads(r.read().decode()).get("data") or []) if m.get("id")]
+    except Exception:
+        return []
+    if gemini:
+        ids = [i.removeprefix("models/") for i in ids]
+        ids = [i for i in ids if i.startswith(("gemini-", "gemma-")) and not any(k in i for k in _NOT_CHAT)]
+    return ids
 
 
 def list_models() -> list[str]:
@@ -136,10 +259,47 @@ def resolve_task(name: str) -> Task | None:
     return custom.get(str(name))
 
 
-def _make_cfg(task_batch: str, ablate: str | None = None, model: str | None = None) -> RunConfig:
-    """model 给了就用它（答疑线程各自的模型），否则用全局设置的模型。"""
+def _label(model: str) -> str:
+    pid = provider_of(model)
+    return next((label for p, label, _ in PROVIDERS if p == pid), "Demo model" if str(model).startswith("mock") else str(model))
+
+
+def _resolve(model: str | None, chain: bool) -> tuple[str, str]:
+    """菜单里选的（提供商或具体型号）→ (这次先用的型号, 后面的链)。chain=False（Lab 实验）只取一个型号、不切换。"""
     name = model or SETTINGS["model"]
-    base = _base_for(name) if model else _base_url()
+    if str(name).startswith("provider:"):
+        models = provider_chain(name.removeprefix("provider:"))
+        up = [m for m in models if not (llm_client.DOWN.get(m) and llm_client.DOWN[m][0] > time.time())] or models
+        first = up[0] if up else (_fallback_model() or "mock")
+        rest = [m for m in models if m != first]
+    else:
+        first = name
+        fb = _fallback_model()
+        rest = [fb] if fb and fb != first and first != "mock" else []
+    return first, (",".join(rest) if chain else "")
+
+
+def _spec(name: str, base: str):
+    spec = make_model_spec(name, base, api_key=_api_key(base), metrics_url=SETTINGS.get("metrics_url") or "")
+    if any(base == e["base_url"] for e in _EXTRA.values()):
+        spec.provider = "openai-compatible"           # 网关只认标准字段：不带 vLLM 的 chat_template_kwargs
+    return spec
+
+
+def _with_chain(spec, rest: str):
+    spec.fallback = rest
+    return spec
+
+
+# 模型链里后面的型号由这里生成完整配置（端点、密钥、只发标准字段）
+llm_client.FALLBACK_RESOLVER = lambda name: _spec(name, _base_for(name))
+
+
+def _make_cfg(task_batch: str, ablate: str | None = None, model: str | None = None) -> RunConfig:
+    """model 给了就用它（答疑线程各自的选择），否则用全局设置；提供商在这里换成具体型号和备援链。
+    Lab 实验不带备援链：一个实验组只能是一个型号，否则结果没法比。"""
+    name, rest = _resolve(model, chain=task_batch != "lab")
+    base = _base_for(name)
     abl = get_ablation(ablate or SETTINGS["ablation"])
     policy = Policy()
     if not abl.truncate:
@@ -151,9 +311,7 @@ def _make_cfg(task_batch: str, ablate: str | None = None, model: str | None = No
         track=SETTINGS["track"],
         # 必须和 CLI 走同一个构造函数：之前这里直接 new ModelSpec，
         # 漏掉 soft_no_think，Qwen3 的思维链把每轮预算吃光，表现为"空回复"。
-        model=make_model_spec(name, base,
-                              api_key=_api_key(base),
-                              metrics_url=SETTINGS.get("metrics_url") or ""),
+        model=_with_chain(_spec(name, base), rest),
         budget=Budget(max_turns=20),
         policy=policy,
         limits=SandboxLimits(),
@@ -399,10 +557,10 @@ class Handler(BaseHTTPRequestHandler):
                 "ablations": [{"name": k, "desc": v.desc} for k, v in ABLATIONS.items()],
             })
         if path == "/api/models":
-            key = (SETTINGS.get("base_url"), SETTINGS.get("model"),
-                   httpcache.secret_tag(_api_key()))
-            return self._json(200, {"models": _MODELS.get(key, list_models),
-                                    "current": SETTINGS["model"]})
+            return self._json(200, {"providers": provider_list(), "current": SETTINGS["model"],
+                                    "current_label": _label(SETTINGS["model"]),
+                                    # 具体型号表仍然给（CLI、脚本、旧调用方用）；界面只显示 providers
+                                    "models": _MODELS.get(("all",), all_models)["models"]})
         if path == "/api/stream":
             return self._stream()
         if path == "/api/runs":
@@ -510,7 +668,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control",
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold",
                   "/api/catalog/import")
         if path not in routes:
             return self._json(404, {"error": "not found"})
@@ -546,6 +704,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._run_control(payload)
         if path == "/api/catalog/import":
             return self._catalog_import(payload)
+        if path == "/api/custom/gold":
+            try:
+                t = custom.set_gold(str(payload.get("task") or ""), str(payload.get("gold") or ""))
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
+            flag = str(payload.get("flag") or "").strip()      # 刚才那次运行交的 flag：当场判对错（不落盘）
+            match = (hashlib.sha256(flag.encode()).hexdigest() == t.gold_sha256) if flag else None
+            return self._json(200, {"task": t.name, "has_gold": t.has_gold, "match": match})
         if path == "/api/lab/retry":
             try:
                 r = lab.retry_infra(config.RUNS_ROOT, str(payload.get("id") or ""), resolve_task,
@@ -665,6 +831,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": f"Unknown tier {tier}"})
             if model and not _MODEL_RE.match(model):
                 return self._json(400, {"error": "bad model name"})
+            if model.startswith("provider:"):
+                model = _resolve(model, chain=False)[0]      # 实验只用一个型号：开跑时锁定这个提供商当下最便宜的可用型号
             if (model, tier) not in seen:
                 seen.add((model, tier))
                 arms.append({"model": model, "tier": tier})
@@ -853,8 +1021,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(500, {"error": f"{type(e).__name__}: {e}"})
                 CHATS[sid] = sess
                 STATE[sid] = {"q": queue.Queue(), "summary": None, "kind": "chat"}
-            if want and sess.cfg.model.name != want:
-                sess.set_model(_make_cfg("web-chat", model=want).model)     # 同一线程中途换模型
+            if want and getattr(sess, "picked", None) != want and sess.cfg.model.name != want:
+                sess.set_model(_make_cfg("web-chat", model=want).model)     # 同一线程中途换模型（或换提供商）
+            if want:
+                sess.picked = want
             q = STATE[sid]["q"]
 
         def worker() -> None:
@@ -865,7 +1035,7 @@ class Handler(BaseHTTPRequestHandler):
                     hook=q.put,
                 )
                 q.put({"type": "chat_done", **reply.as_dict(),
-                       "session_id": sid, "turns": sess.turns, "model": sess.cfg.model.name,
+                       "session_id": sid, "turns": sess.turns, "model": getattr(sess, "picked", None) or SETTINGS["model"],
                        "total_steps": sess.total_steps,
                        "task": sess.task.name if sess.task else ""})
             except Exception as e:

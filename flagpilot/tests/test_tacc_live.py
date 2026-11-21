@@ -245,6 +245,9 @@ class TaccLiveCase(unittest.TestCase):
     def test_session_survives_a_web_server_restart(self):
         """网页服务重启：状态落盘，重启后核实服务作业还在跑就接回来，否则不接（以前一重启就丢下一个白占 GPU 的作业）。"""
         self.ready()
+        t = time.time()                      # 提交时就落过一次盘（starting）；等"就绪"那次写完再读
+        while time.time() - t < 3 and json.loads((self.tmp / "session.json").read_text()).get("phase") != "ready":
+            time.sleep(0.01)
         saved = json.loads((self.tmp / "session.json").read_text())
         self.assertEqual((saved["phase"], saved["serve"], saved["url"]), ("ready", "501", "http://10-0-9-9:8000/v1"))
         st = self.tmp / "state"

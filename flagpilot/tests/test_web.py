@@ -427,6 +427,24 @@ class TestWebAPI(unittest.TestCase):
             self.assertEqual(ctx.exception.code, 400, bad)
             ctx.exception.close()
 
+    def test_an_uploaded_challenge_gets_its_answer_later(self):
+        """没有标准答案的上传 / 导入题：补上答案（只存哈希）后当场判刚才的 flag 对错，之后的运行就能判 verified / wrong。"""
+        name = self.upload("needs an answer")["task"]["name"]
+        try:
+            r = self.post("/api/custom/gold", {"task": name, "gold": "picoCTF{real_one}", "flag": "picoCTF{made_up}"})
+            self.assertEqual((r["has_gold"], r["match"]), (True, False))
+            r2 = self.post("/api/custom/gold", {"task": name, "gold": "picoCTF{real_one}", "flag": "picoCTF{real_one}"})
+            self.assertTrue(r2["match"])
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertTrue(mine[name]["has_gold"])
+            for bad in ({"task": name, "gold": ""}, {"task": "../../etc", "gold": "x"}, {"task": name, "gold": "two\nlines"}):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    self.post("/api/custom/gold", bad)
+                self.assertEqual(ctx.exception.code, 400, bad)
+                ctx.exception.close()
+        finally:
+            self.post("/api/custom/delete", {"task": name})
+
     def test_chat_requires_message(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/chat", {"message": "  "})

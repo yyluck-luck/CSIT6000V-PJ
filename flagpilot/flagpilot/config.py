@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -149,6 +150,9 @@ class ModelSpec:
     # Qwen3 系列默认开 thinking，会吐出 <think>...</think> 并把预算吃光。
     # Agent 每轮只要一个 JSON 动作，所以默认关掉；要做"思考 vs 不思考"消融再打开。
     enable_thinking: bool = False
+    # 备援模型（名字）：主模型在接口层面失败（额度、过载、模型不存在、密钥、网络）时这一轮就换它，之后一直用它。
+    # 只放名字；带端点和密钥的配置由网页服务在建客户端时生成。实验（Lab / 批跑）不设，免得一组里混进两个模型。
+    fallback: str = ""
     # 有些运行时（Ollama）不接受 chat_template_kwargs，此时用 Qwen3 的软开关
     # ——在用户消息末尾加 /no_think。由 make_model_spec() 按模型名自动打开。
     soft_no_think: bool = False
@@ -212,6 +216,48 @@ GEMINI = {
 
 def is_gemini(base_url: str) -> bool:
     return urlparse(base_url or "").hostname == "generativelanguage.googleapis.com"
+
+
+def dotenv_value(name: str, dotenv: Path | None = None) -> str:
+    """仓库根目录 .env 里某个非密钥配置的值（例如 FLAGPILOT_FALLBACK_MODEL）；测试里设 FLAGPILOT_NO_DOTENV 就不读。"""
+    if dotenv is None and os.environ.get("FLAGPILOT_NO_DOTENV"):
+        return ""
+    try:
+        for line in (dotenv if dotenv is not None else PROJECT_ROOT.parent / ".env").read_text(encoding="utf-8").splitlines():
+            if line.startswith(name + "="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
+def extra_endpoints(environ=None, dotenv: Path | None = None) -> dict[str, dict]:
+    """别的 OpenAI 兼容端点：环境变量或仓库根目录 .env 里成对出现的 NAME_BASE_URL + NAME_API_KEY（例如 RAYGO_*）。
+
+    返回 {name: {"base_url", "api_key", "models"}}；可选 NAME_MODELS（逗号分隔）预先声明模型，端点列不出模型时用。
+    只认 https 地址；GEMINI_* 另有专门处理。密钥不打印、不进运行指纹。
+    """
+    env = os.environ if environ is None else environ
+    kv: dict[str, str] = {}
+    if not (dotenv is None and env.get("FLAGPILOT_NO_DOTENV")):
+        try:
+            for line in (dotenv if dotenv is not None else PROJECT_ROOT.parent / ".env").read_text(encoding="utf-8").splitlines():
+                if "=" in line and not line.lstrip().startswith("#"):
+                    k, v = line.split("=", 1)
+                    kv[k.strip()] = v.strip().strip('"').strip("'")
+        except OSError:
+            pass
+    kv.update({k: v for k, v in env.items() if k.endswith(("_BASE_URL", "_API_KEY", "_MODELS"))})
+    out: dict[str, dict] = {}
+    for k, v in kv.items():
+        name = k[:-len("_BASE_URL")] if k.endswith("_BASE_URL") else ""
+        if not name or name in ("GEMINI", "FLAGPILOT", "OPENAI"):
+            continue
+        key = kv.get(name + "_API_KEY", "")
+        if (v.startswith("https://") or re.match(r"^http://(127\.0\.0\.1|localhost)(:\d+)?/", v)) and key:   # 明文 http 只许本机
+            models = [m.strip() for m in kv.get(name + "_MODELS", "").split(",") if m.strip()]
+            out[name.lower()] = {"base_url": v.rstrip("/"), "api_key": key, "models": models}
+    return out
 
 
 def gemini_api_key(environ=None, dotenv: Path | None = None) -> str:
@@ -303,6 +349,7 @@ class RunConfig:
                 "base_url": self.model.base_url,
                 "temperature": self.model.temperature,
                 "max_tokens": self.model.max_tokens,
+                **({"fallback": self.model.fallback} if self.model.fallback else {}),
             },
             "budget": self.budget.__dict__,
             "policy": self.policy.__dict__,

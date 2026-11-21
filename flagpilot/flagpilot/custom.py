@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
@@ -201,6 +202,24 @@ def _extract_zip(zip_path: Path, dest: Path) -> int:
             total_written += written
             n += 1
     return n
+
+
+def set_gold(name: str, gold: str, root: Path | None = None) -> Task:
+    """给自建 / 导入的题补上标准答案（只存哈希）。之后的运行就能判 verified / wrong，而不只是"能不能复现"。"""
+    gold = (gold or "").strip()
+    if not gold or len(gold) > 300 or "\n" in gold:
+        raise ValueError("The answer must be one line of at most 300 characters")
+    base = (root or store_root()) / name
+    f = base / "task.json"
+    if not f.is_file() or not base.resolve().is_relative_to((root or store_root()).resolve()):
+        raise ValueError(f"No uploaded challenge called {name}")
+    meta = json.loads(f.read_text(encoding="utf-8"))
+    meta["gold_sha256"] = hashlib.sha256(gold.encode()).hexdigest()
+    meta["gold_provided"] = True
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, f)
+    return _to_task(meta, base / "challenge")
 
 
 def _source_from_query(query: str) -> str:

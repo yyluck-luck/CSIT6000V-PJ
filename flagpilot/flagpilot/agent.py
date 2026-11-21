@@ -513,6 +513,8 @@ def run_attempt(
     # 这是 harness 该管的事，不该指望 prompt 约束住，所以放在循环里。
     recent: list[str] = []
     warned: set[str] = set()
+    last_switch: dict | None = None
+    fallback_turn = None
 
     while turns < cfg.budget.max_turns + bonus_turns:
         if time.monotonic() - t0 > cfg.budget.max_wall_s:
@@ -598,9 +600,15 @@ def run_attempt(
             text=comp.text[:4000],
             **({"max_tokens": sent_max} if sent_max != turn_max else {}),
             **({"retries": comp.retries} if getattr(comp, "retries", 0) else {}),
+            **({"served_by": active.last_model} if getattr(active, "last_model", cfg.model.name) != cfg.model.name else {}),
         )
         turn_max = sent_max
 
+        sw = getattr(active, "switched", None)
+        if sw and sw != last_switch:                    # 模型链换了一家：轨迹里记下（界面不显示，报告和复盘用）
+            last_switch = dict(sw)
+            fallback_turn = fallback_turn or turns
+            tr.event("model_fallback", turn=turns, **sw)
         if comp.error:
             verdict, reason = "error", f"model: {comp.error[:200]}"
             break
@@ -826,6 +834,8 @@ def run_attempt(
         "api_cache_miss_tokens": api_miss if api_seen else None,
         "ablation": cfg.ablation.name,
         "model": cfg.model.name,
+        # 主模型中途换成了备援：记下换成了谁、从哪一轮起、为什么（Runs 和界面据此说明是谁答的）
+        **({"fallback": {**client.switched, "from_turn": fallback_turn, "answered_by": client.last_model}} if getattr(client, "switched", None) else {}),
         "server": server,
         # 升级账本：E4 要比 "verified solves vs hosted tokens and cost"，
         # 所以 H 轨的 token / 钱必须和 L 轨分开记。

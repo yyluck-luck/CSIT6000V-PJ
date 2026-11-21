@@ -69,14 +69,21 @@ def run_id_of(d: Path) -> str:
     return hashlib.sha1(str(Path(d).resolve()).encode()).hexdigest()[:12]
 
 
+_FAMILIES = ((r"^(gemini|gemma)-", "Gemini"), (r"^deepseek-", "DeepSeek"), (r"^glm-", "GLM"), (r"^qwen", "Qwen"), (r"^gpt-", "GPT"),
+             (r"^claude-", "Claude"), (r"^(mistral|codestral)", "Mistral"))
+
+
 def pretty_model(m: str) -> str:
+    """界面只说提供商（Gemini、DeepSeek……）；具体型号只在导出的 CSV 和轨迹里。"""
     if not m:
         return ""
     if m.lower().startswith("mock"):
         return "Demo model"
-    words = m.removeprefix("models/").removesuffix("-latest").split("-")
-    return " ".join(w if w[:1].isdigit() else w[:1].upper() + w[1:] for w in words).replace("Flash Lite", "Flash-Lite")
-
+    name = m.removeprefix("provider:")
+    for rx, label in _FAMILIES:
+        if re.match(rx, name, re.I) or name.lower() == label.lower():
+            return label
+    return name
 
 def _pct(x: float) -> str:
     return f"{round(100 * x)}%"
