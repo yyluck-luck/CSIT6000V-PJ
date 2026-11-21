@@ -46,7 +46,7 @@
   .hint{color:var(--ink2);font-size:15px;line-height:1.6;margin:0}
   :focus-visible{outline:2px solid var(--blue);outline-offset:2px}
   .mono{font-family:var(--mono)}
-  .page:not(.on) *{animation-play-state:paused!important}
+  .page:not(.on) *,.page:not(.on) *::before,.page:not(.on) *::after{animation-play-state:paused!important}   /* pseudo-elements too: the landing's looping badges kept running behind other pages */
 
   .g{display:inline-block;width:11px;height:11px;flex:0 0 auto;background:var(--ink3)}
   .g.c{border-radius:50%} .g.t{clip-path:polygon(50% 0,100% 100%,0 100%)} .g.d{transform:rotate(45deg) scale(.78)}
@@ -60,15 +60,13 @@
   #rail{position:fixed;left:0;top:0;bottom:0;width:var(--rail);z-index:30;background:var(--white);border-right:1px solid var(--rule);display:flex;flex-direction:column;padding:24px 0 18px}
   .brand{display:flex;gap:12px;align-items:center;padding:10px 22px;margin:-10px 0 18px;cursor:pointer;outline-offset:-3px}
   #rail{-webkit-user-select:none;user-select:none}
-  .brand svg{width:30px;height:30px;display:block;flex:0 0 30px;overflow:visible;transition:transform .5s var(--spring)}
-  .brand:hover svg{transform:rotate(-12deg) scale(1.1)}
-  /* the four blocks keep turning one quadrant clockwise, slightly staggered; they speed up while a run or a reply is going (playbackRate, no jump) */
-  .brand svg .m{transform-box:fill-box;transform-origin:center;animation:q1 6s var(--ease-io) infinite}
-  .brand svg .q2{animation-name:q2;animation-delay:.07s} .brand svg .q3{animation-name:q3;animation-delay:.14s} .brand svg .q4{animation-name:q4;animation-delay:.21s}
-  @keyframes q1{0%,18%{transform:none}25%,43%{transform:translate(26px,0)}50%,68%{transform:translate(26px,26px)}75%,93%{transform:translate(0,26px)}100%{transform:none}}
-  @keyframes q2{0%,18%{transform:none}25%,43%{transform:translate(0,26px)}50%,68%{transform:translate(-26px,26px)}75%,93%{transform:translate(-26px,0)}100%{transform:none}}
-  @keyframes q3{0%,18%{transform:none}25%,43%{transform:translate(-26px,0)}50%,68%{transform:translate(-26px,-26px)}75%,93%{transform:translate(0,-26px)}100%{transform:none}}
-  @keyframes q4{0%,18%{transform:none}25%,43%{transform:translate(0,-26px)}50%,68%{transform:translate(26px,-26px)}75%,93%{transform:translate(26px,0)}100%{transform:none}}
+  /* the logo is four plain boxes, not SVG shapes: their transform animation runs on the compositor (SVG shapes made the main thread
+     restyle and re-lay-out every frame on every page). They keep turning one quadrant clockwise, slightly staggered, faster while work runs. */
+  .brand .logo{position:relative;display:block;width:30px;height:30px;flex:0 0 30px;transition:transform .5s var(--spring)}
+  .brand:hover .logo{transform:rotate(-12deg) scale(1.1)}
+  .brand .logo .m{position:absolute;width:13.75px;height:13.75px;will-change:transform}
+  .brand .logo .q1{left:0;top:0;background:var(--blue)} .brand .logo .q2{left:15.625px;top:0;background:var(--red);border-radius:50%}
+  .brand .logo .q3{left:16.25px;top:16.25px;background:var(--ink)} .brand .logo .q4{left:0;top:16.25px;background:var(--yellow);clip-path:polygon(0 100%,100% 0,100% 100%)}
   .brand b{display:inline-flex;font:800 16px/1 var(--font);letter-spacing:.02em}
   /* the wordmark keeps scrambling and decoding back to FlagPilot; slots are width-locked so nothing shifts */
   .brand .bw{display:inline-block;text-align:center;white-space:pre}
@@ -712,12 +710,7 @@
 
 <nav id="rail" aria-label="Pages">
   <div class="brand" id="brand" role="link" tabindex="0" aria-label="FlagPilot home" data-tip="Home">
-    <svg viewBox="0 0 48 48" aria-hidden="true">
-      <rect class="m q1" x="0" y="0" width="22" height="22" fill="var(--blue)"/>
-      <circle class="m q2" cx="36" cy="11" r="11" fill="var(--red)"/>
-      <rect class="m q3" x="26" y="26" width="22" height="22" fill="var(--ink)"/>
-      <polygon class="m q4" points="0,48 22,26 22,48" fill="var(--yellow)"/>
-    </svg>
+    <span class="logo" aria-hidden="true"><i class="m q1"></i><i class="m q2"></i><i class="m q3"></i><i class="m q4"></i></span>
     <b aria-hidden="true">FlagPilot</b>
   </div>
   <div id="navs">
@@ -1296,8 +1289,7 @@ function railMark(p, st){ const b = document.querySelector(`.navbtn[data-page="$
   b.classList.toggle('working', st === 'working');
   if (st === 'ok' || st === 'bad'){ if (p !== page){ b.classList.add('note'); b.classList.toggle('note-bad', st === 'bad'); } }
   const w = !!document.querySelector('.navbtn.working'), br = $('#brand'); if (br.classList.contains('working') === w) return;
-  br.classList.toggle('working', w);
-  qs('#brand .m').forEach(m => m.getAnimations().forEach(a => a.updatePlaybackRate ? a.updatePlaybackRate(w ? 2.4 : 1) : (a.playbackRate = w ? 2.4 : 1))); }
+  br.classList.toggle('working', w); logoTurn.kick(); }
 function setSeg(seg, idx){ seg.style.setProperty('--i', Math.max(0, idx)); [...seg.querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', i === idx)); }
 function showPage(p){
   qs('.page').forEach(s => { const on = s.dataset.page === p; s.inert = !on; s.classList.toggle('on', on); });
@@ -1338,6 +1330,22 @@ $('#brand').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key ==
     hv.classList.add('on'); shown = true; }, {passive: true});
   navs.addEventListener('pointerleave', () => { hv.classList.remove('on'); shown = false; }, {passive: true});
 })();
+/* logo: the four blocks turn one quadrant clockwise every 1.5 s (0.6 s while work runs). Each turn is one short compositor
+   animation; nothing ticks during the pauses in between (CSS keyframes with holds restyled the page every frame). */
+const logoTurn = (function(){
+  const ms = qs('#brand .m'), Q = [[0, 0], [16.25, 0], [16.25, 16.25], [0, 16.25]]; let k = 0, T = 0;
+  const at = (i, n) => { const a = Q[i], b = Q[(i + n) % 4]; return `translate(${b[0] - a[0]}px,${b[1] - a[1]}px)`; };
+  function turn(){
+    clearTimeout(T); const fast = $('#brand').classList.contains('working');
+    if (!document.hidden && !reduced()){
+      const from = k, to = k + 1; k = to % 4;
+      ms.forEach((m, i) => { const a = m.animate([{transform: at(i, from)}, {transform: at(i, to)}], {duration: fast ? 300 : 420, delay: i * 70, easing: 'cubic-bezier(.65,0,.35,1)', fill: 'forwards'});
+        a.onfinish = () => { m.style.transform = at(i, to); a.cancel(); }; }); }
+    T = setTimeout(turn, fast ? 600 : 1500);
+  }
+  T = setTimeout(turn, 1600);
+  return {kick(){ clearTimeout(T); T = setTimeout(turn, 120); }};
+})();
 /* wordmark: garbled glyphs decode left to right into FlagPilot, again every few seconds (more often while work runs) */
 (function(){
   const el = $('#brand b'), WORD = el.textContent, WIDE = '#$%&*+=<>?/\\{}[]_^~01', THIN = '!|:;1il.';
@@ -1361,7 +1369,7 @@ $('#brand').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key ==
 })();
 /* first paint: the logo assembles and the items slide in */
 (function(){ if (reduced()) return;
-  qs('#brand .m').forEach((m, i) => m.animate([{transform: `translate(${[-14, 14, 14, -14][i]}px,${[-14, -14, 14, 14][i]}px) scale(.2) rotate(${i % 2 ? 90 : -90}deg)`, opacity: 0}, {transform: 'none', opacity: 1}],
+  qs('#brand .m').forEach((m, i) => m.animate([{transform: `translate(${[-9, 9, 9, -9][i]}px,${[-9, -9, 9, 9][i]}px) scale(.2) rotate(${i % 2 ? 90 : -90}deg)`, opacity: 0}, {transform: 'none', opacity: 1}],
     {duration: 700, delay: 80 + i * 70, easing: SPRING, fill: 'backwards'}));
   $('#brand b').animate([{clipPath: 'inset(0 100% 0 0)'}, {clipPath: 'inset(0 0 0 0)'}], {duration: 520, delay: 380, easing: EASE, fill: 'backwards'});
   qs('#navs .navbtn .lb').forEach((l, i) => l.animate([{transform: 'translateX(-14px)', opacity: 0}, {transform: 'none', opacity: 1}], {duration: 420, delay: 260 + i * 55, easing: EASE, fill: 'backwards'}));
@@ -2213,7 +2221,7 @@ function openExp(id, host, btn){
     if (!exp || exp.error){ host.innerHTML = `<p class="hint bad" style="margin-top:18px">${esc((exp && exp.error) || 'Could not load the experiment')}</p>`; return; }
     const sig = exp.attempts + '|' + JSON.stringify(((exp.live || {}).running) || []) + '|' + exp.running + '|' + ((exp.live || {}).stopping || '');
     if (sig !== me.sig){ me.sig = sig; renderExp(exp, host, me); }
-    if (exp.running) me.timer = setTimeout(tick, page === 'lab' ? 1500 : 4000);
+    if (exp.running) me.timer = setTimeout(tick, document.hidden ? 10000 : page === 'lab' ? 1500 : 4000);
     else { if (btn){ btn.classList.remove('busy'); labPlan(); }
       if (me.was){ railMark('lab', 'ok'); toast('Experiment finished'); if (host !== $('#expView')) LAB.cur = id; } }
     me.was = exp.running;
@@ -2731,20 +2739,32 @@ let matrixKick = () => {};
 function MatrixTrail(cv){
   const ctx = cv.getContext('2d'); if (!ctx) return;
   const CELL = 20, G = '0123456789abcdef{}_#$=/'.split('');
-  let W = 0, H = 0, cols = 0, rows = 0, chars = [], heat = null, drops = [], raf = 0, last = 0, ptr = null;
+  let W = 0, H = 0, cols = 0, rows = 0, chars = [], heat = null, drops = [], raf = 0, last = 0, ptr = null, base = null, bctx = null, font = '';
+  const hot = new Set();
   function size(){ const dpr = Math.min(2, devicePixelRatio || 1), r = cv.getBoundingClientRect(); W = r.width; H = r.height; if (!W || !H) return;
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     cols = Math.ceil(W / CELL); rows = Math.ceil(H / CELL); chars = Array.from({length: cols * rows}, () => G[(Math.random() * G.length) | 0]);
-    heat = new Float32Array(cols * rows); drops = Array.from({length: Math.max(4, cols >> 3)}, () => ({x: ((Math.random() * cols) | 0) * CELL + CELL / 2, y: Math.random() * H, v: 40 + Math.random() * 80, l: 50 + Math.random() * 90})); }
+    heat = new Float32Array(cols * rows); drops = Array.from({length: Math.max(4, cols >> 3)}, () => ({x: ((Math.random() * cols) | 0) * CELL + CELL / 2, y: Math.random() * H, v: 40 + Math.random() * 80, l: 50 + Math.random() * 90})); 
+    // the dim grid is drawn once into an offscreen layer; a frame blits it and paints only hot cells and drops
+    font = '13px ' + getComputedStyle(document.body).getPropertyValue('--mono');
+    base = document.createElement('canvas'); base.width = cv.width; base.height = cv.height; bctx = base.getContext('2d');
+    bctx.setTransform(dpr, 0, 0, dpr, 0, 0); bctx.font = font; bctx.textAlign = 'center'; bctx.textBaseline = 'middle'; bctx.fillStyle = 'rgba(20,20,20,.07)';
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) bctx.fillText(chars[r * cols + c], c * CELL + CELL / 2, r * CELL + CELL / 2);
+    hot.clear(); }
+  function reroll(i){ const c = i % cols, r = (i / cols) | 0; chars[i] = G[(Math.random() * G.length) | 0];
+    bctx.clearRect(c * CELL, r * CELL, CELL, CELL); bctx.fillText(chars[i], c * CELL + CELL / 2, r * CELL + CELL / 2); }
   function frame(now){
     raf = 0; if (chatStarted || page !== 'chat' || document.hidden || !W) return;
     if (now - last < 33){ raf = requestAnimationFrame(frame); return; }
     const dt = Math.min(.1, (now - (last || now)) / 1000); last = now;
-    ctx.clearRect(0, 0, W, H); ctx.font = '13px ' + getComputedStyle(document.body).getPropertyValue('--mono'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.clearRect(0, 0, W, H); ctx.drawImage(base, 0, 0, W, H);
+    ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     if (ptr){ const c0 = Math.floor(ptr.x / CELL), r0 = Math.floor(ptr.y / CELL);
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){ const c = c0 + dx, r = r0 + dy; if (c >= 0 && r >= 0 && c < cols && r < rows){ heat[r * cols + c] = 1; if (Math.random() < .3) chars[r * cols + c] = G[(Math.random() * G.length) | 0]; } } }
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++){ const i = r * cols + c, h = heat[i];
-      ctx.fillStyle = h > .02 ? `rgba(30,80,210,${(.15 + h * .85).toFixed(3)})` : 'rgba(20,20,20,.07)'; ctx.fillText(chars[i], c * CELL + CELL / 2, r * CELL + CELL / 2); heat[i] = h > .02 ? h * .9 : 0; }
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++){ const c = c0 + dx, r = r0 + dy;
+        if (c >= 0 && r >= 0 && c < cols && r < rows){ const i = r * cols + c; heat[i] = 1; hot.add(i); if (Math.random() < .3) reroll(i); } } }
+    for (const i of hot){ const h = heat[i]; if (h <= .02){ heat[i] = 0; hot.delete(i); continue; }
+      const c = i % cols, r = (i / cols) | 0; ctx.clearRect(c * CELL, r * CELL, CELL, CELL);
+      ctx.fillStyle = `rgba(30,80,210,${(.15 + h * .85).toFixed(3)})`; ctx.fillText(chars[i], c * CELL + CELL / 2, r * CELL + CELL / 2); heat[i] = h * .9; }
     ctx.fillStyle = 'rgba(20,20,20,.16)';
     for (const d of drops){ d.y += d.v * dt; if (d.y - d.l > H){ d.y = -10; d.x = ((Math.random() * cols) | 0) * CELL + CELL / 2; } ctx.fillRect(d.x, d.y - d.l, 1, d.l); }
     if (!reduced()) raf = requestAnimationFrame(frame);
