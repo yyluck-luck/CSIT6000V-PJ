@@ -9,6 +9,7 @@ set -uo pipefail
 SUB=${SUB:-"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/submit.sh"}
 TC=${TCLOUD_BIN:-tcloud}
 POLL=${POLL:-60}
+W=${PIPE_WAIT:-5}             # 重试 / 核实之间的等待（秒）；测试里设成 0
 OUT=${1:?usage: pipeline.sh OUTPUT_DIR [EXCLUDE_NODES]}
 EXCL=${2:-}
 mkdir -p "$OUT"
@@ -18,10 +19,47 @@ log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 clean() { LC_ALL=C tr -d '\000\r' | LC_ALL=C grep -a -v -e 'post-quantum' -e 'store now, decrypt later' -e 'openssh.com/pq.html'; }
 tc() { "$TC" "$@" 2>&1 | clean; }
 jobid() { sed -n 's/^Submitted batch job \([0-9][0-9]*\).*/\1/p' | tail -1; }
+# Is job $1 in Slurm's list? 0 = yes, 1 = no, 2 = could not tell (TACC's login gateway drops SSH handshakes when busy:
+# an SDK error must never read as "the job has gone")
+in_ps() {
+  local out; out=$(tc ps)
+  grep -aq 'JOBID' <<<"$out" || return 2
+  grep -aqE "^ *$1 " <<<"$out"
+}
+# cancel and confirm it is gone (an unconfirmed cancel once left a serve job holding the GPUs and a job slot for an hour)
+cancel_job() {
+  local j=$1 k r
+  for k in 1 2 3; do
+    tc cancel -j "$j" >/dev/null
+    for r in 1 2 3; do sleep "$W"; in_ps "$j"; [[ $? == 1 ]] && return 0; done
+  done
+  log "job $j may still be running: tcloud cancel -j $j"
+  return 1
+}
+# a file from TACC, retried until it holds what it should (an SDK error in place of the log is no log)
+fetch_log() {   # $1 remote path  $2 local file
+  local k
+  for k in 1 2 3 4; do
+    tc cat "$1" > "$2"
+    grep -aq -e 'SDK_BOOTSTRAP=' -e '^\[fp\]' "$2" && return 0
+    sleep $(( k * W ))
+  done
+  return 1
+}
+fetch_dir() {   # $1 remote path  $2 local dir
+  local k
+  for k in 1 2 3 4; do
+    tc download -r "$1" "$2/" | tail -1
+    [[ -e "$2/$(basename "$1")" ]] && return 0
+    sleep $(( k * W ))
+  done
+  log "could not download $1 (later: tcloud download -r $1 $2/)"
+  return 1
+}
 
 SJ=""
 cleanup() {
-  if [[ -n "$SJ" ]]; then log "cancel serve job $SJ"; tc cancel -j "$SJ"; fi
+  if [[ -n "$SJ" ]]; then log "cancel serve job $SJ"; cancel_job "$SJ"; fi
 }
 trap cleanup EXIT
 trap 'exit 143' TERM INT
@@ -37,7 +75,7 @@ for attempt in 1 2 3 4 5 6; do
   SJ=$(printf '%s\n' "$out" | jobid)
   if [[ -z "$SJ" ]]; then log "serve submission failed:"; printf '%s\n' "$out" | tail -5; exit 1; fi
   log "serve job $SJ submitted (attempt $attempt, exclude=${EXCL:-none})"
-  deadline=$(( $(date +%s) + 45*60 ))
+  deadline=$(( $(date +%s) + 45*60 )); GONE=0
   while (( $(date +%s) < deadline )); do
     sleep "$POLL"
     ASK_T=$(date +%s)
@@ -55,18 +93,22 @@ for attempt in 1 2 3 4 5 6; do
       node=$(grep -a 'PRECHECK_FAIL' <<<"$L" | sed -n 's/.*node=\([^:]*\):.*/\1/p' | head -1)
       log "precheck failed: $(grep -a 'PRECHECK_FAIL' <<<"$L" | head -1 | sed 's/.*PRECHECK_FAIL //')"
       grep -a '^PRECHECK ' <<<"$L" | sed 's/^/    /'
-      tc cancel -j "$SJ" >/dev/null      # retry elsewhere, but stop this one first: a failed serve job kept a slot for 20+ min
+      cancel_job "$SJ"                   # retry elsewhere, but stop this one first: a failed serve job kept a slot for 20+ min
       EXCL="${EXCL:+$EXCL,}$node"; SJ=""; continue 2
     fi
     if grep -aq 'Application startup complete' <<<"$L"; then
       URL=$(sed -n 's/^SERVICE_BASE_URL=//p' <<<"$L" | head -1); NODE=$node
       break 2
     fi
-    if grep -aq -e 'Traceback (most recent call last)' -e 'srun: error' -e 'CANCELLED' <<<"$L"; then
-      log "serve job $SJ failed:"
-      grep -a -e 'Error:' -e 'error:' <<<"$L" | grep -av 'frame #' | tail -4 | sed 's/^/    /'
-      if [[ -n "$node" ]] && grep -aq -e 'Free memory on device' -e 'Address already in use' <<<"$L"; then
-        tc cancel -j "$SJ" >/dev/null
+    # Ended = Slurm's end markers, or the job gone from the list twice running. Never "Traceback": every vLLM start-up
+    # prints a harmless one (a deep_gemm import warning) about 12 s before it is ready; treating it as a crash killed
+    # healthy servers (2026-11-21: jobs 30270, 30272, 30281, 30442, 30446).
+    in_ps "$SJ"; case $? in 0) GONE=0 ;; 1) GONE=$(( GONE + 1 )) ;; esac
+    if grep -aq -e 'srun: error' -e 'CANCELLED AT' -e 'DUE TO TIME LIMIT' -e 'SUPERVISE stopped group' <<<"$L" || (( GONE >= 2 )); then
+      log "serve job $SJ ended before it was ready:"
+      grep -a -e 'Error: ' -e 'srun: error' -e 'CANCELLED AT' <<<"$L" | grep -av -e 'frame #' -e WARNING | tail -4 | sed 's/^/    /'
+      if [[ -n "$node" ]] && grep -aqE 'Address already in use|Free memory on device .{0,80}less than desired|CUDA out of memory' <<<"$L"; then
+        cancel_job "$SJ"
         EXCL="${EXCL:+$EXCL,}$node"; SJ=""; continue 2
       fi
       exit 1                              # the EXIT trap cancels $SJ
@@ -86,13 +128,16 @@ out=$(FP_LIMIT="${FP_LIMIT:-5}" FP_EXCLUDE="$NODE" FP_BATCH="$BATCH" FP_ABLATION
 CJ=$(printf '%s\n' "$out" | jobid)
 if [[ -z "$CJ" ]]; then log "batch submission failed:"; printf '%s\n' "$out" | tail -5; exit 1; fi
 log "client job $CJ submitted"
-ok=""
+ok=""; C=""; GONE=0
 deadline=$(( $(date +%s) + 55*60 ))
 while (( $(date +%s) < deadline )); do
   sleep "$POLL"
-  C=$(tc cat "slurm_log/flagpilot-client-$CJ.log")
+  C2=$(tc cat "slurm_log/flagpilot-client-$CJ.log")
+  grep -aq -e 'SDK_BOOTSTRAP=' -e '^\[fp\]' <<<"$C2" && C=$C2     # an SDK error in place of the log: keep the last good copy
   if grep -aq '^\[fp\] done:' <<<"$C"; then ok=1; break; fi
-  if grep -aq -e 'srun: error' -e 'CANCELLED' <<<"$C"; then ok=0; break; fi
+  if grep -aq -e 'srun: error' -e 'CANCELLED AT' -e 'DUE TO TIME LIMIT' <<<"$C"; then ok=0; break; fi
+  in_ps "$CJ"; case $? in 0) GONE=0 ;; 1) GONE=$(( GONE + 1 )) ;; esac
+  if (( GONE >= 2 )); then log "client job $CJ is no longer in Slurm's list"; ok=0; break; fi
   printf '%s\n' "$C" > "$OUT/client-live.log"
   log "waiting for batch $CJ: $(grep -a -E '^\[[0-9]+/[0-9]+\]|^\[fp\] tier' <<<"$C" | tail -1 | cut -c1-140)"
 done
@@ -101,14 +146,14 @@ log "batch finished (ok=${ok:-timeout}); client log tail:"
 printf '%s\n' "$C" | tail -25 | sed 's/^/    /'
 
 # ---------- 3. 取回 ----------
-tc cat "slurm_log/flagpilot-client-$CJ.log" > "$OUT/client-$CJ.log"
-tc cat "slurm_log/qwen-public-serve-$SJ.log" > "$OUT/serve-$SJ.log"
+fetch_log "slurm_log/flagpilot-client-$CJ.log" "$OUT/client-$CJ.log" && C=$(cat "$OUT/client-$CJ.log")
+fetch_log "slurm_log/qwen-public-serve-$SJ.log" "$OUT/serve-$SJ.log"
 NAMES="$BATCH"
 if [[ -n "$ABL" ]]; then NAMES=""; for ab in ${ABL//,/ }; do NAMES="$NAMES $BATCH-$ab"; done; fi
 for n in $NAMES; do
   if grep -aq -e "tier-done $n " -e "^\[fp\] done:" <<<"$C" && ! grep -aq "skip ${n##*-}:" <<<"$C"; then
     tc download "flagpilot-runs/$n.md" "$OUT/" | tail -1
-    tc download -r "flagpilot-runs/$n" "$OUT/" | tail -1
+    fetch_dir "flagpilot-runs/$n" "$OUT"
   else
     log "no results for $n (skipped or unfinished)"
   fi

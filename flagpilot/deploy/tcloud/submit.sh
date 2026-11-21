@@ -198,4 +198,20 @@ if [[ "$MODE" != serve ]]; then
 fi
 echo "[tcloud] 暂存目录 ${STAGE}，提交中…"
 cd "$STAGE"
-tcloud submit
+# TACC 的登录网关忙时会直接断开 SSH 握手（"Failed to create remote session"，2026-11-20/21 反复出现）：
+# 这时什么都还没交上去，等一会儿再交不会重复。别的错误原样报出、不重试。FP_SUBMIT_TRIES=1 关掉重试
+# （网页自己重试，好把每次等待显示在页面上）。
+TRIES="${FP_SUBMIT_TRIES:-5}"
+[[ "$TRIES" =~ ^[0-9]+$ ]] && (( TRIES >= 1 )) || TRIES=5
+for (( i = 1; i <= TRIES; i++ )); do
+  rc=0; out=$(tcloud submit 2>&1) || rc=$?
+  printf '%s\n' "$out"
+  grep -q 'Submitted batch job' <<<"$out" && exit "$rc"      # submitted: report tcloud's own status, as before
+  if (( i < TRIES )) && grep -q -e 'Failed to create remote session' -e 'ssh: handshake failed' <<<"$out"; then
+    wait_s=$(( i * i * ${FP_SUBMIT_WAIT:-5} ))
+    echo "[tcloud] TACC's login gateway dropped the connection; trying again in ${wait_s} s ($(( i + 1 ))/${TRIES})" >&2
+    sleep "$wait_s"
+    continue
+  fi
+  exit "$(( rc ? rc : 1 ))"
+done

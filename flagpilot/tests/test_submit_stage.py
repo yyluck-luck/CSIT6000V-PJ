@@ -104,6 +104,31 @@ class TestSubmitStageCleanup(unittest.TestCase):
         self.assertEqual(r.returncode, 3)
         self.assertEqual(left, [])
 
+    def test_a_dropped_ssh_handshake_is_retried_until_the_job_is_in(self):
+        """TACC's login gateway drops SSH handshakes when busy; nothing was submitted then, so waiting and trying again is safe."""
+        flaky = self.bin / "tcloud"
+        flaky.write_text('#!/bin/sh\nn=$(( $(cat "$FAKE_DIR/n" 2>/dev/null || echo 0) + 1 )); echo $n > "$FAKE_DIR/n"\n'
+                         'if [ $n -le 2 ]; then echo "[Tcloud Error] 2026/11/21 tcloudcli.go:96: Failed to dial: ssh: handshake failed: EOF"; '
+                         'echo "[Tcloud Error] 2026/11/21 tcloudcli.go:140: Failed to create remote session"; exit 1; fi\n'
+                         'echo "Submitted batch job 4242"\n', encoding="utf-8")
+        r, left = self.submit(mode="serve", FP_SUBMIT_WAIT="0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Submitted batch job 4242", r.stdout)
+        self.assertEqual((self.tmp / "n").read_text().strip(), "3")
+        self.assertIn("trying again", r.stderr)
+        self.assertEqual(left, [])
+        (self.tmp / "n").write_text("0")
+        r, _ = self.submit(mode="serve", FP_SUBMIT_WAIT="0", FP_SUBMIT_TRIES="1")      # the web app retries by itself
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual((self.tmp / "n").read_text().strip(), "1")
+
+    def test_other_submit_errors_are_not_retried(self):
+        (self.bin / "tcloud").write_text('#!/bin/sh\nn=$(( $(cat "$FAKE_DIR/n" 2>/dev/null || echo 0) + 1 )); echo $n > "$FAKE_DIR/n"\n'
+                                         'echo "quota exceeded"; exit 4\n', encoding="utf-8")
+        r, _ = self.submit(mode="serve", FP_SUBMIT_WAIT="0")
+        self.assertEqual(r.returncode, 4)
+        self.assertEqual((self.tmp / "n").read_text().strip(), "1")
+
     def test_keep_and_dry_run_leave_the_stage(self):
         r, left = self.submit(FP_KEEP_STAGE="1")
         self.assertEqual((r.returncode, len(left)), (0, 1))
