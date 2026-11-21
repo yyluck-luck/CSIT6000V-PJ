@@ -72,7 +72,7 @@ class ProbeResult:
 def _body(task: Task, mode: str, tasks_root: Path) -> str:
     if mode == "name":
         return "No further information is provided."
-    body = (task.title.strip() or task.query.strip())
+    body = (task.query.strip() or task.title.strip())       # 完整题面；title 只是截到 90 字的显示标签
     if mode == "brief":
         return body
     # files：把附件正文也塞进去（只用于"开卷记忆"这一档，上限 32KB）。

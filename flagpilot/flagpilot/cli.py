@@ -411,11 +411,13 @@ def cmd_batch(args) -> int:
     _p(f"[batch] {cfg.batch}: {len(tasks)} 题 × {cfg.seeds} seeds, "
        f"model={cfg.model.name}, ablation={cfg.ablation.name}（{cfg.ablation.desc}）")
     runner = BatchRunner(cfg, config.RUNS_ROOT / cfg.batch, workers=args.workers)
-    hook = None
+    hook, on_delta = None, None
     if getattr(args, "events_stdout", False):        # 网页经 TACC 跑题时，按行把事件打进 Slurm 日志
-        from .remote import events_printer
+        from .remote import DeltaPrinter, events_printer
         hook = events_printer
-    runner.run(tasks, resume=not args.no_resume, order=args.order, hook=hook)
+        if len(tasks) * cfg.seeds == 1:              # 单题单种子：模型的逐字输出也打进去，网页不用干等一整轮
+            on_delta = DeltaPrinter()
+    runner.run(tasks, resume=not args.no_resume, order=args.order, hook=hook, on_delta=on_delta)
     results = runner.load_results()
     _p("")
     _p(metrics.render(metrics.summarize(results)))
@@ -849,7 +851,8 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("web", help="演示页面")
     w.add_argument("--host", default="127.0.0.1")
     w.add_argument("--port", type=int, default=8080)
-    w.add_argument("--model", default=os.environ.get("FLAGPILOT_MODEL") or "mock")
+    w.add_argument("--model", default=os.environ.get("FLAGPILOT_MODEL") or "mock",
+                   help="模型或提供商（provider:gemini 等）；auto = 有 Gemini 密钥用 Gemini，否则 .env 里第一个可用的提供商，都没有用离线演示模型 mock")
     w.add_argument("--base-url")
     w.add_argument("--metrics-url", default="",
                    help="vLLM 的 /metrics；给了界面才能显示 prefix cache 命中率")

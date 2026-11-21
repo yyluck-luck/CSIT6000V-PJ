@@ -26,6 +26,8 @@ from app import tacc_live  # noqa: E402
 SUBMIT = r"""#!/usr/bin/env bash
 st="$FAKE_STATE"
 if [[ -n "${FAKE_SUBMIT_FAIL:-}" ]]; then echo "[tcloud] staging"; echo "$FAKE_SUBMIT_FAIL" >&2; exit 1; fi
+if [[ -n "${FAKE_SESSION_FAILS:-}" ]]; then c=$(( $(cat "$st/sessfail" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/sessfail"
+  if (( c <= FAKE_SESSION_FAILS )); then echo "[Tcloud Error] 2026/11/20 tcloudcli.go:140: Failed to create remote session" >&2; exit 1; fi; fi
 if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
 n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
 echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-} excl=${FP_EXCLUDE:-}" >> "$st/record"
@@ -40,7 +42,7 @@ case "$1" in
              if (( c <= ${FAKE_QUEUE:-0} )); then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
              if [[ "$n" == "${FAKE_PRECHECK_JOB:-}" ]]; then printf 'SDK_BOOTSTRAP=/env\r\nPRECHECK_FAIL node=10-0-1-12: port 8000 is already in use\r\n'; exit 0; fi
              printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\nINFO:     Application startup complete.\r\n' ;;
-      batch) printf '[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
+      batch) printf '[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@pd {"turn": 1, "d": "Let me "}\n@@pd {"turn": 1, "d": "look."}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
              printf '@@ev {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1, "wall_s": 2.0}\n[fp] done: /x\n' ;;
       chat) if [[ -n "${FAKE_QUEUE_CHAT:-}" ]]; then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
             printf '[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
@@ -51,6 +53,43 @@ case "$1" in
   ps) echo "             JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)"; cat "$st/ps" 2>/dev/null ;;
 esac
 """
+
+
+class TestFlakySession(unittest.TestCase):
+    """tcloud 偶尔建不起会话（"Failed to create remote session"）：自动重试；一直不行就说清楚是临时故障。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fp-tacc-flaky-"))
+        (self.tmp / "state").mkdir()
+        f = self.tmp / "submit.sh"
+        f.write_text(SUBMIT, encoding="utf-8")
+        f.chmod(f.stat().st_mode | stat.S_IEXEC)
+        self.env = mock.patch.dict(os.environ, {"FLAGPILOT_TACC_SUBMIT": str(f), "FAKE_STATE": str(self.tmp / "state"),
+                                               "FLAGPILOT_TACC_RETRY_WAIT": "0"})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_session_that_fails_twice_is_retried(self):
+        os.environ["FAKE_SESSION_FAILS"] = "2"
+        jid, why = tacc_live._submit("batch", {})
+        self.assertEqual((jid, why), ("501", ""))
+        self.assertEqual((self.tmp / "state" / "sessfail").read_text().strip(), "3")
+
+    def test_a_session_that_never_opens_says_it_is_temporary(self):
+        os.environ["FAKE_SESSION_FAILS"] = "99"
+        jid, why = tacc_live._submit("batch", {})
+        self.assertEqual(jid, "")
+        self.assertIn("could not open a session", why)
+        self.assertIn("try again in a minute", why)
+        self.assertEqual((self.tmp / "state" / "sessfail").read_text().strip(), str(tacc_live.SUBMIT_TRIES))
+
+    def test_other_failures_are_not_retried(self):
+        os.environ["FAKE_SUBMIT_FAIL"] = "unknown challenge: nope"
+        jid, why = tacc_live._submit("batch", {})
+        self.assertEqual((jid, why), ("", "unknown challenge: nope"))
 
 
 class TaccLiveCase(unittest.TestCase):
@@ -90,7 +129,9 @@ class TaccLiveCase(unittest.TestCase):
     def test_session_solve_chat_and_stop(self):
         self.ready()
         evs = []
-        d = tacc_live.run_task("demo-001", "B3", self.tmp / "runs", evs.append)
+        said = []
+        d = tacc_live.run_task("demo-001", "B3", self.tmp / "runs", evs.append, on_delta=lambda t, x: said.append((t, x)))
+        self.assertEqual(said, [(1, "Let me "), (1, "look.")], "the model's text streams in before its turn ends")
         types = [e["type"] for e in evs]
         self.assertEqual(types[:2], ["tacc", "tacc"])                      # uploading, queued
         self.assertIn("model", types)

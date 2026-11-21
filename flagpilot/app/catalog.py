@@ -46,8 +46,7 @@ _FLAG = re.compile(r"^[A-Za-z0-9_]{2,20}\{[^}\n]{2,200}\}$")
 _SERVICE_FILE = re.compile(r"^(dockerfile|docker-compose\.ya?ml|xinetd.*|.*\.xinetd|ctf\.xinetd)$", re.I)
 _SERVICE_TEXT = re.compile(r"\bnc\s+[\w.-]+\s+\d{2,5}\b|\bhttps?://[\w.-]+:\d{2,5}\b|\bconnect(ion)? to\b.{0,40}\b(port|server|service)\b|"
                            r"\b(this|the|our|a) (service|server|remote)\b|\bremote(ly)?\b|\bnetcat\b", re.I)
-SERVICE_NOTE = ("Note: in the original CTF this challenge ran as a network service. The sandbox here has no network, so the "
-                "service cannot be reached; study the files, and do not try to install packages or connect anywhere.")
+SERVICE_NOTE = custom.SERVICE_NOTE
 
 
 _GENERIC = re.compile(r"^(description|challenge|readme|flag|solution|writeup|write-up|overview|task|problem|statement)s?$", re.I)
@@ -86,16 +85,7 @@ def _token() -> str:
         v = (os.environ.get(k) or "").strip()
         if v:
             return v
-    if os.environ.get("FLAGPILOT_NO_DOTENV"):
-        return ""
-    try:
-        for line in (config.PROJECT_ROOT.parent / ".env").read_text(encoding="utf-8").splitlines():
-            for k in ("GITHUB_TOKEN", "GH_TOKEN"):
-                if line.startswith(k + "="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
-    except OSError:
-        pass
-    return ""
+    return config.dotenv_value("GITHUB_TOKEN") or config.dotenv_value("GH_TOKEN")
 
 
 # ---------------------------------------------------------------- 网络

@@ -9,12 +9,57 @@ The system runs against a served model (vLLM on TACC, or any OpenAI-compatible e
 web interface for task submission, live progress, and result review, and records every attempt as a
 replayable trace.
 
-> **Assessment in one command:** `cd flagpilot && bash scripts/verify.sh` — 13 checks, no GPU, no network,
-> no model weights. The last check drives the web UI in headless Chrome (needs Node ≥ 22 and Chrome; skipped otherwise).
+> **Assessment in one command:** `cd flagpilot && bash scripts/verify.sh` — 14 checks, no GPU, no network,
+> no model weights. The last two drive the web UI in headless Chrome (need Node ≥ 22 and Chrome; skipped otherwise).
 
 Artifact for **CSIT6000V Advanced AI Computing and Systems**, HKUST CSE. The course specification is
 in [`course_project.pdf`](course_project.pdf), and the proposal this artifact implements is in
 [`proposal.pdf`](proposal.pdf). Group contributions are listed in the submitted PDF, not here.
+
+---
+
+## Quick start: one command
+
+```bash
+git clone https://github.com/yyluck-luck/CSIT6000V-PJ.git
+cd CSIT6000V-PJ
+./start.sh
+```
+
+The browser opens at <http://127.0.0.1:8080> with the real agent ready. It needs **Python 3.10 or newer
+and nothing else**: no packages to install, no GPU, no setup.
+
+**Keys are included.** This repository is private, and [`shared.env`](shared.env) carries working keys
+(Gemini, and an OpenAI-compatible relay that serves DeepSeek, GLM, Qwen and GPT models), so a fresh clone
+runs the real models straight away. To use your own keys, copy [`env.example`](env.example) to `.env` and
+fill it in: `.env` is never committed and takes precedence over `shared.env`. To run with no keys at all,
+`./start.sh --model mock` uses the offline demo model. See [Keys](#keys) before ever making the
+repository public.
+
+| Command | What it does |
+|---|---|
+| `./start.sh` | Start on port 8080 and open the browser (if it is already running, just open it) |
+| `./start.sh --port 9000` | Use another port |
+| `./start.sh --model mock` | Offline demo model. Also `--model provider:deepseek`, `provider:glm`, `provider:qwen`, `provider:gpt`, or an exact model name |
+| `./start.sh --restart` | Restart, for example after `git pull` |
+| `./start.sh --stop` | Stop |
+
+The default model is `auto`: Gemini when a Gemini key is present, otherwise the first provider with a
+working key, otherwise the offline demo model. The server log is `flagpilot/.run/web-8080.log`.
+
+### What you can do in the web app
+
+| Page | Use |
+|---|---|
+| **Solve** | Pick a challenge (`/` or ⌘K to search, ↗ previews it) and press **Run** to watch the agent work step by step. *Step mode* holds each command until you approve, edit or skip it, and a hint box reaches the agent mid-run. The verdict says whether the flag was **proved**, and if not, exactly why. A reload comes back to the same challenge and picks a run that is still going up again. **Run on TACC** sends the same run to Qwen 27B on the course GPU cluster as a batch job: the first step usually takes 1–3 minutes, and the model's text streams in as it is written. |
+| **Runs** | Every past attempt, replayable step by step. |
+| **Lab** | Experiments on the agent: results with 95% intervals and paired tests, *Compare* tiers and models on one challenge, *Batch* over many challenges, *Diff* two runs, and a memorization *Probe*. |
+| **Upload** | Upload your own challenge (files, statement, optional answer), or find one in a public archive of past CTFs and import it. An imported challenge can be previewed in place, customised (title, statement, category, target flag) and drafted by the AI, which never sees the answer. |
+| **Ask** | A tutor that can run commands in the challenge's sandbox. Send several messages in a row (they queue, dashed until answered), recall any message to edit and resend it, and read replies as Markdown. Every flag the tutor states is checked. |
+
+The model menu lists providers (Gemini, DeepSeek, GLM, Qwen, GPT). For each, the app uses the cheapest
+model and switches silently to the next one when a model runs out of quota or fails. Notifications
+appear in the status island at the top; hover it for details.
 
 ---
 
@@ -27,8 +72,10 @@ in [`course_project.pdf`](course_project.pdf), and the proposal this artifact im
 | `flagpilot/flagpilot/` | Core package: agent loop, tools, sandbox, replay verifier, metrics, storage |
 | `flagpilot/app/` | Web interface (zero-dependency HTTP server + single-page frontend) |
 | `flagpilot/demo-tasks/` | **Three synthetic tasks bundled so the quickstart runs offline** |
-| `flagpilot/tests/` | 307 unit and integration tests |
-| `flagpilot/scripts/` | Start/stop, self-check, split generation, task-set builder, cluster tunnel |
+| `start.sh` | One-command start / restart / stop of the web app |
+| `shared.env`, `env.example` | The repository's shared keys (private repository), and a names-only template for your own `.env` |
+| `flagpilot/tests/` | Unit and integration tests (§6) |
+| `flagpilot/scripts/` | Self-check, browser tests, re-scoring, secret scan, split generation, task-set builder, cluster tunnel, an Ollama start script |
 | `flagpilot/deploy/` | Slurm templates and an upload helper for a general cluster |
 | `flagpilot/docs/` | Design, dataset contract, TACC deployment, implementation status, screenshots |
 
@@ -66,7 +113,17 @@ either stage, the answer did not come from the material, and the verdict becomes
 `unverified / hardcoded_no_material`. The second stage exists because the first is not enough: after
 one rejection a model can add a decorative `open('./challenge/x')` whose result it never uses, which
 fails against an empty directory but succeeds against decoys. This catches encoded fallbacks that the
-literal scan in gate 2 cannot see. Tasks with no attached files skip gate 4 automatically.
+literal scan in gate 2 cannot see. Tasks with no attached files skip gate 4 automatically, and so do
+tasks whose only attachment is the empty `.placeholder` the task set uses for "no files".
+
+**Material in the challenge text.** Some challenges put their input in the statement, not in a file
+(the ROT13 challenge's ciphertext, a base64 string, "convert 42 to binary"). A correct script then has
+to copy that input, so it still prints the flag with the files removed. Before calling such a script
+hard-coded, the verifier changes every literal the script copied from the statement (letters and digits
+shifted by one, numbers plus one) and runs it again under the same conditions. If the flag no longer
+comes out, the answer is computed from the statement and the attempt is `verified`; if it still comes
+out, the copied text was decoration and the verdict stays `hardcoded_no_material`. Fragments of the flag
+itself (such as `picoCTF{`) and literals shorter than 8 characters are never counted as material.
 
 **Pre-submit self-check.** Before submitting, the agent can spend one turn on a `run_script` action
 that runs its candidate script in a clean directory under exactly the replay conditions. A rejected
@@ -211,7 +268,7 @@ flips. That is the behaviour the evaluation depends on.
 ### Step 4 — open the web interface
 
 ```bash
-python3 -m flagpilot web --model mock --host 127.0.0.1 --port 8080
+./start.sh --model mock          # from the repository root; or: python3 -m flagpilot web --model mock
 ```
 
 Open <http://127.0.0.1:8080>, pick a task on the left, and press run. The middle column streams the
@@ -234,10 +291,16 @@ conversations, experiments, models and common actions):
 - **Upload** — your own files, or *Find a challenge online*: search a public archive of about 500
   past CTFs on GitHub (`sajjadium/ctf-archives`) or paste a link. Solution files are never attached;
   a real `flag.txt` becomes the gold flag (hash only); links to local or private addresses are refused.
-- **Ask** — the tutor. Each conversation picks its own model (hosted Gemini, a local endpoint, or
-  Qwen on TACC) from the chip under the input; a message held for Qwen can be sent to another model
-  at once. Every flag the tutor states is checked against the gold hash (or, without gold, against
-  the session's real command output) and marked; a wrong one gets one correction round.
+  After an import, *Customise this challenge* edits the title, statement and category and sets the
+  target flag; *Draft with AI* rewrites the statement from the files and the imported text (the model
+  never sees the answer, and anything flag-shaped in its draft is removed). Challenges that ran as a
+  network service in their CTF are marked: their real flag never shipped with the files.
+- **Ask** — the tutor. Each conversation picks its own provider from the chip under the input; a
+  message held for Qwen can be sent to another model at once. Messages sent while a reply is coming in
+  queue up; any message can be recalled (it and its reply leave the thread and the model's context, and
+  its text returns to the box). Every flag the tutor states is checked against the gold hash (or,
+  without gold, against the session's real command output) and marked; a wrong one gets one correction
+  round. Saving a flag that a run could not back up as a challenge's answer asks for confirmation first.
 
 Screenshots: `flagpilot/docs/screenshots/01-solve.png`, `02-chat.png`; architecture:
 `flagpilot/docs/screenshots/architecture.svg`.
@@ -474,6 +537,33 @@ found a flag it could not back with a reproducible script (5 unverified vs 2 at 
 attempts first hit the free tier's per-minute quota; they were re-run and are counted above (see
 §4E). Twenty challenges cannot separate a 10-point gap; more challenges or repeats are needed.
 
+**TACC batch `v6`: four tiers, two repeats** (Qwen 3.8 27B AWQ, the same 20 dev-split challenges,
+n = 40 per tier, 2026-11-20). "Then" is the verdict recorded at run time; "re-scored" replays every
+attempt's final submission through today's verifier (`python3 scripts/rescore.py runs/tacc/v6`), which
+counts material written in the challenge text (see *How an attempt is judged*):
+
+| Tier | Verified then | 95% CI | Verified, re-scored | 95% CI |
+|---|---|---|---|---|
+| B0 bare model | 26/40 · 65.0% | 49.5–77.9% | 31/40 · 77.5% | 62.5–87.7% |
+| B1 + trimming | 24/40 · 60.0% | 44.6–73.7% | 28/40 · 70.0% | 54.6–81.9% |
+| B2 + structured tools | 25/40 · 62.5% | 47.0–75.8% | 28/40 · 70.0% | 54.6–81.9% |
+| B3 + full rules | 25/40 · 62.5% | 47.0–75.8% | 30/40 · 75.0% | 59.8–85.8% |
+
+All 17 attempts that the old verifier called `hardcoded_no_material` were correct: their scripts
+decode the statement's ciphertext (`crypto-005`), a base64 string in the statement (`general-022`) or
+a number in it (`general-019`, whose only attachment is a placeholder). Re-scoring changes no other
+verdict; attempts that never submitted keep theirs.
+
+**A bug that affects every batch so far.** The task set's `title` is the first 90 characters of the
+statement (a display label), and the prompt used it instead of the full statement. For 22 of the 53
+challenges the rest of the statement, often the data itself, never reached the model: `crypto-086`'s
+ciphertext, `crypto-072`'s ciphertext, `crypto-074`'s key table, `general-040`'s hex bytes. In `v6`,
+9 of the 20 dev challenges were affected; they were verified in 32 of 72 attempts (44%), against 68 of
+88 (77%) on the other 11, and four of them were never solved. The tiers saw the same statements, so
+the comparison between tiers stands, but every absolute rate above is an underestimate. Fixed: the
+prompt and the memorization probe now carry the full statement (a test checks this for every
+challenge in the task set). The next TACC batch will show the effect.
+
 ### 4. Deployment on TACC
 
 Four paths. **Path A needs no cluster at all** and is what grading should use; the others exist
@@ -610,6 +700,22 @@ must be sharded with `--shard i/n`. `max_num_seqs` and `enable_prefix_caching` a
 provided serving script, which is why E3's grid is smaller than planned. Full notes:
 `flagpilot/docs/DEPLOY-TACC.md` and `flagpilot/docs/TACC.md`.
 
+### Keys
+
+Keys and endpoints are read, first match wins, from: environment variables, then `.env` at the
+repository root (yours; never committed), then [`shared.env`](shared.env) (committed). The tests never
+read either file (`FLAGPILOT_NO_DOTENV`). Keys are never logged, written into a run's fingerprint, or
+sent to the browser.
+
+- `shared.env` holds the owner's keys on purpose so that a private clone reproduces with one command.
+  Anyone with read access to the repository can use them.
+- **Before the repository is ever made public:** delete `shared.env`, rewrite it out of the history,
+  and revoke the keys at the provider (Google AI Studio; the relay's dashboard).
+- `python3 flagpilot/scripts/scan_secrets.py` checks every tracked file, every file about to be added
+  and the whole history (all branches, commit messages included) for the keys in `.env` and for common
+  key shapes; it prints names and places only, never a value. `shared.env` is the one place it allows
+  them.
+
 ### 5. Metrics
 
 | Metric | Definition |
@@ -627,15 +733,15 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 414 tests
+python3 -m unittest discover -s tests -t . -q     # 467 tests (17 need `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web UI)
-node scripts/ui_check.mjs                         # 76 browser checks in headless Chrome
+node scripts/ui_check.mjs                         # 88 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 90 controls
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
 nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
-installed, all 414 pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
+installed, all of them pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check. `ui_check` drives every page in headless Chrome with a mock model;
 `click_all` clicks each visible control once and fails on any error or any control that does
@@ -682,12 +788,13 @@ nothing (controls that would start TACC jobs, delete, stop or reach the internet
     fail for environmental reasons, not model reasons; `doctor` lists them with their task counts.
     `flagpilot/requirements.txt` covers everything that *can* ship with the repository.
 12. **No sampling seed is sent.** `--seeds` repeats attempts; it does not fix the provider's RNG.
-13. **The dependence check has a known false positive.** A task whose input is carried in the prompt
-    (a ROT13 ciphertext, for example) can be solved without touching the files, so a legitimate
-    script is flagged `hardcoded_no_material`. The two stages show that the output depends on the
-    material's *contents*; they cannot show that the reasoning was correct. A script that reads the
-    material but still falls back to a hardcoded answer will pass if the decoy happens to satisfy its
-    assertions.
+13. **What the dependence check can and cannot show.** It shows that the output depends on the
+    material's *contents* (the files, or the literals copied from the statement); it cannot show that
+    the reasoning was correct. A script that reads the material but still falls back to a hardcoded
+    answer will pass if the decoy happens to satisfy its assertions, and an input shorter than 8
+    characters in the statement (other than a number) is not checked. Until 2026-11-20 inputs in the
+    statement were not recognised at all, which marked correct solutions of such challenges
+    `hardcoded_no_material`; `scripts/rescore.py` re-checks older batches.
 14. **The Qwen vs Gemini comparison is not like for like.** Qwen ran on TACC with the vendored
     tools; Gemini ran on a laptop sandbox. The Gemini batch also ran after trimming started to keep
     flag-like lines from the cut middle of long output (B1–B3; the `v5` Qwen batch used plain
@@ -707,6 +814,9 @@ nothing (controls that would start TACC jobs, delete, stop or reach the internet
 | Tunnel is up but `/v1/models` is empty | The serving job expired (1-hour partition limit) | Resubmit the serving job; the tunnel recovers if the node IP is unchanged |
 | Encrypted run fails on `staging.rmdir()` | Host shim intercepts `rmdir` | Set `FLAGPILOT_RUNS` to a path outside the intercepted tree |
 | Model output looks cut off | `--max-tokens` too small | Attribution labels these as truncation rather than protocol failures; raise `--max-tokens` and rerun |
+| The status island says the server is older than the page, or an action fails with "restart it" | The code changed after the server started | `./start.sh --restart` |
+| `tcloud could not open a session with TACC` | The platform's SDK could not create a remote session (it is retried three times) | Usually brief: try again in a minute |
+| `./start.sh` says the port is in use by something else | Another program listens on 8080 | `./start.sh --port 9000` |
 
 ---
 

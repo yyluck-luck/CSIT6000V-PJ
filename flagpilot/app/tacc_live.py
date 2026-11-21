@@ -50,23 +50,40 @@ def _sdk(*args: str, timeout: float = 120) -> str:
     return _clean((r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace"))
 
 
+# tcloud 没能和平台建立会话（2026-11-20 网页上实际出现过）：什么都还没交，稍等再试不会重复交作业
+_SESSION_FLAKE = re.compile(r"Failed to create remote session", re.I)
+SUBMIT_TRIES = 3
+
+
 def _submit(mode: str, env_extra: dict, url: str = "") -> tuple[str, str]:
     """交一个作业。返回 (作业号, 失败原因)；成功时原因为空。
 
     原因取 submit.sh 输出的最后一行，网页直接显示（以前只有一句 "TACC submission failed"，
     看不出是题名不合法还是题目不存在）。含中文的原因不上页面，完整输出打进服务器日志。
+    tcloud 连会话都没建起来时自动重试（最多 SUBMIT_TRIES 次，间隔递增），仍不行就说清楚是临时故障。
     """
     env = {**os.environ, "LANG": os.environ.get("LANG") or "en_US.UTF-8", **env_extra}
-    try:
-        r = subprocess.run(["bash", str(_submit_path()), mode, *([url] if url else [])], capture_output=True,
-                           timeout=600, cwd=str(ROOT), env=env)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return "", type(e).__name__
-    out = _clean((r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace"))
-    m = re.findall(r"Submitted batch job (\d+)", out)
-    if m:
-        return m[-1], ""
+    wait = float(os.environ.get("FLAGPILOT_TACC_RETRY_WAIT") or 4)
+    out = ""
+    for attempt in range(SUBMIT_TRIES):
+        try:
+            r = subprocess.run(["bash", str(_submit_path()), mode, *([url] if url else [])], capture_output=True,
+                               timeout=600, cwd=str(ROOT), env=env)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return "", type(e).__name__
+        out = _clean((r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace"))
+        m = re.findall(r"Submitted batch job (\d+)", out)
+        if m:
+            return m[-1], ""
+        if attempt + 1 < SUBMIT_TRIES and _SESSION_FLAKE.search(out):
+            print(f"[tacc] {mode}: tcloud could not open a session; trying again ({attempt + 2}/{SUBMIT_TRIES})", flush=True)
+            time.sleep(wait * (attempt + 1))
+            continue
+        break
     print(f"[tacc] {mode} submission failed:\n{out[-1500:]}", flush=True)
+    if _SESSION_FLAKE.search(out):
+        return "", (f"tcloud could not open a session with TACC ({SUBMIT_TRIES} tries). "
+                    "This is usually brief: try again in a minute")
     lines = [l.strip() for l in out.splitlines() if l.strip() and not l.startswith("[tcloud]")]
     why = lines[-1][:200] if lines else ""
     return "", ("" if re.search(r"[\u3000-\u9fff]", why) else why)
@@ -370,8 +387,12 @@ def _waiting(jid: str, started: bool, last: dict, emit: Callable[[str], None]) -
     return ""
 
 
-def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], None]) -> Path | None:
-    """单题：提交批次作业（只带这一道题），跟着日志把事件交给 on_event；结束后把运行目录下载回来。"""
+def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], None],
+             on_delta: Callable[[int, str], None] | None = None) -> Path | None:
+    """单题：提交批次作业（只带这一道题），跟着日志把事件交给 on_event；结束后把运行目录下载回来。
+
+    on_delta(turn, 文字)：作业日志里的 @@pd（模型逐字输出，约每秒一批）原样交给网页，不必等一整轮。
+    """
     err = _claim(f"solving {task}", on_wait=lambda b: on_event({"type": "tacc", "stage": "hold", "busy": b}))
     if err:
         on_event({"type": "error", "message": err})
@@ -391,7 +412,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
             on_event({"type": "error", "message": "TACC submission failed" + (f": {why}" if why else "")})
             return None
         on_event({"type": "tacc", "stage": "queued", "job": jid})
-        seen, t_end, started, last, finished = 0, time.time() + 30 * 60, False, {}, False
+        seen, seen_pd, t_end, started, last, finished = 0, 0, time.time() + 30 * 60, False, {}, False
         while time.time() < t_end:
             time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "2")))
             gave_up = _waiting(jid, started, last, lambda why: on_event({"type": "tacc", "stage": "queued", "job": jid, "reason": why}))
@@ -409,6 +430,15 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
                 except json.JSONDecodeError:
                     pass
             seen = len(evs)
+            if on_delta is not None:
+                pds = [l[5:] for l in L.splitlines() if l.startswith("@@pd ")]
+                for raw in pds[seen_pd:]:
+                    try:
+                        d = json.loads(raw)
+                        on_delta(int(d.get("turn") or 0), str(d.get("d") or ""))
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        pass
+                seen_pd = len(pds)
             if "[fp] done:" in L or "srun: error" in L or "CANCELLED" in L:
                 finished = True
                 break

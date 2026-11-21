@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import server
-from flagpilot import cli
+from flagpilot import cli, config
 from flagpilot.client import ChatClient
 from flagpilot.config import make_model_spec
 
@@ -304,3 +304,45 @@ class TestModelChain(unittest.TestCase):
         finally:
             C.FALLBACK_RESOLVER, C.build_client = resolver_before, build_before
             C.DOWN.clear()
+
+
+class TestSharedEnv(unittest.TestCase):
+    """一键复现：仓库自带 shared.env；个人的 .env 优先，其中的空值不挡 shared.env；测试开关下两个都不读。"""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        self.tmp = Path(tempfile.mkdtemp(prefix="fp-env-"))
+        self.files = mock.patch.object(config, "dotenv_files", lambda: [self.tmp / ".env", self.tmp / "shared.env"])
+        self.files.start()
+        self.env = mock.patch.dict(os.environ, {}, clear=False)
+        self.env.start()
+        for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "FLAGPILOT_NO_DOTENV", "RAYGO_BASE_URL", "RAYGO_API_KEY"):
+            os.environ.pop(k, None)
+
+    def tearDown(self):
+        self.env.stop()
+        self.files.stop()
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_fresh_clone_uses_the_shared_keys(self):
+        (self.tmp / "shared.env").write_text("# comment\nGEMINI_API_KEY=shared-gemini-0001\n"
+                                             "RAYGO_BASE_URL=https://relay.example/v1\nRAYGO_API_KEY=shared-relay-0001\n")
+        self.assertEqual(config.gemini_api_key(), "shared-gemini-0001")
+        self.assertEqual(config.extra_endpoints()["raygo"]["api_key"], "shared-relay-0001")
+
+    def test_a_personal_env_wins_and_empty_values_do_not_block(self):
+        (self.tmp / "shared.env").write_text("GEMINI_API_KEY=shared-gemini-0001\nDSV41_API_KEY=shared-ds-0001\n")
+        (self.tmp / ".env").write_text("GEMINI_API_KEY=mine-gemini-0002\nDSV41_API_KEY=\n")
+        self.assertEqual(config.gemini_api_key(), "mine-gemini-0002")
+        self.assertEqual(config.dotenv_value("DSV41_API_KEY"), "shared-ds-0001")
+        self.assertEqual(config.track_h_api_key(), "shared-ds-0001")
+
+    def test_tests_never_read_either_file(self):
+        (self.tmp / "shared.env").write_text("GEMINI_API_KEY=shared-gemini-0001\n")
+        os.environ["FLAGPILOT_NO_DOTENV"] = "1"
+        self.assertEqual(config.gemini_api_key(), "")
+        self.assertEqual(config.dotenv_value("GEMINI_API_KEY"), "")
+        self.assertEqual(config.extra_endpoints(), {})
+        self.assertEqual(config.track_h_api_key(), "")

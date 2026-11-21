@@ -36,6 +36,7 @@ class Task:
     flag_format: str = ""
     # 原题网页（picoGym 题目页、赛题归档里那道题的页面、导入时贴的链接）；只给界面做跳转，不进题面
     source: str = ""
+    service: bool = False     # 原比赛里是网络服务：真 flag 从来不在附件里（导入时判定，改题面也不丢）
 
     @property
     def has_gold(self) -> bool:
@@ -50,7 +51,10 @@ class Task:
     @property
     def brief(self) -> str:
         """给模型看的题面。注意：这里绝对不能拼接任何 gold 信息。"""
-        head = self.brief_override.strip() or self.title.strip() or self.query.strip()
+        # 完整题面（query）优先。title 只是列表里显示用的标签：题库构建时取 query 的前 90 个字符
+        # （scripts/build_taskset.py）。以前这里先用 title，53 道题里有 22 道的题面被截断——crypto-086 的密文、
+        # crypto-072 的密文、general-040 的十六进制数据都在后半截，模型根本看不到（2026-11-20 发现）。
+        head = self.brief_override.strip() or self.query.strip() or self.title.strip()
         lines = [head, ""]
         if self.real_assets:      # 只有占位文件时原来会写一行 "Files provided:" 而下面一个文件都没有
             lines.append("Files provided (in ./challenge/):")

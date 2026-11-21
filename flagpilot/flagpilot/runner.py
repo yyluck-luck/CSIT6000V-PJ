@@ -42,7 +42,8 @@ class BatchRunner:
         with self._lock:
             storage.append_record(self.results_path, rec)
 
-    def run(self, tasks: list[Task], resume: bool = True, hook=None, order: str = "lpt") -> list[dict]:
+    def run(self, tasks: list[Task], resume: bool = True, hook=None, order: str = "lpt", on_delta=None) -> list[dict]:
+        """on_delta(turn, chunk)：只在一道题、一个种子时有意义（网页经 TACC 跑单题，边生成边看）。"""
         jobs = [(t, s) for s in range(self.cfg.seeds) for t in tasks]
         if resume:
             jobs = [(t, s) for (t, s) in jobs if f"{t.name}-s{s}" not in self._done]
@@ -64,7 +65,8 @@ class BatchRunner:
 
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futs = {
-                pool.submit(run_attempt, task, self.cfg, self.dir, seed, hook): (task, seed)
+                pool.submit(run_attempt, task, self.cfg, self.dir, seed, hook,
+                            **({"on_delta": on_delta} if on_delta else {})): (task, seed)
                 for task, seed in jobs
             }
             for i, fut in enumerate(as_completed(futs), 1):

@@ -9,6 +9,16 @@
 
 ## 30 秒上手
 
+一条命令（在仓库根目录）：
+
+```bash
+./start.sh            # 打开 127.0.0.1:8080；--model mock 离线演示，--restart 重启，--stop 停止
+```
+
+私有仓库自带 `shared.env`（可直接用的密钥）；想换成自己的，把 `env.example` 复制成 `.env` 填好（`.env` 不进 git，优先于 `shared.env`）。仓库公开之前必须删掉 `shared.env` 并作废其中的密钥，见根目录 README 的 *Keys* 一节。
+
+只跑引擎、不开网页：
+
 ```bash
 cd flagpilot
 export FLAGPILOT_TASKS="$PWD/demo-tasks"     # 内置 3 道合成题，仓库自带

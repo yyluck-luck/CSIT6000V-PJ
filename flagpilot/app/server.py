@@ -40,7 +40,7 @@ from flagpilot.memory import MemoryStore
 from flagpilot.tasks import Task, load_index, select
 from flagpilot.trace import read_jsonl
 
-from app import catalog, httpcache, lab, runs_index, tacc, tacc_live
+from app import catalog, drafting, httpcache, lab, runs_index, tacc, tacc_live
 from flagpilot.control import OPS, RunControl
 
 STATIC = Path(__file__).resolve().parent / "index.html"
@@ -57,6 +57,24 @@ CHATS: dict[str, ChatSession] = {}
 TACC_TURNS: dict[str, int] = {}          # 交给 TACC 的答疑：每个会话本进程发出的最大轮次号
 LOCK = threading.Lock()
 SETTINGS = {"model": "mock", "base_url": "", "track": "L", "ablation": "B3"}
+
+
+def _code_sig() -> str:
+    """服务端 Python 代码的指纹（文件名 + 修改时间 + 大小）。网页总是读磁盘上最新的 index.html，
+    进程却可能还是改代码之前起的：两者对不上时页面会请求不存在的接口。/api/tasks 带上 stale，页面据此提醒重启。"""
+    h = hashlib.sha1()
+    here = Path(__file__).resolve().parent
+    for base in (here, here.parent / "flagpilot"):
+        for f in sorted(base.glob("*.py")):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            h.update(f"{f.name}:{st.st_mtime_ns}:{st.st_size}".encode())
+    return h.hexdigest()[:12]
+
+
+BOOT_SIG = _code_sig()
 
 # 会话 id 是 uuid4().hex[:12]，只允许这个形状。
 # 以前 /api/chat/history?id=../.. 会直接拼进 runs/chat/<sid>/chat.jsonl，
@@ -543,6 +561,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._html()
         if path == "/api/writeup":
             return self._writeup()
+        if path == "/api/task":
+            # 站内预览：题面、附件、来源；不含答案（只说有没有）
+            name = urllib.parse.parse_qs(self.path.partition("?")[2]).get("name", [""])[0]
+            t = resolve_task(name) if name and len(name) < 200 else None
+            if t is None:
+                return self._json(404, {"error": "No such challenge"})
+            files = [{"name": n, "size": sz} for n, sz in drafting.files_of(t)]
+            return self._json(200, {"name": t.name, "title": t.title, "category": t.category, "statement": t.query or t.title,
+                                    "files": files, "source": t.source, "custom": t.scope == "custom",
+                                    "has_gold": t.has_gold, "service": t.service})
         if path == "/api/tasks":
             tasks = [{"name": t.name, "category": t.category, "scope": t.scope,
                       "title": t.title[:90], "custom": False, "has_gold": t.has_gold, "source": t.source}
@@ -551,10 +579,11 @@ class Handler(BaseHTTPRequestHandler):
                      "title": t.title[:90], "custom": True, "has_gold": t.has_gold,
                      "n_assets": len(t.assets), "source": t.source,
                      # 原比赛里是网络服务的题：真 flag 从来不在这些文件里
-                     "service": "ran as a network service" in (t.query or "")} for t in custom.load()]
+                     "service": t.service} for t in custom.load()]
             return self._json(200, {
                 "tasks": tasks,
                 "custom_tasks": mine,
+                "stale": _code_sig() != BOOT_SIG,      # 代码改过、服务没重启
                 "model": SETTINGS["model"],
                 "ablation": SETTINGS["ablation"],
                 "ablations": [{"name": k, "desc": v.desc} for k, v in ABLATIONS.items()],
@@ -672,7 +701,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold", "/api/chat/recall",
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold", "/api/chat/recall", "/api/custom/edit", "/api/custom/draft",
                   "/api/catalog/import")
         if path not in routes:
             return self._json(404, {"error": "not found"})
@@ -721,6 +750,22 @@ class Handler(BaseHTTPRequestHandler):
             if sess is not None:
                 sess.cancel(turn)                 # 撤回的正是还在回答的那一轮：做完当前这步就停
             return self._json(200, {"ok": True, "turn": turn})
+        if path == "/api/custom/edit":
+            q = payload.get("query")
+            try:
+                t = custom.update(str(payload.get("task") or ""), title=payload.get("title"),
+                                  query=None if q is None else str(q), category=payload.get("category"))
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
+            return self._json(200, {"task": {"name": t.name, "title": t.title, "category": t.category, "service": t.service}})
+        if path == "/api/custom/draft":
+            t = custom.get(str(payload.get("task") or ""))
+            if t is None:
+                return self._json(404, {"error": "No uploaded challenge by that name"})
+            cfg = _make_cfg("web-draft")
+            if cfg.model.name == "mock":
+                return self._json(200, drafting.rules_draft(t))
+            return self._json(200, drafting.draft(t, llm_client.build_client(cfg.model), label=lab.pretty_model(SETTINGS["model"])))
         if path == "/api/custom/gold":
             name, flag = str(payload.get("task") or ""), str(payload.get("flag") or "").strip()   # flag：刚才那次运行交的，当场判对错（不落盘）
             try:
@@ -1260,8 +1305,20 @@ def _tacc_worker(run_id: str, task_name: str, ablate: str | None) -> None:
             failed.append(str(ev.get("message") or ""))
         push(ev)
 
+    # 和本机运行一样：模型逐字输出放进 partial，SSE 读端推 model_partial（不用等整轮结束）
+    partial = st.setdefault("partial", {"turn": 0, "text": "", "seq": 0, "t": 0.0})
+
+    def on_delta(turn: int, chunk: str) -> None:
+        with cond:
+            if partial["turn"] != turn:
+                partial["turn"], partial["text"] = turn, ""
+            if len(partial["text"]) < PARTIAL_MAX_CHARS:
+                partial["text"] += chunk
+            partial["seq"] += 1
+            cond.notify_all()
+
     try:
-        d = tacc_live.run_task(task_name, tier, config.RUNS_ROOT, on_event)
+        d = tacc_live.run_task(task_name, tier, config.RUNS_ROOT, on_event, on_delta=on_delta)
         res = dict(summary) or {"verdict": "error", "reason": (failed[-1] if failed else "") or "the TACC job returned no result",
                                 "turns": 0}
         res.pop("type", None)
@@ -1288,9 +1345,27 @@ def _mount_tacc(out: Path) -> int:
     return sum(len(_mount_replay(str(d))) for d in sorted(Path(out).glob("*-B[0-3]")))
 
 
+def auto_model() -> str:
+    """./start.sh 默认的 --model auto：有 Gemini 密钥就用 Gemini 这个提供商，否则 .env 里第一个配了端点、列得出型号的提供商，
+    都没有就用离线演示模型 mock（不要任何密钥也能把整个界面走一遍）。"""
+    if gemini_api_key():
+        return "provider:gemini"
+    try:
+        _load_routes()
+        have = {provider_of(m) for m in _ROUTES}
+    except Exception:
+        have = set()
+    for pid, _label, _ in PROVIDERS:
+        if pid in have:
+            return f"provider:{pid}"
+    return "mock"
+
+
 def serve(host: str = "127.0.0.1", port: int = 8080, model: str = "mock",
           base_url: str = "", track: str = "L", metrics_url: str = "",
           replay_dir: str = "") -> None:
+    if model == "auto":
+        model = auto_model()
     SETTINGS.update({"model": model,
                      "base_url": base_url or os.environ.get("FLAGPILOT_BASE_URL", ""),
                      "track": track,

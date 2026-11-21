@@ -521,6 +521,46 @@ class TestWebAPI(unittest.TestCase):
         finally:
             self.post("/api/custom/delete", {"task": name})
 
+    def test_preview_edit_and_draft_an_imported_challenge(self):
+        """导入题：站内预览（不含答案）、改标题 / 题面 / 类别、让 AI 起草（mock 下是规则草稿）。"""
+        d = self.upload("to customise", gold="picoCTF{secret_answer_77}")
+        name = d["task"]["name"]
+        try:
+            pv = json.loads(self.get(f"/api/task?name={name}"))
+            self.assertEqual((pv["title"], pv["has_gold"], pv["custom"]), ("to customise", True, True))
+            self.assertEqual([f["name"] for f in pv["files"]], ["note.txt"])
+            self.assertNotIn("secret_answer_77", json.dumps(pv))
+            self.assertNotIn("gold_sha256", pv)
+            r = self.post("/api/custom/edit", {"task": name, "title": "Customised", "query": "New statement", "category": "crypto"})
+            self.assertEqual((r["task"]["title"], r["task"]["category"]), ("Customised", "crypto"))
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertEqual(mine[name]["title"], "Customised")
+            dr = self.post("/api/custom/draft", {"task": name})
+            self.assertEqual(dr["by"], "rules")
+            self.assertIn("note.txt", dr["statement"])
+            self.assertNotIn("secret_answer_77", json.dumps(dr))
+            for bad, code in (({"task": name, "title": "  "}, 400), ({"task": "../x", "title": "t"}, 400)):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    self.post("/api/custom/edit", bad)
+                self.assertEqual(ctx.exception.code, code)
+                ctx.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.get("/api/task?name=nope-nope")
+            self.assertEqual(ctx.exception.code, 404)
+            ctx.exception.close()
+        finally:
+            self.post("/api/custom/delete", {"task": name})
+
+    def test_tasks_say_when_the_server_code_is_newer_than_the_process(self):
+        from app import server
+        self.assertFalse(json.loads(self.get("/api/tasks"))["stale"])
+        keep = server.BOOT_SIG
+        server.BOOT_SIG = "000000000000"
+        try:
+            self.assertTrue(json.loads(self.get("/api/tasks"))["stale"])
+        finally:
+            server.BOOT_SIG = keep
+
     def test_service_challenges_are_marked(self):
         from app import catalog
         d = self.upload("service one", query="Challenge x\n\n" + catalog.SERVICE_NOTE)

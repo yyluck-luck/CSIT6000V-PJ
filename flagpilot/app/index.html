@@ -106,6 +106,8 @@
   #island.ok .dot{background:#6b8cff;border-radius:50%} #island.bad .dot{background:#ff5d5a}
   #island.warn .dot{background:var(--yellow);clip-path:polygon(50% 0,100% 100%,0 100%)}
   #island .more{color:rgba(255,255,255,.7);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* calm by default: just the status word; hovering (or focusing) the island opens the details */
+  #island:not(.peek) .more{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
   #island.card{flex-direction:column;align-items:flex-start;gap:8px;padding:18px 24px 20px;border-radius:20px;min-width:340px}
   #island .big{display:none;font:900 34px/1 var(--font);letter-spacing:-.01em}
   #island .flagl{display:none;font:600 14px var(--mono);color:rgba(255,255,255,.85);word-break:break-all}
@@ -241,10 +243,10 @@
   #hero h1 .ln2{display:block;color:var(--ink3)}
   /* the hero's word: a terminal box that backspaces and types the next word (about 1 s), glyphs flicker before they settle, rainbow ink */
   .flip{position:relative;display:inline-block;vertical-align:bottom;line-height:1.02;padding:0 .16em;margin:0 .04em;background:var(--ink);white-space:nowrap}
-  /* fixed lines: the heading is laid out once for the longest word (two lines if it fits, else the box starts line two; smaller
-     type only if even that is too wide), so the box can grow and shrink with the word without ever moving a line break */
-  #hero h1 .l1{display:block;white-space:nowrap} #hero h1.three .l1b{display:block} #hero h1.three .sp{display:none}
-  #hero h1{font-size:calc(clamp(44px,min(6.6vw,10.5vh),184px) * var(--fit,1))}
+  /* two fixed lines; the typing box ends the first, so a longer word only reaches further right. The type is sized once for the
+     longest word (smaller only if even that would not fit), so typing never moves a line break */
+  #hero h1 .l1{display:block;white-space:nowrap}
+  #hero h1{font-size:calc(clamp(52px,min(8.6vw,13.5vh),220px) * var(--fit,1))}
   /* "solves" under a liquid-glass lens: it glides along the word (on hover it follows the pointer); the letters under it are
      magnified, the rest of the word sits in its shadow, like a spotlight. Transforms only (compositor); still under reduced motion */
   #hero .lw{position:relative;display:inline-block}
@@ -382,6 +384,26 @@
   .verdict.run{border-style:dashed}
   .vbar{display:flex;flex-wrap:wrap;align-items:center;gap:16px 20px;padding:20px 0 0;font:500 15px var(--mono);color:var(--ink2)}
   .vbar .gap{flex:1}
+  /* challenge preview over the page */
+  #tpWrap{position:fixed;inset:0;z-index:66;display:grid;place-items:center;padding:24px} #tpWrap[hidden]{display:none}
+  #tpWrap .back{position:absolute;inset:0;background:rgba(20,20,20,.38);opacity:0;transition:opacity var(--t2) ease} #tpWrap.open .back{opacity:1}
+  .tp{position:relative;width:min(780px,100%);max-height:min(84vh,900px);overflow:auto;background:var(--white);border:1.5px solid var(--ink);box-shadow:10px 10px 0 var(--ink);padding:26px 30px 24px;
+    transform:translateY(16px) scale(.98);opacity:0;transition:transform var(--t2) var(--ease),opacity var(--t2) ease} #tpWrap.open .tp{transform:none;opacity:1}
+  .tp .hd{display:flex;align-items:flex-start;gap:16px} .tp h3{margin:0;flex:1;font:800 26px/1.2 var(--font);letter-spacing:-.01em}
+  .tp .close{border:0;background:none;padding:4px;font:600 16px var(--font);color:var(--blue);cursor:pointer}
+  .tp .meta{margin:8px 0 14px;font:500 15px var(--mono);color:var(--ink2)}
+  .tp .md{font-size:16px;padding:14px 16px;background:var(--paper);border-left:4px solid var(--ink);max-height:44vh;overflow:auto}
+  .tp .files{margin:14px 0 0;padding:0;list-style:none;font:15px/1.7 var(--mono)} .tp .files li{display:flex;gap:12px} .tp .files .sz{margin-left:auto;color:var(--ink3)}
+  .tp .actions{margin-top:18px}
+  /* customise an imported challenge */
+  .cust{margin-top:20px;border-top:1.5px dashed var(--rule);padding-top:14px}
+  .cust>summary{cursor:pointer;list-style:none;font:800 18px var(--font)} .cust>summary::-webkit-details-marker{display:none}
+  .cust>summary::before{content:'▸';display:inline-block;margin-right:8px;transition:transform var(--t1) var(--ease)} .cust[open]>summary::before{transform:rotate(90deg)}
+  .cust .cfield{margin-top:14px} .cust label,.cust .lbl{display:block;margin-bottom:6px;font:700 15px var(--font);color:var(--ink2)}
+  .cust input,.cust textarea{display:block;width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--ink);background:var(--white);font:16px/1.5 var(--font)}
+  .cust textarea{min-height:150px;resize:vertical;font:15px/1.55 var(--mono)} .cust .cu-gold{font-family:var(--mono)}
+  .cust .cats{display:flex;flex-wrap:wrap;gap:8px} .cust .cats button{border:1.5px solid var(--ink);background:var(--white);padding:7px 14px;font:600 15px var(--font);cursor:pointer;transition:background var(--t1),color var(--t1)}
+  .cust .cats [aria-checked=true]{background:var(--ink);color:#fff} .cust .cu-msg{margin:10px 0 0} .cust .cu-msg.bad{color:var(--red)}
   .svcwarn{margin:12px 0 0;padding:10px 14px;border-left:4px solid var(--red);background:rgba(226,48,45,.07);font-size:15px;line-height:1.45;max-width:72ch}
   .goldin .gwarn{flex:1 1 100%;margin:4px 0 0;font-size:15px}
   .goldin{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:10px} .goldin input{flex:1 1 320px;min-width:0;font:15px var(--mono);padding:9px 12px;border:1.5px solid var(--ink);background:var(--white)}
@@ -799,7 +821,7 @@
   <button class="kbar" id="kbarBtn" aria-label="Search and commands (Cmd or Ctrl and K)"><kbd>⌘K</kbd>Search</button>
 </nav>
 
-<div id="island" class="idle" role="status" aria-live="polite" data-tip="Back to Solve">
+<div id="island" class="idle" role="status" aria-live="polite" tabindex="0" aria-label="Status; hover or focus for details">
   <div class="row1"><span class="dot"></span><span id="status">Ready</span><span class="more" id="islMore"></span></div>
   <div class="big" id="islBig"></div><div class="flagl" id="islFlag"></div>
   <div class="row2" id="islNote"><span class="ic"></span><span class="tx"></span></div>
@@ -813,7 +835,7 @@
       <div class="hero2">
       <header id="hero">
         <div class="in">
-          <h1 aria-label="FlagPilot solves crypto, forensics and general challenges, and proves every flag."><span aria-hidden="true"><span class="l1">FlagPilot <span class="lw" id="lensWord">solves<span class="lclip"><i class="spot"></i></span><span class="lens"><span class="mag">solves</span></span></span><span class="sp"> </span><span class="l1b"><span class="flip" id="flip"><span class="tw">crypto</span></span> challenges</span></span><span class="ln2">and proves every flag.</span></span></h1>
+          <h1 aria-label="Solve CTF challenges: crypto, forensics, web, binaries and more. Prove every flag."><span aria-hidden="true"><span class="l1"><span class="lw" id="lensWord">Solve<span class="lclip"><i class="spot"></i></span><span class="lens"><span class="mag">Solve</span></span></span> <span class="flip" id="flip"><span class="tw">RSA</span></span></span><span class="ln2">Prove every flag.</span></span></h1>
           <div class="actions"><button class="btn primary" data-taskpill id="pickHero">Choose a challenge<span class="arr">→</span></button>
             <button class="btn" data-go="history">Replay a run<span class="arr">→</span></button></div>
         </div>
@@ -835,7 +857,7 @@
         <p class="svcwarn" id="sgSvc" hidden><b>Needs its original server.</b> This challenge ran as a network service; its real flag never shipped with these files. A flag printed here can only be a guess, so it cannot be confirmed.</p>
         <div class="actions">
           <button class="btn primary" id="run" disabled hidden><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg><svg class="chk" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Run<span class="arr">↵</span></button>
-          <button class="btn" id="runTacc" hidden data-tip="Solve this challenge with Qwen 27B on TACC">Run on TACC<span class="arr">→</span></button>
+          <button class="btn" id="runTacc" hidden data-tip="Solve it with Qwen 27B as a job on the course GPU cluster: the first step usually takes 1 to 3 minutes. Run is faster for interactive solving">Run on TACC<span class="arr">→</span></button>
           <button class="chip qwen" id="qwenChip" data-tip="One Qwen 27B server on two TACC GPUs, up to one hour; runs and chats are sent to it as small jobs"><span class="g ring"></span><span class="tn">Qwen on TACC · connect</span></button>
           <button class="btn" data-taskpill id="pickBtn">Change<span class="arr">→</span></button>
           <span class="grow"></span>
@@ -1052,6 +1074,8 @@
 </aside>
 
 <!-- ======================= Challenge picker ======================= -->
+<div id="tpWrap" hidden><div class="back" data-tpclose></div><div class="tp" role="dialog" aria-modal="true" aria-labelledby="tpTitle">
+  <div class="hd"><h3 id="tpTitle"></h3><button class="close" type="button" data-tpclose>Close</button></div><p class="meta" id="tpMeta"></p><div id="tpBody"></div><div class="actions" id="tpActs"></div></div></div>
 <div id="sheetWrap" hidden>
   <div class="bg" data-close></div>
   <div class="sheet" role="dialog" aria-modal="true" aria-label="Choose a challenge">
@@ -1117,6 +1141,18 @@ const FAIL = {ok: 'verified', reproduced: 'reproduced, no gold', model_error: 'm
   protocol: 'broke the JSON protocol', truncated: 'reply truncated at max_tokens', hardcoded: 'script hard-codes the flag', not_reproducible: 'correct but not reproducible',
   wrong_answer: 'wrong flag', budget: 'turns exhausted without a submission', unknown: 'unclassified'};
 
+/* the server's JSON. An HTML page instead (or "not found" for an action the page knows) means the server process is
+   older than this page, which is always read fresh from disk: say so, rather than "Unexpected token <" */
+const OLD_SERVER = 'The server is older than this page. Restart it (./start.sh) and try again.';
+async function jsonOf(r){ const txt = await r.text();
+  try { return JSON.parse(txt); } catch(_){ throw new Error(/^\s*</.test(txt) ? OLD_SERVER : `The server sent an unreadable reply (HTTP ${r.status})`); } }
+async function apiPost(url, body){
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}), j = await jsonOf(r);
+  if (r.status === 404 && j && j.error === 'not found') throw new Error(OLD_SERVER);
+  if (!r.ok){ const e = new Error((j && j.error) || 'HTTP ' + r.status); e.status = r.status; e.body = j; throw e; }
+  return j;
+}
+let staleTold = false;
 function getJSON(url, bootKey){
   const b = bootKey && window.__boot && window.__boot[bootKey];
   if (b){ window.__boot[bootKey] = null; return b.catch(() => fetch(url).then(r => r.json())); }
@@ -1361,13 +1397,16 @@ function setStatus(t, cls, more, card){
   const tone = cls === 'bad' ? 'bad' : live ? 'run' : /^(ready|idle)$/i.test(t) ? 'idle' : cls === 'warn' ? 'warn' : 'ok';
   clearTimeout(notchT);
   morph(i, () => {
-    i.className = tone + (card ? ' card' : '') + (i.classList.contains('note') ? ' note' : '');     // a notification on show stays until its own timer
+    i.className = tone + (card ? ' card' : '') + (i.classList.contains('note') ? ' note' : '') + (i.classList.contains('peek') ? ' peek' : '');     // a notification or an open hover stays
     $('#status').textContent = t; $('#islMore').textContent = more || '';
     $('#islBig').textContent = card ? card.big : ''; $('#islFlag').textContent = card ? (card.flag || card.sub || '') : '';
   });
   if (card) notchT = setTimeout(() => morph(i, () => { i.classList.remove('card'); }), 4200);
 }
 $('#island').addEventListener('click', () => { if ($('#island').classList.contains('note')){ noteClose(); return; } go('solve'); });
+{ const isl = $('#island'), peek = on => { if (isl.classList.contains('peek') !== on && $('#islMore').textContent.trim()) morph(isl, () => isl.classList.toggle('peek', on)); else if (!on) isl.classList.remove('peek'); };
+  isl.addEventListener('pointerenter', () => peek(true)); isl.addEventListener('pointerleave', () => peek(false));
+  isl.addEventListener('focus', () => peek(true)); isl.addEventListener('blur', () => peek(false)); }
 function hair(p, mode){ const h = $('#hair'); h.classList.toggle('on', mode !== 'off'); h.classList.toggle('run', mode === 'run'); if (p != null) h.style.setProperty('--p', Math.max(0, Math.min(1, p))); }
 
 /* ======================= Router + geometric colour-block wipe ======================= */
@@ -1496,26 +1535,30 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 /* ================= Typewriter: backspace the word, type the next one (about 1 s), each glyph flickers before it settles ================= */
 (function(){
   const box = $('#flip'); if (!box) return;
-  const words = ['crypto', 'forensics', 'general'], GL = '01{}<>_#$%&*+=/\\|';
+  /* techniques from every category (crypto, forensics, web, pwn, reverse, misc), in a fresh random order each round */
+  const words = ['RSA', 'XOR', 'AES', 'ROT13', 'base64', 'Caesar', 'Vigenère', 'ECC', 'hashes', 'stego', 'pcap', 'PNG', 'zip',
+                 'EXIF', 'SQLi', 'XSS', 'JWT', 'SSTI', 'ELF', 'ROP', 'heap', 'Ghidra', 'z3', 'OSINT', 'regex'], GL = '01{}<>_#$%&*+=/\\|';
+  let order = [];
+  const nextIndex = cur => { if (!order.length){ order = words.map((_, i) => i).sort(() => Math.random() - .5); if (order[0] === cur) order.push(order.shift()); } return order.shift(); };
   box.innerHTML = `<span class="tw">${words[0]}</span><i class="caret" aria-hidden="true"></i>`;
   const tw = box.querySelector('.tw'); let k = 0, typing = false;
-  /* measure the worst case (the widest word in the box) once per width: two lines, else three, else smaller type */
-  const h1 = box.closest('h1'), l1 = h1.querySelector('.l1'), l1b = h1.querySelector('.l1b');
+  /* measure the worst case (the widest word in the box) once per width; smaller type only if it would not fit */
+  const h1 = box.closest('h1'), l1 = h1.querySelector('.l1');
   let laidW = -1;
   function layout(){
     const W = h1.clientWidth; if (!W || W === laidW) return; laidW = W;
-    const keep = tw.textContent, widest = () => Math.max(...words.map(w => { tw.textContent = w; return (h1.classList.contains('three') ? l1b : l1).scrollWidth; }));
-    h1.style.setProperty('--fit', '1'); h1.classList.remove('three');
-    if (widest() > W){ h1.classList.add('three'); const need = widest(); if (need > W) h1.style.setProperty('--fit', (W / need * .98).toFixed(4)); }
+    const keep = tw.textContent; h1.style.setProperty('--fit', '1');
+    const need = Math.max(...words.map(w => { tw.textContent = w; return l1.scrollWidth; }));
+    if (need > W) h1.style.setProperty('--fit', (W / need * .98).toFixed(4));
     tw.textContent = keep;
   }
   new ResizeObserver(layout).observe(h1);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { laidW = -1; layout(); });
   const wait = ms => new Promise(r => setTimeout(r, ms));
   async function next(){
-    if (typing) return; typing = true; k = (k + 1) % words.length;
+    if (typing) return; typing = true; k = nextIndex(k);
     const w = words[k]; let cur = tw.textContent;
-    const del = 300 / Math.max(1, cur.length), type = 640 / w.length;
+    const del = 170 / Math.max(1, cur.length), type = 380 / w.length;
     while (cur.length){ cur = cur.slice(0, -1); tw.textContent = cur; await wait(del); }
     for (let i = 1; i <= w.length; i++){
       tw.textContent = w.slice(0, i - 1) + GL[(Math.random() * GL.length) | 0]; await wait(type * .45);
@@ -1524,9 +1567,9 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
   }
   setInterval(() => {
     if (page !== 'solve' || $('#landing').hidden || document.hidden) return;
-    if (reduced()){ k = (k + 1) % words.length; tw.textContent = words[k]; return; }
+    if (reduced()){ k = nextIndex(k); tw.textContent = words[k]; return; }
     next();
-  }, 2600);
+  }, 1600);
 })();
 
 /* ================= Liquid glass over "solves": a lens glides along the word; on hover it follows the pointer ================= */
@@ -1545,16 +1588,16 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
     stop(); if (!W) return;
     const [a, b] = ends();
     if (reduced()){ place((W - w) / 2); return; }
-    const o = {duration: 4800, iterations: Infinity, direction: 'alternate', easing: 'cubic-bezier(.62,0,.38,1)'};
+    const o = {duration: 2600, iterations: Infinity, direction: 'alternate', easing: 'cubic-bezier(.62,0,.38,1)'};
     run(T(a), T(b), o); if (from === 'b') anims.forEach(x => { x.currentTime = o.duration; });
   }
   function measure(){ W = lw.offsetWidth; w = lens.offsetWidth; h = lens.offsetHeight; if (W) sweep(); }
-  const step = () => { raf = 0; if (want == null) return; const d = want - cur; place(Math.abs(d) < .4 ? want : cur + d * .2); if (Math.abs(want - cur) >= .4) raf = requestAnimationFrame(step); };
+  const step = () => { raf = 0; if (want == null) return; const d = want - cur; place(Math.abs(d) < .4 ? want : cur + d * .34); if (Math.abs(want - cur) >= .4) raf = requestAnimationFrame(step); };
   lw.addEventListener('pointermove', e => { if (reduced() || !W) return; const [a, b] = ends(), r = lw.getBoundingClientRect();
     want = Math.max(a, Math.min(b, e.clientX - r.left - w / 2)); stop(); if (!raf) raf = requestAnimationFrame(step); }, {passive: true});
   lw.addEventListener('pointerleave', () => { if (reduced() || !W) return; want = null; cancelAnimationFrame(raf); raf = 0;
     const [a, b] = ends(), end = cur - a < b - cur ? 'a' : 'b';
-    run(T(cur), T(end === 'a' ? a : b), {duration: 600, easing: 'cubic-bezier(.34,1.3,.5,1)', fill: 'forwards'});
+    run(T(cur), T(end === 'a' ? a : b), {duration: 380, easing: 'cubic-bezier(.34,1.3,.5,1)', fill: 'forwards'});
     const glide = anims[0]; glide.finished.then(() => { if (anims[0] === glide) sweep(end); }, () => {}); }, {passive: true});
   new ResizeObserver(measure).observe(lw);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(measure);
@@ -1596,6 +1639,7 @@ async function loadTasks(){
   $('#rcModel').textContent = d.model; ablation = d.ablation || 'B3';
   renderAblations(d.ablations || []);
   TASKS = d.tasks || []; MINE = d.custom_tasks || [];
+  if (d.stale && !staleTold){ staleTold = true; setTimeout(() => toast('The server code changed since it started. Restart it (./start.sh) to use the newest features', 'bad'), 1200); }
   // with the offline mock model the local Run is only a demo; the real agent is Qwen on TACC
   const mock = /^mock/i.test(d.model || ''), rb = $('#run'), tb = $('#runTacc'); LOCALMODEL = d.model || 'mock';
   rb.classList.toggle('primary', !mock); tb.classList.toggle('primary', mock);
@@ -1617,7 +1661,8 @@ const taskByName = n => TASKS.find(x => x.name === n) || MINE.find(x => x.name =
 /* what to call a challenge on screen: an uploaded / imported one by its title, a built-in one by its id */
 function taskLabel(nameOrTask){ const t = typeof nameOrTask === 'string' ? taskByName(nameOrTask) : nameOrTask;
   if (!t) return String(nameOrTask || ''); return t.custom && t.title ? t.title : t.name; }
-const srcLink = t => t && t.source ? `<a class="src" href="${esc(t.source)}" target="_blank" rel="noopener noreferrer" data-tip="Open the challenge's page" aria-label="Open the challenge's page">↗</a>` : '';
+const srcLink = t => !t ? '' : t.source ? `<a class="src" href="${esc(t.source)}" target="_blank" rel="noopener noreferrer" data-tip="Preview (⌘-click opens the challenge's page)" aria-label="Preview the challenge">↗</a>`
+  : `<button class="src" type="button" data-tip="Preview the challenge" aria-label="Preview the challenge">↗</button>`;
 function taskRow(t, mine){
   const [cat, g] = catOf(t.category), q = (t.name + ' ' + (t.title || '') + ' ' + (t.category || '')).toLowerCase();
   return `<div class="row${sel === t.name ? ' sel' : ''}" data-name="${esc(t.name)}" data-cat="${mine ? 'mine' : cat}" data-q="${esc(q)}">`
@@ -1639,7 +1684,7 @@ function applyFilter(){
 $('#taskSearch').addEventListener('input', applyFilter);
 $('#catFilter').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; catSel = b.dataset.cat; setSeg($('#catFilter'), [...$('#catFilter').querySelectorAll('button')].indexOf(b)); applyFilter(); });
 $('#tasks').addEventListener('click', async e => {
-  if (e.target.closest('a.src')) return;            // the ↗ link opens the challenge's page; it does not pick
+  if (e.target.closest('.src')) return;             // the ↗ link previews the challenge; it does not pick
   const row = e.target.closest('.row'); if (!row) return; const t = taskByName(row.dataset.name); if (!t) return;
   if (e.target.closest('.del')){
     if (!confirm('Delete ' + t.name + ' and its attachments?')) return;
@@ -1679,8 +1724,13 @@ document.addEventListener('click', e => { if (e.target.closest('[data-taskpill]'
 
 /* landing (nothing chosen) versus the working view */
 function viewMode(){ const work = !!(sel || run); $('#landing').hidden = work; $('#work').hidden = !work; if (work && R.figStale) requestAnimationFrame(() => { R.figW = 0; renderFig(); }); }
+/* where this tab is (the open challenge and its latest run), so a reload comes back to it instead of the landing */
+const HERE_KEY = 'fp.here';
+const here = () => { try { return JSON.parse(sessionStorage.getItem(HERE_KEY) || '{}') || {}; } catch(_){ return {}; } };
+const keepHere = patch => { try { sessionStorage.setItem(HERE_KEY, JSON.stringify({...here(), ...patch})); } catch(_){} };
 function pick(t){
   sel = t ? t.name : null; selTask = t;
+  { const h = here(); keepHere({sel, run: sel && h.sel === sel ? h.run || null : null}); }
   qs('#tasks .row.sel').forEach(x => x.classList.remove('sel'));
   if (sel) qs('#tasks .row').forEach(x => { if (x.dataset.name === sel) x.classList.add('sel'); });
   const g = t ? catOf(t.category)[1] : 'ring';
@@ -2021,12 +2071,12 @@ function onEvent(ev){
   if (!run) run = fresh();
   switch (ev.type){
     case 'meta': if (ev.budget && ev.budget.max_turns) run.maxTurns = ev.budget.max_turns; break;
-    case 'model_partial': if (!R.bulk && !run.byKey.has('t' + ev.turn)) renderLive(ev.turn, ev.text || ''); break;
-    case 'tacc': { const msg = taccStage(ev);
+    case 'model_partial': if (!R.bulk && !run.byKey.has('t' + ev.turn)){ renderLive(ev.turn, ev.text || ''); run.liveTurn = ev.turn; } break;
+    case 'tacc': { const msg = taccStage(ev); run.taccMsg = msg; run.taccStarted = ev.stage === 'running'; run.stageAt = Date.now();
       setStatus(ev.stage === 'hold' ? 'On hold' : 'Running', ev.stage === 'hold' ? 'warn' : '', `${sel || ''} · ${msg}`);
       const vl = $('#verdict .vlabel'); if (vl && $('#verdict .verdict.run')) vl.textContent = `Qwen 27B on TACC · ${msg}`;
       const h = $('#traceEmpty .hint'); if (h) h.textContent = (ev.stage === 'hold' ? 'On hold: ' : '') + msg.charAt(0).toUpperCase() + msg.slice(1) + '…'; break; }
-    case 'model': { dropLive();
+    case 'model': { dropLive(); run.stageAt = Date.now(); run.liveTurn = 0;
       const o = parseModel(ev.text), key = 't' + ev.turn;
       const t = {key, n: ev.turn, ptok: ev.prompt_tokens, ctok: ev.completion_tokens, ttft: ev.ttft_ms, ms: ev.latency_ms, raw: ev.text || '',
                  act: (o && o.action) ? o : null, thought: (o && o.thought) ? o.thought : '', tool: null, invalid: null, repeat: 0, hint: (run.hints || {})[ev.turn] || '', callError: ev.error || ''};
@@ -2219,6 +2269,7 @@ function runOne(task, ablate, onEvent, onReset, backend){
     try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step})}); } catch(e){ return reject(e); }
     if (!r.ok){ let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch(_){} return reject(new Error('Submission failed: ' + m)); }
     const {run_id} = await r.json(); if (!run_id) return reject(new Error('The server returned no run id'));
+    if (onEvent === onEventRef) keepHere({sel: task, run: run_id});            // a reload picks this run up again
     let settled = false, es = null, lastEv = Date.now(); const t0 = performance.now();
     if (backend !== 'tacc') ctlShow(run_id);
     const finish = v => { if (!settled){ settled = true; ctlHide(); try { es && es.close(); } catch(_){} resolve(v); } };
@@ -2393,15 +2444,32 @@ function openReplay(rid, opt = {}){
   history.replaceState(null, '', location.pathname + '?run=' + encodeURIComponent(rid) + '#/solve');
   go('solve', {push: false, quiet: !!opt.quiet}); startReplay(rid);
 }
-function startReplay(rid){
-  $('#mState').textContent = 'replay'; $('#mState').className = 'badge'; setStatus('Replay', '', rid);
-  run = fresh(); openSteps.clear(); resetView(); $('#traceEmpty').innerHTML = ''; viewMode(); runningVerdict('Replaying ' + rid + ' …');
-  recoverRun(rid, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, 20000)
-    .then(sum => { run.done = sum; R.bulk = true; try { showDone(sum); } finally { R.bulk = false; } openSteps.add('submit'); renderFlow();
+function startReplay(rid, live = false){
+  $('#mState').textContent = live ? 'running' : 'replay'; $('#mState').className = 'badge'; setStatus(live ? 'Running' : 'Replay', '', rid);
+  run = fresh(); openSteps.clear(); resetView(); $('#traceEmpty').innerHTML = ''; viewMode(); runningVerdict((live ? 'Picking up ' : 'Replaying ') + rid + ' …');
+  if (live){ lockRun(true); startClock(); ctlShow(rid); }
+  const end = () => { if (live){ ctlHide(); lockRun(false); } };
+  recoverRun(rid, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, live ? 45 * 60000 : 20000)
+    .then(sum => { run.done = sum; R.bulk = !live; try { showDone(sum); } finally { R.bulk = false; } openSteps.add('submit'); renderFlow();
       const t = taskByName(String(sum.run_id || '').replace(/-s\d+$/, ''));
-      $('#sgId').textContent = 'replay · ' + rid; decrypt($('#sgTitle'), t ? (t.title || t.name) : (sum.run_id || rid)); })
-    .catch(() => { setStatus('Run not found', 'bad', rid); $('#verdict').innerHTML = ''; run = null; renderFlow(); });
+      if (!live){ $('#sgId').textContent = 'replay · ' + rid; decrypt($('#sgTitle'), t ? (t.title || t.name) : (sum.run_id || rid)); } end(); })
+    .catch(() => { setStatus('Run not found', 'bad', rid); $('#verdict').innerHTML = ''; run = null; renderFlow(); end(); });
 }
+/* after a reload: back to the challenge that was open; a run still going on the server is followed again, a finished one is shown */
+async function comeBack(h){
+  const t = h.sel ? taskByName(h.sel) : null; if (t) pick(t);
+  if (!h.run || !t) return;
+  let d = null; try { d = await (await fetch('/api/result?id=' + encodeURIComponent(h.run), {cache: 'no-store'})).json(); } catch(_){}
+  if (!d || d.error) return;
+  keepHere({run: h.run}); startReplay(h.run, !d.summary);
+  toast(d.summary ? 'Back where you were: your last run on ' + taskLabel(t) : 'Back where you were: the run kept going on the server');
+}
+/* reloading or leaving while something is under way, or with typed text not yet sent or saved: the browser asks first */
+addEventListener('beforeunload', e => {
+  const typed = ['#chatInput', '#upTitle', '#upQuery', '#upGold', '#impUrl', '#goldIn'].some(q => { const el = $(q); return !!(el && el.value && el.value.trim()); })
+    || qs('.cust').some(b => b.dataset.dirty === '1');
+  if (busy || chatBusy || typed){ e.preventDefault(); e.returnValue = ''; }
+});
 
 /* ---------------- lab ---------------- */
 /* ======================= Lab: results with statistics, comparisons, batches, step diff ======================= */
@@ -2797,13 +2865,22 @@ async function pickModel(act){
   pk.route = 'local'; pk.model = act.slice(6); rememberPick(chatId, pk); syncAskChip(); toast(prettyModel(pk.model) + ' answers in this conversation');
 }
 $('#qwenChipAsk').addEventListener('click', e => { $('#modelMenu') ? closeModelMenu() : openModelMenu(e.currentTarget); });
+/* a TACC run spends minutes in places the page cannot see (queue, job start, a long first answer): say which one, and for how long */
+function taccTick(){
+  if (!run || run.done) return; const vl = $('#verdict .vlabel'); if (!vl || !$('#verdict .verdict.run')) return;
+  const s = Math.round((Date.now() - (run.stageAt || Date.now())) / 1000), n = run.turns.length + 1;
+  const what = run.turns.length || run.liveTurn ? `turn ${n}: Qwen 27B is ${run.liveTurn === n ? 'writing' : 'thinking'}`
+    : run.taccStarted ? 'the job has started: loading the challenge, then the first answer' : (run.taccMsg || 'submitting the job');
+  vl.textContent = `Qwen 27B on TACC · ${what} · ${s} s`;
+}
 async function runOnTacc(){
   if (!sel || busy) return;
   clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation} · Qwen 27B on TACC`);
-  setStatus('Running', '', `${sel} · TACC`);
+  setStatus('Running', '', `${sel} · TACC`); run.stageAt = Date.now();
+  const tick = setInterval(taccTick, 1000);
   try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, 'tacc'); loadHistory(true); }
   catch(e){ stopClock(); $('#verdict').innerHTML = verdictHTML('ERROR', e.message, 'bad'); setStatus('Error', 'bad', e.message); hair(null, 'off'); }
-  finally { lockRun(false); }
+  finally { clearInterval(tick); lockRun(false); }
 }
 $('#runTacc').onclick = async () => { if (!sel) return;
   if (QW.phase === 'ready') return runOnTacc();
@@ -2908,8 +2985,9 @@ async function impImport(body, btn, host){
   try {
     const d = await impJSON('/api/catalog/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     const all = await loadTasks(), nw = (all.custom_tasks || []).find(x => x.name === d.task.name);
-    host.innerHTML = `<div class="impcard"><h3>Imported: ${d.task.source ? `<a class="srclink" href="${esc(d.task.source)}" target="_blank" rel="noopener noreferrer">${esc(d.task.title)}<span class="ext" aria-hidden="true">↗</span></a>` : esc(d.task.title)}</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known: a solve can be verified' : 'no gold flag: a solve cannot be confirmed correct'}${d.service ? ' · network service: likely unsolvable offline' : ''}`
+    host.innerHTML = `<div class="impcard"><h3>Imported: ${d.task.source ? `<a class="srclink" data-task="${esc(d.task.name)}" href="${esc(d.task.source)}" target="_blank" rel="noopener noreferrer">${esc(d.task.title)}<span class="ext" aria-hidden="true">↗</span></a>` : esc(d.task.title)}</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known: a solve can be verified' : 'no gold flag: a solve cannot be confirmed correct'}${d.service ? ' · network service: likely unsolvable offline' : ''}`
       + `${d.skipped && d.skipped.length ? ' · left out ' + plural(d.skipped.length, 'file') : ''}</p><div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
+    customEditor(host.querySelector('.impcard'), d.task.name);
     $('#impSolve').onclick = () => { if (nw) pick(nw); go('solve'); };
     $('#impAsk').onclick = () => { if (nw) pick(nw); go('chat'); };
     toast('Imported ' + d.task.title); railMark('upload', 'ok');
@@ -2925,6 +3003,80 @@ $('#pUpload').addEventListener('click', e => {
 $('#impUrlGo').onclick = () => { const u = $('#impUrl').value.trim(); if (!u){ $('#impUrl').focus(); return; } impImport({url: u}, $('#impUrlGo'), $('#impUrlMsg')); };
 $('#impUrl').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); $('#impUrlGo').click(); } });
 $('#sheetOnline').onclick = () => { closeSheet(); go('upload'); setTimeout(() => $('#impQ').focus({preventScroll: false}), 60); };
+
+/* ---------------- challenge preview: the statement, the files and the original page, without leaving the site ---------------- */
+let tpBack = null, tpRaf = 0, tpSeq = 0;
+async function previewTask(name){
+  const w = $('#tpWrap'), t = taskByName(name) || {}, my = ++tpSeq; tpBack = document.activeElement;
+  let d = null; try { const r = await fetch('/api/task?name=' + encodeURIComponent(name), {cache: 'no-store'}); if (r.ok) d = await jsonOf(r); } catch(_){}
+  if (my !== tpSeq) return;                         // closed (or another preview opened) while the details were loading
+  d = d || {name, title: t.title || name, category: t.category || '', statement: '', files: [], source: t.source || '', has_gold: !!t.has_gold, service: !!t.service};
+  $('#tpTitle').textContent = d.title || d.name;
+  $('#tpMeta').textContent = [d.name, d.category, d.has_gold ? 'answer known: a solve can be verified' : 'no answer: a solve cannot be confirmed'].filter(Boolean).join(' · ');
+  $('#tpBody').innerHTML = (d.statement ? `<div class="md">${mdLite(en(d.statement))}</div>` : '<p class="hint">No statement.</p>')
+    + (d.service ? '<p class="svcwarn"><b>Needs its original server.</b> Its real flag never shipped with these files, so a flag found here can only be a guess.</p>' : '')
+    + (d.files && d.files.length ? `<ul class="files">${d.files.map(f => `<li><span>${esc(f.name)}</span><span class="sz">${esc(kb(f.size))}</span></li>`).join('')}</ul>` : '');
+  $('#tpActs').innerHTML = (d.source ? `<a class="btn" href="${esc(d.source)}" target="_blank" rel="noopener noreferrer">Open the original page<span class="arr">↗</span></a>` : '')
+    + (taskByName(d.name) && sel !== d.name ? '<button class="btn primary" id="tpPick" type="button">Choose this challenge<span class="arr">→</span></button>' : '');
+  if ($('#tpPick')) $('#tpPick').onclick = () => { const tk = taskByName(d.name); closePreview(); if (!tk) return;
+    if (!$('#sheetWrap').hidden){ const row = qs('#tasks .row').find(x => x.dataset.name === d.name); if (row) pickFromSheet(tk, row); else { pick(tk); sheetShut(); } }
+    else pick(tk); };
+  w.hidden = false; cancelAnimationFrame(tpRaf); tpRaf = requestAnimationFrame(() => { tpRaf = 0; w.classList.add('open'); });
+  $('#tpWrap .close').focus({preventScroll: true});
+}
+/* closing within the opening frame must also cancel the pending "open", or the preview would reopen itself (and keep eating Esc) */
+function closePreview(){ const w = $('#tpWrap'); tpSeq++; cancelAnimationFrame(tpRaf); tpRaf = 0; if (w.hidden) return; w.classList.remove('open');
+  setTimeout(() => { if (!w.classList.contains('open')) w.hidden = true; }, reduced() ? 0 : 180);
+  if (tpBack && tpBack.isConnected && tpBack.focus) tpBack.focus({preventScroll: true}); }
+$('#tpWrap').addEventListener('click', e => { if (e.target.closest('[data-tpclose]')) closePreview(); });
+/* a link to a challenge's page opens the preview first; Cmd/Ctrl/Shift/middle click still opens the page itself */
+document.addEventListener('click', e => {
+  const a = e.target.closest('#tasks .src, #sgLink, .impcard .srclink'); if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+  const row = a.closest('#tasks .row'), name = row ? row.dataset.name : a.matches('#sgLink') ? sel : a.dataset.task;
+  if (!name) return; e.preventDefault(); e.stopPropagation(); previewTask(name);
+}, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#tpWrap').hidden){ e.preventDefault(); e.stopImmediatePropagation(); closePreview(); } }, true);
+
+/* ---------------- customise an imported (or uploaded) challenge: title, statement, category and its answer; the AI can draft the text ---------------- */
+const CUST_CATS = ['crypto', 'forensics', 'reverse', 'web', 'pwn', 'misc'];
+const catKey = c => { const s = String(c || '').toLowerCase(); return s.startsWith('crypt') ? 'crypto' : s.startsWith('foren') ? 'forensics' : s.startsWith('rev') ? 'reverse'
+  : s.startsWith('web') ? 'web' : /binary|pwn|exploit/.test(s) ? 'pwn' : /misc|general/.test(s) ? 'misc' : ''; };
+let custN = 0;
+async function customEditor(host, name){
+  const n = ++custN, box = document.createElement('details'); box.className = 'cust'; box.open = true; box.dataset.task = name;
+  box.innerHTML = `<summary>Customise this challenge</summary>
+    <div class="cfield"><label for="cu${n}t">Title</label><input id="cu${n}t" class="cu-title" maxlength="200" autocomplete="off"></div>
+    <div class="cfield"><label for="cu${n}q">Statement</label><textarea id="cu${n}q" class="cu-query" rows="7"></textarea></div>
+    <div class="cfield"><span class="lbl">Category</span><div class="cats" role="radiogroup" aria-label="Category">${CUST_CATS.map(c => `<button type="button" role="radio" aria-checked="false" data-cat="${c}">${c}</button>`).join('')}</div></div>
+    <div class="cfield"><label for="cu${n}g">Target flag</label><input id="cu${n}g" class="cu-gold" placeholder="The real flag, if you know it. Only its hash is kept" autocomplete="off" spellcheck="false"></div>
+    <div class="actions"><button class="btn primary cu-save" type="button">Save changes</button><button class="btn cu-ai" type="button">Draft with AI<span class="arr">✦</span></button></div>
+    <p class="hint cu-msg" aria-live="polite">The AI rewrites the title, statement and category from the files and the imported text. It never sees the answer.</p>`;
+  host.appendChild(box);
+  const q = s => box.querySelector(s), msg = (t, bad) => { const m = q('.cu-msg'); m.textContent = t; m.classList.toggle('bad', !!bad); };
+  const setCat = c => box.querySelectorAll('.cats button').forEach(b => b.setAttribute('aria-checked', b.dataset.cat === c ? 'true' : 'false'));
+  const fill = (el, v) => { if (v == null || el.value === v) return; el.value = v; if (!reduced()) el.animate([{backgroundColor: 'rgba(244,180,0,.28)'}, {backgroundColor: 'rgba(244,180,0,0)'}], {duration: 900, easing: 'ease-out'}); };
+  box.querySelector('.cats').addEventListener('click', e => { const b = e.target.closest('button[data-cat]'); if (b){ setCat(b.dataset.cat); box.dataset.dirty = '1'; } });
+  box.addEventListener('input', () => { box.dataset.dirty = '1'; });
+  try { const r = await fetch('/api/task?name=' + encodeURIComponent(name), {cache: 'no-store'}); if (r.ok){ const d = await jsonOf(r);
+    q('.cu-title').value = d.title || ''; q('.cu-query').value = d.statement || ''; setCat(catKey(d.category)); } }
+  catch(e){ msg(en(e.message), true); }
+  q('.cu-ai').onclick = async () => { const b = q('.cu-ai'); b.disabled = true; b.classList.add('busy'); msg('Drafting…');
+    try { const j = await apiPost('/api/custom/draft', {task: name});
+      fill(q('.cu-title'), j.title); fill(q('.cu-query'), j.statement); if (j.category) setCat(j.category);
+      msg(`${j.by === 'rules' ? 'Rule-based draft' : 'Drafted by ' + j.by}${j.note ? ' (' + en(j.note) + ')' : ''} · solvable offline: ${j.offline}${j.why ? ', ' + en(j.why) : ''}. Check it, then save.`); }
+    catch(e){ msg(en(e.message), true); } finally { b.disabled = false; b.classList.remove('busy'); } };
+  q('.cu-save').onclick = async () => {
+    const body = {task: name, title: q('.cu-title').value, query: q('.cu-query').value}, c = box.querySelector('.cats [aria-checked=true]'); if (c) body.category = c.dataset.cat;
+    try { await apiPost('/api/custom/edit', body);
+      const g = q('.cu-gold').value.trim();
+      if (g){ await apiPost('/api/custom/gold', {task: name, gold: g}); q('.cu-gold').value = ''; }
+      await loadTasks(); const t = taskByName(name);
+      const head = host.querySelector('.srclink, h3'); if (t && head && head.matches('.srclink')) head.firstChild.textContent = t.title;
+      if (sel === name && t) pick(t);
+      box.dataset.dirty = ''; msg('Saved' + (g ? '. The answer is set: later runs are judged against it.' : '.')); toast('Saved ' + (t ? t.title : name)); }
+    catch(e){ msg(en(e.message), true); } };
+  return box;
+}
 
 /* ---------------- ask: threads on the left, a back-and-forth conversation on the right ---------------- */
 /* ---------------- Markdown for the tutor's replies (and archive READMEs) ----------------
@@ -3442,7 +3594,8 @@ loadModels(); renderArms(); qwenPoll();
   idle(() => { if (!HIST) loadHistory(true); idle(() => initChatFx()); });   // heavy pages are prepared while idle, so switching never waits
   if (rid){ startReplay(rid); return; }
   renderFlow();
-  const want = q.get('task'); if (!want) return;
+  const want = q.get('task');
+  if (!want){ const h = here(); if (h.sel) boot.then(() => comeBack(h)); return; }
   boot.then(() => { const t = taskByName(want); if (!t) return; pick(t); if (q.get('auto') === '1') setTimeout(() => { const b = $('#run'); if (b && !b.disabled) b.click(); }, 50); });
 })();
 </script>

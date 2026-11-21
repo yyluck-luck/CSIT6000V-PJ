@@ -154,6 +154,27 @@ def make_text_task(root: Path, query: str) -> Task:
                 assets_dir="tasks/text-998", suggested_tools=[], scope="core")
 
 
+class TestBriefIsTheFullStatement(unittest.TestCase):
+    """题库的 title 是 query 的前 90 个字符（显示用）。给模型的题面必须是完整的 query：crypto-086 的密文在后半截。"""
+
+    def test_brief_and_probe_use_the_whole_statement(self):
+        from flagpilot import probe
+        q = ("Another slight twist on a classic, see if you can recover the flag. (Wrap with picoCTF{}) "
+             "lejjlnjmjndkmjinkilbmlljjkmnakmmighhocmllojhjmaijpiohnlojmokjkja new_vignere.py")
+        t = Task(task_id=86, name="crypto-086", category="Cryptography", title=q[:90], query=q, gold_sha256="x",
+                 assets=["new_vignere.py"], assets_dir="tasks/crypto-086", suggested_tools=[], scope="core")
+        self.assertIn("lejjlnjmjndkm", t.brief)
+        self.assertIn("lejjlnjmjndkm", probe._body(t, "brief", Path(".")))
+
+    def test_the_real_task_set_never_hides_part_of_a_statement(self):
+        index = Path(__file__).resolve().parent.parent / "tasks"
+        if not (index / "index" / "tasks.jsonl").exists():
+            self.skipTest("no task set here")
+        from flagpilot.tasks import load_index
+        for t in load_index(index):
+            self.assertIn(t.query.strip(), t.brief, t.name)
+
+
 class TestChallengeTextMaterial(unittest.TestCase):
     """题面依赖检验：脚本不读附件时，flag 必须随取自题面的字面量一起变，才算"由题面材料算出"。"""
 

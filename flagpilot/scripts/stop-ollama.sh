@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 停止 FlagPilot 起的进程。
 #
-#   ./scripts/stop.sh          停前端；ollama 只有在"是 start.sh 起的"时候才停
-#   ./scripts/stop.sh --all    连 ollama 一起停（哪怕是你自己起的）
+#   ./scripts/stop-ollama.sh          停前端；ollama 只有在"是 start.sh 起的"时候才停
+#   ./scripts/stop-ollama.sh --all    连 ollama 一起停（哪怕是你自己起的）
 #
 # 只杀自己起的东西：动别人的进程是数据丢失级的事故，宁可少停。
 set -uo pipefail

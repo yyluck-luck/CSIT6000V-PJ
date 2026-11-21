@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # 一键启动本地开发环境：模型服务（Ollama）+ Web 前端。
 #
-#   ./scripts/start.sh                 # 默认模型 qwen3:8b，端口 8080
-#   ./scripts/start.sh qwen3:14b       # 指定模型（必须已在 ollama 里 pull 过）
-#   FP_PORT=8090 ./scripts/start.sh    # 换端口
+#   ./scripts/start-ollama.sh                 # 默认模型 qwen3:8b，端口 8080
+#   ./scripts/start-ollama.sh qwen3:14b       # 指定模型（必须已在 ollama 里 pull 过）
+#   FP_PORT=8090 ./scripts/start-ollama.sh    # 换端口
 #
 # 环境变量：
 #   FP_MODEL       默认模型名
@@ -29,7 +29,7 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 die()  { printf '  \033[31m✗\033[0m %s\n' "$1"; exit 1; }
 
-if [[ "${1:-}" == "--stop" ]]; then exec "$HERE/scripts/stop.sh"; fi
+if [[ "${1:-}" == "--stop" ]]; then exec "$HERE/scripts/stop-ollama.sh"; fi
 
 echo "== 1/3 模型服务 =="
 if "${CURL[@]}" http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
@@ -74,7 +74,7 @@ echo "== 2/3 前端 =="
 if "${CURL[@]}" "http://127.0.0.1:$PORT/api/tasks" >/dev/null 2>&1; then
   CUR="$("${CURL[@]}" "http://127.0.0.1:$PORT/api/models" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("current",""))' 2>/dev/null)"
   ok "已在运行，当前模型 $CUR"
-  [[ "$CUR" != "$MODEL" ]] && warn "端口被占且模型不同：网页顶栏可切换，或先 ./scripts/stop.sh"
+  [[ "$CUR" != "$MODEL" ]] && warn "端口被占且模型不同：网页顶栏可切换，或先 ./scripts/stop-ollama.sh"
 else
   (
     cd "$HERE" || exit 1
@@ -100,6 +100,6 @@ cat <<EOF
   打开：  http://127.0.0.1:$PORT
   模型：  ${MODEL}（网页顶栏可切换）
   日志：  $RUN_DIR/web.log   $RUN_DIR/ollama.log
-  停止：  ./scripts/stop.sh
+  停止：  ./scripts/stop-ollama.sh
 
 EOF

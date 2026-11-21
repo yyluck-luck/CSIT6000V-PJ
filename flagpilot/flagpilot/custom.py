@@ -30,6 +30,10 @@ from pathlib import Path, PurePosixPath
 
 from .tasks import Task, web_url
 
+SERVICE_NOTE = ("Note: in the original CTF this challenge ran as a network service. The sandbox here has no network, so the "
+                "service cannot be reached; study the files, and do not try to install packages or connect anywhere.")
+_SERVICE_PHRASE = "ran as a network service"
+
 MAX_FILES = 20
 MAX_FILE_BYTES = 32 * 1024 * 1024          # 单文件 32MB
 MAX_TOTAL_BYTES = 128 * 1024 * 1024        # 合计 128MB
@@ -235,6 +239,28 @@ def set_gold(name: str, gold: str, root: Path | None = None, source: str = "you"
     return _write_meta(f, meta)
 
 
+def update(name: str, title: str | None = None, query: str | None = None, category: str | None = None,
+           root: Path | None = None) -> Task:
+    """改导入 / 上传题的标题、题面、类别（网页上"Customise"，可以先让 AI 起草）。
+
+    原来是网络服务的题，改题面时把这一点记在 meta 里：题面里那句说明被删掉，界面的提示和给模型的说明也还在。
+    """
+    f = _meta_file(name, root)
+    meta = json.loads(f.read_text(encoding="utf-8"))
+    if title is not None:
+        t = " ".join(str(title).split())[:200]
+        if not t:
+            raise ValueError("The title cannot be empty")
+        meta["title"] = t
+    if query is not None:
+        if _SERVICE_PHRASE in (meta.get("query") or ""):
+            meta["service"] = True
+        meta["query"] = str(query).strip()[:6000]
+    if category is not None:
+        meta["category"] = " ".join(str(category).split())[:40] or "custom"
+    return _write_meta(f, meta)
+
+
 def clear_gold(name: str, root: Path | None = None) -> Task:
     """删掉保存的答案（存错了，比如存成了模型自己编的 flag）。之后的运行回到"无答案可比"。"""
     f = _meta_file(name, root)
@@ -260,10 +286,14 @@ def _to_task(meta: dict, chal: Path) -> Task:
     files = list(meta.get("assets") or meta.get("files") or [])
     title = meta.get("title") or ""
     query = meta.get("query") or ""
+    service = bool(meta.get("service")) or _SERVICE_PHRASE in query
     brief = title
     if query and query.strip() != title.strip():
         brief = f"{title}\n\n{query}"
+    if service and _SERVICE_PHRASE not in query:
+        brief += "\n\n" + SERVICE_NOTE            # 题面被改写过：模型仍要知道服务连不上
     return Task(
+        service=service,
         source=web_url(meta.get("source")) or _source_from_query(meta.get("query") or ""),
         # 负数 id：与内置题库（正整数）不可能撞
         task_id=-abs(hash(meta["slug"])) % 900000 - 1000,

@@ -43,9 +43,10 @@ let wsUrl = null;
 for (let i = 0; i < 100 && !wsUrl; i++) { try { const l = await (await fetch(`http://127.0.0.1:${cport}/json/list`)).json(); wsUrl = (l.find(t => t.type === "page") || {}).webSocketDebuggerUrl; } catch {} if (!wsUrl) await sleep(100); }
 const ws = new WebSocket(wsUrl);
 await new Promise(r => (ws.onopen = r));
-let seq = 0; const pending = new Map(), pageErrors = [];
+let seq = 0; const pending = new Map(), pageErrors = [], dialogs = [];
 ws.onmessage = m => { const d = JSON.parse(m.data);
   if (d.id && pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); return; }
+  if (d.method === "Page.javascriptDialogOpening"){ dialogs.push(d.params.type); send("Page.handleJavaScriptDialog", { accept: true }); return; }   // "leave this page?" → yes
   if (d.method === "Runtime.exceptionThrown") pageErrors.push((d.params.exceptionDetails.exception || {}).description || d.params.exceptionDetails.text);
   else if (d.method === "Runtime.consoleAPICalled" && d.params.type === "error") pageErrors.push("console.error: " + d.params.args.map(a => a.value ?? a.description).join(" "));
   else if (d.method === "Log.entryAdded" && d.params.entry.level === "error" && !/favicon/.test(d.params.entry.url || "")) pageErrors.push("log: " + d.params.entry.text); };
@@ -72,7 +73,7 @@ try {
   check("landing fills the window: no side table, cards span the width, one screen", !fill.table && fill.right < 120 && fill.bottom <= fill.vh && fill.ox <= 0, JSON.stringify(fill));
   const smallLanding = await js(SMALL); check("no small text on the landing", !smallLanding.length, smallLanding.join(" | "));
   const w0 = await js("document.querySelector('#flip .tw').textContent");
-  const lay = []; for (let i = 0; i < 34; i++){ lay.push(await js("(() => { const h = document.querySelector('#hero h1'), b = h.querySelector('.l1b').getBoundingClientRect(); return Math.round(h.getBoundingClientRect().height) + ':' + Math.round(b.top); })()")); await sleep(100); }
+  const lay = []; for (let i = 0; i < 34; i++){ lay.push(await js("(() => { const h = document.querySelector('#hero h1'), b = h.querySelector('.ln2').getBoundingClientRect(); return Math.round(h.getBoundingClientRect().height) + ':' + Math.round(b.top); })()")); await sleep(100); }
   check("layout text flip cycles", await until(`document.querySelector('#flip .tw').textContent.trim() !== ${JSON.stringify(w0.trim())}`, 4000));
   check("hero: typing the next word never moves a line break", new Set(lay).size === 1, [...new Set(lay)].join(' '));
   // "solves" under a liquid-glass lens: it glides by itself, follows the pointer over the word, and its copy is the magnified word
@@ -81,9 +82,9 @@ try {
   const lb = await js("(() => { const r = document.querySelector('#lensWord').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })()");
   await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: lb[0] + lb[2] * .8, y: lb[1] + lb[3] / 2 }); await sleep(800);
   const lensC = await js(lensX + " + document.querySelector('#lensWord .lens').offsetWidth / 2");
-  const magOk = await js("(() => { const m = document.querySelector('#lensWord .mag'); return m.textContent === 'solves' && parseFloat(getComputedStyle(m).fontSize) > parseFloat(getComputedStyle(document.querySelector('#lensWord')).fontSize) * 1.1; })()");
+  const magOk = await js("(() => { const m = document.querySelector('#lensWord .mag'); return m.textContent === 'Solve' && parseFloat(getComputedStyle(m).fontSize) > parseFloat(getComputedStyle(document.querySelector('#lensWord')).fontSize) * 1.1; })()");
   await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 880 });
-  check("hero: a liquid-glass lens glides over 'solves' and follows the pointer", Math.abs(lx2 - lx1) > 1 && Math.abs(lensC - lb[2] * .8) < lb[2] * .12 && magOk,
+  check("hero: a liquid-glass lens glides over 'Solve' and follows the pointer", Math.abs(lx2 - lx1) > 1 && Math.abs(lensC - lb[2] * .8) < lb[2] * .12 && magOk,
     JSON.stringify({lx1: Math.round(lx1), lx2: Math.round(lx2), lensC: Math.round(lensC), want: Math.round(lb[2] * .8), magOk}));
   // notifications come from the Dynamic Island at the top (there is no bottom pop-up any more); a tap closes one early
   await js("toast('Hello from the island')");
@@ -266,6 +267,7 @@ try {
       if (u.startsWith('/api/catalog/challenges')) return J({rows: [{path: 'ctfs/picoCTF/2019/crypto/caesar', ctf: 'picoCTF', year: '2019', category: 'Cryptography', name: 'caesar', files: 2, bytes: 2048, readme: true}]});
       if (u.startsWith('/api/catalog/preview')) return J({path: 'ctfs/picoCTF/2019/crypto/caesar', readme: 'Decrypt this message.', files: [{name: 'ciphertext', size: 1024}], skipped: [{name: 'solve.py', why: 'looks like a solution'}], gold: false});
       if (u.startsWith('/api/catalog/import')){ window.__imp.push(JSON.parse(o.body)); return J({task: {name: 'custom-ui-imported', title: 'caesar', n_assets: 1}, gold: false, skipped: [{name: 'solve.py', why: 'looks like a solution'}]}); }
+      if (u.startsWith('/api/task?name=custom-ui-imported')) return J({name: 'custom-ui-imported', title: 'caesar', category: 'crypto', statement: 'Decrypt the message.', files: [{name: 'msg.txt', size: 40}], source: '', custom: true, has_gold: false, service: false});
       return window.__F(u, o); }; })()`);
   await js("(() => { const q = document.querySelector('#impQ'); q.value = 'pico'; q.dispatchEvent(new Event('input', {bubbles: true})); })()");
   const ctfChip = await until("document.querySelector('#impRes [data-ctf=\"picoCTF\"]')", 3000);
@@ -279,6 +281,9 @@ try {
   check("upload: search the online archive, open a CTF, preview a challenge (solutions left out), import it", ctfChip && listed2 && previewed && imported && (await js("(window.__imp[0] || {}).path")) === "ctfs/picoCTF/2019/crypto/caesar",
     JSON.stringify({ctfChip, listed2, previewed, imported}));
   // an imported challenge goes by its own title, and the title opens the challenge's page
+  await js(`(() => { window.__F2 = window.fetch; window.fetch = (u, o) => String(u).startsWith('/api/task?name=custom-20261120-000000-children_tcache-ab12')
+    ? Promise.resolve(new Response(JSON.stringify({name: 'custom-20261120-000000-children_tcache-ab12', title: 'Children Tcache', category: 'Binary Exploitation', statement: 'Heap.', files: [], source: 'https://github.com/sajjadium/ctf-archives/tree/main/ctfs/HITCON/2018/pwn/children_tcache', has_gold: false, service: true}), {headers: {'Content-Type': 'application/json'}}))
+    : window.__F2(u, o); })()`);
   const linked = await js(`(() => { const src = 'https://github.com/sajjadium/ctf-archives/tree/main/ctfs/HITCON/2018/pwn/children_tcache';
     MINE.push({name: 'custom-20261120-000000-children_tcache-ab12', title: 'Children Tcache', custom: true, source: src, category: 'Binary Exploitation', has_gold: false, n_assets: 2});
     renderTaskList(); const keep = sel;
@@ -289,8 +294,24 @@ try {
     const out = [row && row.querySelector('.nm').textContent, a && a.getAttribute('href') === src, stayed, document.querySelector('#sgLink').getAttribute('href') === src,
       document.querySelector('#sgTitle').textContent === 'Children Tcache' || true, document.querySelector('#mountChip .tn').textContent, taskLabel('custom-20261120-000000-children_tcache-ab12')];
     MINE.pop(); pick(null); renderTaskList(); return out; })()`);
-  check("imported challenges go by their title; the title and the list link open the challenge's page (the link does not pick it)",
-    linked[0] === "Children Tcache" && linked[1] && linked[2] && linked[3] && linked[5] === "Children Tcache" && linked[6] === "Children Tcache", JSON.stringify(linked));
+  const pvOpen = await until("!document.querySelector('#tpWrap').hidden && document.querySelector('#tpTitle').textContent === 'Children Tcache' && (document.querySelector('#tpActs a') || {}).href === 'https://github.com/sajjadium/ctf-archives/tree/main/ctfs/HITCON/2018/pwn/children_tcache'", 3000);
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+  const pvShut = await until("document.querySelector('#tpWrap').hidden", 2000);
+  await js("window.fetch = window.__F2");
+  check("imported challenges go by their title; the list link previews the challenge here (with its original page) and does not pick it",
+    linked[0] === "Children Tcache" && linked[1] && linked[2] && linked[3] && linked[5] === "Children Tcache" && linked[6] === "Children Tcache" && pvOpen && pvShut, JSON.stringify({linked, pvOpen, pvShut}));
+  // customise an imported challenge: the editor loads it, the AI drafts (rules with the demo model), Save keeps title, statement, category and answer
+  const cuName = await js(`fetch('/api/upload', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: 'to customise', query: 'raw text', category: 'misc', files: [{name: 'capture.pcap', data_b64: btoa('pcap bytes')}]})}).then(r => r.json()).then(d => d.task.name)`);
+  await js(`(() => { const h = document.createElement('div'); h.id = 'cuHost'; h.className = 'impcard'; document.querySelector('#pUpload').appendChild(h); customEditor(h, ${JSON.stringify(cuName)}); })()`);
+  const cuLoaded = await until("document.querySelector('#cuHost .cu-title') && document.querySelector('#cuHost .cu-title').value === 'to customise'", 3000);
+  await js("document.querySelector('#cuHost .cu-ai').click()");
+  const cuDraft = await until("/capture\\.pcap/.test(document.querySelector('#cuHost .cu-query').value) && document.querySelector('#cuHost .cats [aria-checked=true]') && document.querySelector('#cuHost .cats [aria-checked=true]').dataset.cat === 'forensics' && /Rule-based draft/.test(document.querySelector('#cuHost .cu-msg').textContent)", 4000);
+  await js("(() => { const h = document.querySelector('#cuHost'); h.querySelector('.cu-title').value = 'A strange pcap'; h.querySelector('.cu-gold').value = 'picoCTF{pcap_answer}'; h.querySelector('.cu-save').click(); })()");
+  let cuSaved = null; for (let i = 0; i < 30 && !(cuSaved && cuSaved.title === 'A strange pcap' && cuSaved.has_gold); i++){ await sleep(120); cuSaved = await js(`fetch('/api/task?name=${cuName}', {cache: 'no-store'}).then(r => r.json())`); }
+  await js(`(() => { document.querySelector('#cuHost').remove(); return fetch('/api/custom/delete', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: ${JSON.stringify(cuName)}})}).then(() => loadTasks()); })()`);
+  check("customise an imported challenge: AI draft, then save title, statement, category and answer",
+    cuLoaded && cuDraft && !!cuSaved && cuSaved.title === 'A strange pcap' && cuSaved.category === 'forensics' && cuSaved.has_gold === true && /capture\.pcap/.test(cuSaved.statement),
+    JSON.stringify({cuLoaded, cuDraft, cuSaved: cuSaved && {title: cuSaved.title, category: cuSaved.category, has_gold: cuSaved.has_gold}}));
   const smallUp = await js(SMALL); check("no small text on Upload", !smallUp.length, smallUp.join(" | "));
   await noCJK("upload");
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click(); document.querySelector('[data-taskpill]') && null");
@@ -521,6 +542,17 @@ try {
   const askPickName = await js("(() => { const r = [...document.querySelectorAll('#tasks .row')].filter(x => !x.hidden && x.dataset.name !== sel)[0]; r.click(); return r.dataset.name; })()");
   const askStay = await until(`document.querySelector('.page.on').dataset.page === 'chat' && document.querySelector('#sheetWrap').hidden && sel === ${JSON.stringify(askPickName)}`, 2000);
   check("picking a challenge from the Lab or Ask stays on that page", labStay && askStay, JSON.stringify({labStay, askStay}));
+
+  // a reload comes back to the open challenge and picks its run up again; while a run is going the browser asks first
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  const backTask = await js("(() => { const t = TASKS.find(x => x.has_gold) || TASKS[0]; pick(t); return t.name; })()");
+  await js("document.querySelector('#run').click()"); await until("busy && here().run", 3000);
+  const runWas = await js("here().run"); const dlgBefore = dialogs.length;
+  await send("Page.reload"); await until("document.readyState === 'complete'", 10000); await sleep(400);
+  const asked = dialogs.length > dlgBefore && dialogs[dialogs.length - 1] === "beforeunload";
+  const cameBack = await until(`sel === ${JSON.stringify(backTask)} && !document.querySelector('#work').hidden && document.querySelector('#landing').hidden`, 6000);
+  const runBack = await until(`here().run === ${JSON.stringify(runWas)} && /VERIFIED|UNVERIFIED|WRONG|BUDGET|REPRODUCED/.test(document.querySelector('#verdict').textContent)`, 15000);
+  check("reload: asks first while a run is going, then comes back to the challenge and its run", asked && cameBack && runBack, JSON.stringify({asked, cameBack, runBack, runWas}));
 
   // the logo goes home: Solve's landing even when a challenge is open
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
