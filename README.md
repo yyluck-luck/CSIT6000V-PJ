@@ -1,5 +1,7 @@
 # FlagPilot: a replay-verified CTF agent
 
+[![tests](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml/badge.svg)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml)
+
 FlagPilot is an end-to-end agent system that solves offline CTF challenges and **proves** that it
 solved them. A correct flag is not enough. The agent must also submit a standalone `solve.py`, and
 the verifier reruns that script in a fresh directory containing only the original challenge files.
@@ -93,11 +95,11 @@ in a few seconds. Qwen on TACC needs no API key, only your own TACC account with
 
 | Page | Use |
 |---|---|
-| **Solve** | Pick a challenge (`/` or ⌘K to search, ↗ previews it) and press **Run** to watch the agent work step by step. *Step mode* holds each command until you approve, edit or skip it, and a hint box reaches the agent mid-run. The verdict says whether the flag was **proved**, and if not, exactly why. A reload comes back to the same challenge and picks a run that is still going up again. **Run on TACC** sends the same run to Qwen 27B on the course GPU cluster as a batch job: the first step usually takes 1–3 minutes, and the model's text streams in as it is written. |
+| **Solve** | Pick a challenge (`/` or ⌘K to search, ↗ previews it) and press **Run** to watch the agent work step by step. *Step mode* holds each command until you approve, edit or skip it, and a hint box reaches the agent mid-run. **Finish** ends a run at once and keeps what it did. The verdict says whether the flag was **proved**, and if not, exactly why; a failed or unconfirmed result offers **Run again with a hint**. A reload comes back to the same challenge and picks a run that is still going up again. **Run on TACC** sends the same run to Qwen 27B on the course GPU cluster as a batch job: the first step usually takes 1–3 minutes, and the model's text streams in as it is written. The **Qwen on TACC** chip opens a panel that shows the session starting step by step (waiting for GPUs, loading the model, warming up) with the time left; a session too close to its one-hour limit for a run asks before starting a new one. |
 | **Runs** | Every past attempt, replayable step by step. |
 | **Lab** | Experiments on the agent: results with 95% intervals and paired tests, *Compare* tiers and models on one challenge, *Batch* over many challenges, *Diff* two runs, and a memorization *Probe*. |
-| **Upload** | Upload your own challenge (files, statement, optional answer), or find one in a public archive of past CTFs and import it. An imported challenge can be previewed in place, customised (title, statement, category, target flag) and drafted by the AI, which never sees the answer. |
-| **Ask** | A tutor that can run commands in the challenge's sandbox. Send several messages in a row (they queue, dashed until answered), recall any message to edit and resend it, and read replies as Markdown. Every flag the tutor states is checked. |
+| **Upload** | Upload your own challenge (files, statement, optional answer), or find one in a public archive of past CTFs and import it. *Paste a link* takes a GitHub folder or file, a raw or direct file link, a picoCTF practice link or just a challenge's name; a link that is a little wrong (no https, a branch or path that does not exist, the wrong letter case, one file of a challenge, a folder holding many challenges) is corrected or turned into a list to pick from, and the page says what it fixed. An imported challenge can be previewed in place, customised (title, statement, category, target flag) and drafted by the AI, which never sees the answer. |
+| **Ask** | A tutor that can run commands in the challenge's sandbox. It answers in the language of your question. Send several messages in a row (they queue, dashed until answered), recall any message to edit and resend it, and read replies as Markdown with math. Every flag the tutor states is checked. |
 
 The model menu lists providers (Gemini, DeepSeek, GLM, Qwen, GPT). For each, the app uses the cheapest
 model and switches silently to the next one when a model runs out of quota or fails. Notifications
@@ -330,14 +332,16 @@ Total elapsed time on a laptop: under one minute. No GPU, no API key, no network
 | # | Claim | Where | How to check |
 |---|---|---|---|
 | C1 | A flag counts only when a standalone script reproduces it in a clean sandbox and the answer depends on the challenge's material; typed-in, encoded or material-free answers are rejected | [How an attempt is judged](#how-an-attempt-is-judged) | Getting Started Step 3 (a correct run flips to `wrong` when the gold changes); `bash scripts/verify.sh` (check "判据负向"); `tests/test_verify.py` |
-| C2 | Main result: Qwen 3.8 27B on the 20-challenge dev split, four agent tiers B0–B3, two attempts each (n = 40 per tier), with Wilson 95% intervals and exact McNemar tests | [§3, batch `v7`](#3-reproducing-the-evaluation) | Offline from the committed records in `flagpilot/results/tacc/v7` (no model, no cluster); rerun on TACC with `deploy/tcloud/pipeline.sh` |
-| C3 | Raw flag accuracy overstates solving: per tier, how many correct flags the agent could not back with a reproducible script (the raw − verified gap) | §3, batch `v7` | Same records and commands as C2 |
-| C4 | Two engine fixes made during the evaluation (the full statement reaches the model; material written in the statement counts) raise the verified rate: `v6` as run, `v6` re-scored, `v7` | §3, batches `v6` and `v7` | `python3 scripts/rescore.py results/tacc/v6` re-checks every `v6` attempt with today's verifier |
-| C5 | The system works end to end: web app, live runs, replays, Lab statistics, hosted models with fail-over, and Qwen on TACC through the course SDK | Getting Started | `./start.sh`, `./start.sh --check`, `bash scripts/verify.sh` (14 checks, including 88 browser checks) |
+| C2 | Main result: on the 20-challenge dev split, Qwen 3.8 27B verifies 33 of 40 attempts as the bare model (B0, 82.5%) and 35 of 40 as the full agent (B3, 87.5%), two attempts per challenge, with Wilson 95% intervals; the two tiers are not distinguishable (exact McNemar p = 0.63) | [§3, batch `v7`](#3-reproducing-the-evaluation) | Offline from the committed records in `flagpilot/results/tacc/v7` (no model, no cluster); rerun on TACC with `deploy/tcloud/pipeline.sh` |
+| C3 | The verifier's rejections are checked, not assumed: re-scoring every recorded attempt with today's verifier found 19 correct solutions that had been rejected in `v6` (17 decode data written in the statement, one prints a flag whose encoded form is part of the material, one searches for a key) and one in `v7`; with both batches re-scored, B3 goes from 31 to 36 of 40 and B0 from 31 to 33 | §3, batches `v6` and `v7` | `python3 scripts/rescore.py results/tacc/v6` and `results/tacc/v7` |
+| C4 | Failures are attributed from the traces: in `v6`, all 85 replies that broke the JSON protocol came from the nine challenges whose statement had been cut short; in `v7` the remaining 26 (18 at B0, 8 at B3) are replies the model ended on its own in the middle of the JSON (seven of them while copying an RSA modulus out of an earlier tool output) | §3 and Known limitations, item 16 | `python3 -m flagpilot report --batch tacc/v7/tacc-dev-v7-B0` (failure attribution) on the committed records |
+| C5 | The system works end to end: web app, live runs, replays, Lab statistics, hosted models with fail-over, and Qwen on TACC through the course SDK | Getting Started | `./start.sh`, `./start.sh --check`, `bash scripts/verify.sh` (14 checks, including 95 browser checks) |
 
-Not claimed: the E3 efficiency grid and the E4 escalation study (§3) are implemented and tested but
-were not run at scale, so no result is reported for them. The single DeepSeek baseline in
-`docs/EVALUATION_BASELINE.md` is reported as measured; it is not a matched comparison.
+Not claimed: tiers B1 and B2 of `v7` did not run (the TACC home directory filled up; §3), so the
+four-tier ladder is reported only for `v6`. The E3 efficiency grid and the E4 escalation study (§3)
+are implemented and tested but were not run at scale, so no result is reported for them. The single
+DeepSeek baseline in `docs/EVALUATION_BASELINE.md` is reported as measured; it is not a matched
+comparison.
 
 ### Contents of this artifact
 
@@ -353,7 +357,8 @@ were not run at scale, so no result is reported for them. The single DeepSeek ba
 | `flagpilot/tests/` | Unit and integration tests (§6) |
 | `flagpilot/results/tacc/` | The evaluation's run records (every attempt's trace, script and write-up, and each batch's ledger and summary) for checking every reported number offline (§3) |
 | `flagpilot/scripts/` | Self-check, browser tests, re-scoring, secret scan, split generation, task-set builder, cluster tunnel, an Ollama start script |
-| `flagpilot/deploy/` | Slurm templates and an upload helper for a general cluster |
+| `flagpilot/deploy/` | The TACC jobs used through the course SDK (`tcloud/`: serving, client, cleanup, the pipeline), plus Slurm templates and an upload helper for a general cluster |
+| `.github/workflows/` | Continuous integration: the unit tests on Python 3.11–3.13 and syntax checks, on every push |
 | `flagpilot/docs/` | Design, dataset contract, TACC deployment, implementation status, screenshots |
 
 **Bundled demo tasks.** `demo-tasks/` contains three synthetic challenges written for this artifact.
@@ -498,13 +503,63 @@ cache-hit, cache-miss, and output tokens separately.
 
 ### 3. Reproducing the evaluation
 
-Each experiment writes a Markdown summary and a `runs.jsonl` ledger under `runs/<batch>/`.
-Measured rates and their current status are tabulated in `flagpilot/docs/STATUS.md`
-(§二 commitments, §四 recorded verification); design rationale is in `flagpilot/docs/DESIGN.md`.
-DeepSeek Flash B3 attempted 43 of 53 frozen tasks. It returned 25 correct flags (58.1%) and verified
-22 solves by replay (51.2%). The [evaluation baseline](flagpilot/docs/EVALUATION_BASELINE.md) records
-the frozen split, per-split results, and run conditions. The commands below describe the formal
-experiment configurations.
+The reported results are batches of the TACC pipeline (Qwen 3.8 27B AWQ served by the course's vLLM
+job) on the 20 core challenges of the frozen dev split (`docs/splits-picoctf-53.json`):
+
+| Batch | What | Claims |
+|---|---|---|
+| `v7` | Tiers B0 and B3, two attempts per challenge (n = 40 per tier), the final engine (commit `103411e`); B1 and B2 did not run (see below) | C2, C3, C4 |
+| `v6` | All four tiers B0–B3, two attempts each, before the fixes; as run and re-scored | C3, C4 |
+| `v5` | B0 and B3, one attempt each; a sanity check against Gemini | — |
+
+Each batch writes a Markdown summary and a `runs.jsonl` ledger; the records of all three are in
+`flagpilot/results/tacc/` (every attempt's trace, script and write-up). Design rationale is in
+`flagpilot/docs/DESIGN.md`. A separate DeepSeek Flash B3 baseline on all 53 frozen tasks (43
+attempted, 25 correct flags, 22 verified) and the split's construction are in the
+[evaluation baseline](flagpilot/docs/EVALUATION_BASELINE.md).
+
+**Check the reported numbers offline** (no model, no cluster; from `flagpilot/`):
+
+```bash
+export FLAGPILOT_RUNS="$PWD/results"
+python3 -m flagpilot compare --batches tacc/v7/tacc-dev-v7-B0,tacc/v7/tacc-dev-v7-B3
+python3 -m flagpilot pair --a tacc/v7/tacc-dev-v7-B0 --b tacc/v7/tacc-dev-v7-B3   # exact McNemar on matched attempts
+python3 -m flagpilot pair --a tacc/v6/tacc-dev-v6-B3 --b tacc/v7/tacc-dev-v7-B3   # v6 -> v7, as run
+python3 -m flagpilot report --batch tacc/v7/tacc-dev-v7-B0                         # failure attribution
+```
+
+**Re-score every attempt with today's verifier** (the replays need the challenge task set, §1, and
+pycryptodome and gmpy2, as the TACC jobs had):
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
+export FLAGPILOT_SANDBOX_PYTHONPATH="$(.venv/bin/python -c 'import site; print(site.getsitepackages()[0])')"
+.venv/bin/python scripts/rescore.py results/tacc/v7
+.venv/bin/python scripts/rescore.py results/tacc/v6
+```
+
+`compare` prints, per tier, the verified rate, raw flag accuracy and their gap with Wilson intervals,
+mean turns and tokens. The same records open in the web app: **Runs** replays any attempt step by step
+and **Lab → Results** shows the forest plot, the challenge × tier map and the paired tests
+(`./start.sh` copies the records into `runs/tacc` on a fresh clone).
+
+**Rerun on TACC** (needs your own TACC account and the course SDK `tcloud`; from `flagpilot/`). One
+serving job lasts at most an hour, so the four tiers run as two pipelines, one after the other:
+
+```bash
+FP_BATCH=tacc-dev-v7 FP_SPLIT=dev FP_LIMIT=0 FP_SEEDS=2 FP_WORKERS=4 FP_ABLATIONS=B0,B3 deploy/tcloud/pipeline.sh runs/tacc/v7
+FP_BATCH=tacc-dev-v7 FP_SPLIT=dev FP_LIMIT=0 FP_SEEDS=2 FP_WORKERS=4 FP_ABLATIONS=B1,B2 deploy/tcloud/pipeline.sh runs/tacc/v7
+```
+
+Each pipeline starts the serving job (about 5–6 minutes until vLLM is ready once two GPUs are free),
+runs the batch, keeps only each attempt's records on the cluster, downloads them and cancels the
+serving job. If an earlier batch stopped with `No space left on device`, free the space first, for
+example `FP_DROP="tacc-dev-v7-B1" deploy/tcloud/submit.sh cleanup` (Known limitations, item 15). Expected variation: the model request carries no
+sampling seed, so a rerun gives different attempts. With 40 attempts per tier, the Wilson interval is
+about ±15 points, and tier differences of that size are not resolvable; the paired test is reported
+for that reason. Queueing changes wall-clock times, not verdicts.
+
+The commands below describe the experiment configurations as designed in the proposal.
 
 **E1 — ablation ladder (B0 → B3).** Each rung adds exactly one capability: `B0` bare loop,
 `B1` + context truncation, `B2` + structured tool schema, `B3` + full system prompt.
@@ -520,8 +575,9 @@ python3 -m flagpilot pair --a e1-B2 --b e1-B3 --md e1-pair.md
 
 `--workers 1` is required for E1 and E3: concurrency dilutes the server-side prefix-cache difference
 those experiments measure. `compare` reports verified rate, raw flag accuracy, and their gap with
-Wilson intervals; `pair` runs an exact McNemar test on the same tasks. Corresponding table:
-`docs/STATUS.md` §二 "实验", row E1.
+Wilson intervals; `pair` runs an exact McNemar test on the same tasks. On TACC the full ladder is the `v6` batch and
+B0 against B3 the `v7` batch above (claim C2); this local variant uses an 8B model through Ollama
+(`flagpilot/scripts/start-ollama.sh`).
 
 **E2 — verification and attribution.** The memory probe asks for the flag with no tools, no files,
 and no sandbox, at three disclosure levels (`name`, `brief`, `files`).
@@ -535,8 +591,8 @@ A hit means the model can name the flag without solving the task, which bounds h
 headline accuracy could be memorization. `report` prints raw accuracy, verified rate, the gap, and
 the failure-attribution distribution. The attribution separates **output truncation**
 (`finish_reason=length`, or reported tokens hitting `max_tokens`) from genuine protocol violations,
-and can re-read old traces so past runs are re-labelled without re-execution. Corresponding table:
-`docs/STATUS.md` §二 "实验", row E2.
+and can re-read old traces so past runs are re-labelled without re-execution. The raw − verified gap is
+reported for `v6` and `v7` above (claim C3); the probe itself was not run at scale.
 
 **E3 — efficiency grid.** Observation policy × turn budget × concurrency, with prefix caching on and
 off (one restart per cache setting). Requires a vLLM endpoint that exposes `/metrics`.
@@ -550,8 +606,7 @@ Two planned E3 dimensions cannot be varied on the course platform: `max_num_seqs
 `enable_prefix_caching` are fixed in the provided serving script, so the grid collapses from six
 cells to four (2 observation policies × 2 turn budgets). `--e3` adds solve p50/p95, cache hit rate,
 GPU-seconds per verified solve, and dollars per verified solve; `--ref` adds the verified-rate delta
-and a guardrail verdict against `--guard-pts`. Corresponding table: `docs/STATUS.md` §二 "实验",
-row E3.
+and a guardrail verdict against `--guard-pts`. Implemented and tested; no E3 result is reported.
 
 **E4 — escalation strategy.** Track L alone, Track H alone, and a hybrid that escalates on stalls.
 
@@ -565,7 +620,8 @@ python3 -m flagpilot compare --e3 --batches e4-l,e4-h,e4-hy --md e4.md
 
 A stall is k consecutive turns that add no new evidence (tool-output fingerprints are deduplicated).
 The escalation budget is capped by `--max-escalations` and `--max-hosted-tokens`, and the two tracks
-are accounted separately in `summary["hybrid"]` and `cost_usd_total`.
+are accounted separately in `summary["hybrid"]` and `cost_usd_total`. Implemented and tested; no E4 result
+is reported.
 
 **Cost accounting.** `--track L` records GPU seconds in two ways: `allocated` (cards × wall clock)
 and `busy` (Σ utilization × Δt, sampled from `nvidia-smi`). When the sampler is unavailable the
@@ -609,12 +665,16 @@ counts material written in the challenge text (see *How an attempt is judged*):
 | B0 bare model | 26/40 · 65.0% | 49.5–77.9% | 31/40 · 77.5% | 62.5–87.7% |
 | B1 + trimming | 24/40 · 60.0% | 44.6–73.7% | 28/40 · 70.0% | 54.6–81.9% |
 | B2 + structured tools | 25/40 · 62.5% | 47.0–75.8% | 28/40 · 70.0% | 54.6–81.9% |
-| B3 + full rules | 25/40 · 62.5% | 47.0–75.8% | 30/40 · 75.0% | 59.8–85.8% |
+| B3 + full rules | 25/40 · 62.5% | 47.0–75.8% | 31/40 · 77.5% | 62.5–87.7% |
 
 All 17 attempts that the old verifier called `hardcoded_no_material` were correct: their scripts
 decode the statement's ciphertext (`crypto-005`), a base64 string in the statement (`general-022`) or
-a number in it (`general-019`, whose only attachment is a placeholder). Re-scoring changes no other
-verdict; attempts that never submitted keep theirs.
+a number in it (`general-019`, whose only attachment is a placeholder). Two more were correct: one
+(`crypto-058`, B1) prints a flag whose encoded form is part of the challenge material, and one
+(`crypto-072`, B3) searches for a Caesar key, which the old check undid by shifting every letter of the
+ciphertext; that attempt then spent its turns on a needless repair. Attempts that never submitted keep
+their verdict. The re-scoring ran on a Mac: one B1 attempt verified on TACC (`forensics-065`) calls
+`zcat` on a `.gz` file, which macOS's `zcat` cannot read, so the re-scored B1 is a lower bound.
 
 **A bug that affects every batch so far.** The task set's `title` is the first 90 characters of the
 statement (a display label), and the prompt used it instead of the full statement. For 22 of the 53
@@ -624,7 +684,48 @@ ciphertext, `crypto-072`'s ciphertext, `crypto-074`'s key table, `general-040`'s
 88 (77%) on the other 11, and four of them were never solved. The tiers saw the same statements, so
 the comparison between tiers stands, but every absolute rate above is an underestimate. Fixed: the
 prompt and the memorization probe now carry the full statement (a test checks this for every
-challenge in the task set). The next TACC batch will show the effect.
+challenge in the task set); batch `v7` below runs with it.
+
+**TACC batch `v7`: the final engine** (Qwen 3.8 27B AWQ, the same 20 dev-split challenges, two attempts
+each, n = 40 per tier, 2026-11-21, commit `103411e`; records in `flagpilot/results/tacc/v7`). It carries
+the full statement, counts material written in the statement, and cuts off a reply that is stuck
+repeating itself. B0 is the bare model and B3 the full agent.
+
+| Tier | Verified as run | 95% CI | Re-scored | Mean turns | Mean tokens | Median wall time |
+|---|---|---|---|---|---|---|
+| B0 bare model | 33/40 · 82.5% | 68.0–91.2% | 33/40 | 5.5 | 16,148 | 29 s |
+| B3 + full rules | 35/40 · 87.5% | 73.9–94.5% | 36/40 (76.9–96.0%) | 5.9 | 20,947 | 34 s |
+
+B0 against B3 on matched attempts: 3 against 1 discordant pairs, exact McNemar p = 0.63; on 20
+challenges the two tiers are not distinguishable. Re-scoring changes one B3 attempt (`crypto-072`, the
+Caesar key search described above), which is also the only correct flag of `v7` the verifier
+rejected: raw flag accuracy is 82.5% (B0) and 90.0% (B3) as run.
+
+Against `v6`, on the same challenges and repeats, as run: B3 rose from 25 to 35 of 40 (10 attempts
+gained, none lost, p = 0.002) and B0 from 26 to 33 (10 gained, 3 lost, p = 0.09). About half of the
+gain at B3, and most of it at B0, is the verifier: with both batches re-scored, B3 rises from 31 to 36 (5 gained, none lost, p = 0.06) and B0
+from 31 to 33 (5 gained, 3 lost, p = 0.73). All five gains at B3 are on challenges whose statement
+`v6` had cut (`crypto-072`, `crypto-074` twice, `crypto-079`, `crypto-093`). B0 gained on `crypto-072`
+and `crypto-074` but lost `crypto-079` twice and `crypto-093` once, where its replies broke off in the
+middle of the JSON (below). Mean tokens per attempt fell by about 40% (B0 27,061 → 16,148, B3
+34,304 → 20,947) and mean turns from 6.38 and 8.05 to 5.47 and 5.90.
+
+Replies that broke the JSON protocol fell from 21 (B0) and 22 (B3) in `v6` to 18 and 9; the repetition
+guard cut one B3 reply short. In `v6`, all 85 protocol breaks that were not truncation (all four tiers)
+came from the nine challenges with a cut statement: the model quoted the cut statement and stopped where it
+stopped. The 26 in `v7` come from four challenges (`crypto-079`, `crypto-092`, `crypto-093`,
+`forensics-059`). In all of them the model ended the reply on its own (`finish_reason` is `stop`, not
+the token limit) in the middle of the JSON. In `crypto-079` (seven replies) it stopped while copying
+an RSA modulus out of an earlier tool output; in the others, in the middle of a list of numbers or a
+line of code (Known limitations, item 16).
+
+Tiers B1 and B2 did not run. Six minutes into their pipeline the TACC home directory ran out of space
+(`No space left on device` at attempt 14 of B1), and after that no job could be submitted: the SDK
+could not upload its working directory. Every attempt had left four copies of its challenge on the
+cluster (working directory, clean replay, empty-material and changed-text checks), about 150 MB per
+tier. Client jobs now keep only each attempt's records there, and `deploy/tcloud/submit.sh cleanup`
+frees the space of earlier batches (Known limitations, item 15). The logs of both pipelines are in
+`results/tacc/v7`; the aborted B1 ledger is not counted anywhere.
 
 ### 4. Deployment on TACC
 
@@ -729,21 +830,47 @@ cd flagpilot && python3 -m flagpilot web --replay runs/tacc   # then click "Qwen
   challenge attached from about 79 s to 56 s.
 - While another job is running, a new request waits ("on hold") instead of failing. The page shows
   Slurm's reason for any queue: the account's two-job limit, or no free GPUs.
-- Restarting the web server reconnects to a serving job that is still running.
+- Restarting the web server reconnects to a serving job that is still running. `./start.sh --stop` ends
+  the session (its job would otherwise hold two GPUs for up to an hour); `--restart` keeps it.
+- Clicking the **Qwen on TACC** chip opens the session panel. While the serving job starts it lists each
+  step (waiting for two GPUs, with Slurm's reason and the number of jobs ahead; GPUs assigned; vLLM;
+  engine; weights, with percentage; compiled kernels; warm-up; API), the time each took, an estimate of
+  the time left and the job's live log; while it is open the server reads the log every 4 s instead of
+  every 15 s. Measured on 2026-11-21 (job 30425): 2.5 minutes waiting for GPUs, then 5.2 minutes from
+  GPUs assigned to ready, of which about 1.7 minutes load Python and vLLM from shared storage, 2.2
+  minutes start the engine and its two workers, and 45 s load the compiled kernels. Those steps run
+  inside the course's serving script, whose settings the course fixes.
+- A run needs about 7 minutes of the session and a reply about 3. With less left, the page asks whether
+  to start a new session and run (or send) as soon as it is ready, instead of submitting a job that
+  could not finish.
+- **Finish** cancels a run's job in the background; the client slot is freed only once the job has
+  stopped, so the next job never shares the working directory with it. Recalling an Ask message cancels
+  its job too.
+- Reliability fixes of 2026-11-21. Every vLLM start prints a harmless warning that contains a Python
+  traceback (a `deep_gemm` import) about 12 s before the server is ready; the page and the pipeline
+  read any traceback as a crash and cancelled healthy servers (jobs 30270, 30272, 30281, 30442,
+  30446). A serving job now counts as failed only when it has really ended: Slurm's end markers, the
+  supervisor's stop line, or gone from `tcloud ps` twice in a row. Submissions retry when TACC's login
+  gateway drops the SSH handshake (six tries over about two minutes, each shown on the page), and an
+  SDK error is never read as "no jobs" or as a log. A challenge the job would not select (an upload,
+  or one of the ten `extra-gs` challenges) is staged with the job's scope, and a local check runs the
+  job's own selection before anything is submitted. A job that ends without a result says why, for
+  example that too little of the session was left.
 
 #### 4E. Gemini API instead of TACC (fast replies, free tier)
 
-A Gemini app subscription does not include API access. Create a key in Google AI Studio (the free
-tier is enough) and put it in the repository-root `.env`, which the root `.gitignore` keeps out of git:
+`./start.sh` already uses Gemini with the key in `shared.env`. To use your own key instead (a Gemini app
+subscription does not include API access; create a key in Google AI Studio, where the free tier is
+enough), put it in the repository-root `.env`, which the root `.gitignore` keeps out of git:
 
 ```bash
 echo 'GEMINI_API_KEY=<your key>' >> .env
-cd flagpilot && python3 -m flagpilot web --model gemini-flash-lite-latest --replay runs/tacc
+./start.sh --restart          # or: cd flagpilot && python3 -m flagpilot web --model provider:gemini --replay runs/tacc
 ```
 
 - A `gemini-*` model name defaults to Google's OpenAI-compatible endpoint. The key is read from
-  `GEMINI_API_KEY` / `GOOGLE_API_KEY` or the root `.env`. It is never logged or written into a run's
-  fingerprint.
+  `GEMINI_API_KEY` / `GOOGLE_API_KEY`, then `.env`, then `shared.env`. It is never logged or written
+  into a run's fingerprint.
 - Only standard chat fields are sent. Flash-lite rejects `reasoning_effort: "none"` with a 400.
 - The free tier gets overloaded at times. A 503, or a stream that ends before any text, is retried
   twice. A 429 is read in full: a per-minute quota waits as long as the server says (`retryDelay` or
@@ -795,14 +922,15 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 468 tests (17 need `cryptography`)
+python3 -m unittest discover -s tests -t . -q     # 536 tests (17 skip without the optional `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web UI)
-node scripts/ui_check.mjs                         # 88 browser checks in headless Chrome
+node scripts/ui_check.mjs                         # 95 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 90 controls
 ```
 
-The suite is hermetic: it builds synthetic tasks in temporary directories and needs neither a model
-nor the evaluation task set. Storage tests skip unless `cryptography` is installed; with it
+The suite is hermetic: it builds synthetic tasks in temporary directories and fakes every model, GitHub
+and TACC, so it needs no keys; four tests that read the evaluation task set skip without it. The unit
+tests run on every push on Python 3.11, 3.12 and 3.13 (`.github/workflows/tests.yml`). Storage tests skip unless `cryptography` is installed; with it
 installed, all of them pass. `scripts/verify.sh` is the end-to-end gate: it checks the CLI surface, the
 verdict logic, the replay paths, the web API, the offline replay, and the packaging rules, and
 prints one line per check. `ui_check` drives every page in headless Chrome with a mock model;
@@ -840,9 +968,9 @@ nothing (controls that would start TACC jobs, delete, stop or reach the internet
 8. **Model scale.** The course platform serves a 27B AWQ model; the reproducible configuration in §3
    uses an 8B model on a single consumer GPU. Absolute rates differ between the two. What we claim
    transfers is the direction of the ablation effect, not its magnitude.
-9. **Job length.** The course partition caps a job at 1 hour, and serving a 27B model takes about 17
-   minutes to become ready, leaving roughly 43 minutes per job. Long evaluations must be sharded
-   with `--shard`.
+9. **Job length.** The course partition caps a job at 1 hour, and serving a 27B model takes about 5
+   minutes to become ready once two GPUs are free (measured 2026-11-21), leaving roughly 50 minutes
+   per job. Long evaluations must be split, as the four tiers are split into two pipelines in §3.
 10. **Storage is plaintext by default.** Encryption is opt-in and needs a separate key file; see
     `flagpilot/docs/WRITEUPS_AND_STORAGE.md`. Live results and downloads are always decrypted.
 11. **System tools are not bundled.** `binwalk` (6 tasks), `exiftool` (5), `zsteg` (5), `tshark` (2),
@@ -861,6 +989,19 @@ nothing (controls that would start TACC jobs, delete, stop or reach the internet
     tools; Gemini ran on a laptop sandbox. The Gemini batch also ran after trimming started to keep
     flag-like lines from the cut middle of long output (B1–B3; the `v5` Qwen batch used plain
     head/tail trimming). Treat the table in §3 as a sanity check, not a model ranking.
+15. **The TACC home directory has a fixed size.** Batches used to leave every attempt's working
+    directory and three copies of its challenge on the cluster. On 2026-11-21 the home directory filled
+    up in the middle of `v7` (`No space left on device`), after which no job could be uploaded, so B1
+    and B2 of `v7` did not run. Client jobs now keep only each attempt's records after a batch's report,
+    and `deploy/tcloud/submit.sh cleanup` deletes the batches named in `FP_DROP` and prunes the rest; it
+    uploads three small files, so it can be submitted when the directory is full. Deleting cannot be
+    undone: download what you need first (`tcloud download -r flagpilot-runs/<batch> runs/tacc/`).
+16. **Replies that end early.** Qwen sometimes ends a reply in the middle of its JSON on its own
+    (`finish_reason` is `stop`, not the token limit). It is most visible when it copies data that sat at
+    the very end of an earlier message: in `v6` the cut statement, in `v7` an RSA modulus at the end of
+    a tool output. Tool outputs end their message without a closing marker; adding one (for example
+    `--- end of output ---`) is the next change to try. It changes the prompt, so it needs a new batch
+    to measure.
 
 ### 8. Troubleshooting
 
@@ -877,7 +1018,10 @@ nothing (controls that would start TACC jobs, delete, stop or reach the internet
 | Encrypted run fails on `staging.rmdir()` | Host shim intercepts `rmdir` | Set `FLAGPILOT_RUNS` to a path outside the intercepted tree |
 | Model output looks cut off | `--max-tokens` too small | Attribution labels these as truncation rather than protocol failures; raise `--max-tokens` and rerun |
 | The status island says the server is older than the page, or an action fails with "restart it" | The code changed after the server started | `./start.sh --restart` |
-| `tcloud could not open a session with TACC` | The platform's SDK could not create a remote session (it is retried three times) | Usually brief: try again in a minute |
+| `tcloud could not open a session with TACC` | TACC's login gateway dropped the SSH handshake; submissions are retried for about two minutes | Usually brief: try again in a minute |
+| `No space left on device` in a client log, or `Failed to upload repo` when submitting | The TACC home directory is full | Download what you need, then `FP_DROP="<batches>" deploy/tcloud/submit.sh cleanup` (Known limitations, item 15) |
+| Qwen on TACC stopped while starting, just before it would have been ready | Fixed on 2026-11-21: a harmless traceback in vLLM's start-up log was read as a crash | Update the copy (`git pull`) and `./start.sh --restart` |
+| An import says the link holds several challenges | The link points at a repository or folder of challenges | Pick one from the list, or paste the challenge's own folder |
 | `./start.sh` says the port is in use by something else | Another program listens on 8080 | `./start.sh --port 9000` |
 
 ### Data and licensing
