@@ -38,7 +38,7 @@ STAGE="${STAGE_ROOT}/${NAME}"
 mkdir -p "$STAGE"
 case "$MODE" in
   serve)
-    cp "$HERE"/serve/tuxiv.conf "$HERE"/serve/job.sh "$HERE"/serve/main.py "$STAGE"/
+    cp "$HERE"/serve/tuxiv.conf "$HERE"/serve/job.sh "$HERE"/serve/main.py "$HERE"/serve/supervise.sh "$STAGE"/
     ;;
   doctor|batch|chat)
     cp "$HERE"/client/tuxiv.conf "$HERE"/client/job.sh "$HERE"/client/run_flagpilot.py "$STAGE"/

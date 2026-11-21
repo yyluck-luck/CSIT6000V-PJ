@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 课程 qwen-public-serve/job.sh 的副本：激活公共环境，启动课程固定的 vLLM 服务脚本。
-# 唯一改动是下面的“开服前体检”，服务参数一个没动。
+# 改动只有两处：下面的“开服前体检”，和经 supervise.sh 启动（作业结束时停掉整个 vLLM 进程组）。服务参数一个没动。
 set -euo pipefail
 umask 077
 : "${TACC_WORKDIR:?Submit with tcloud submit}"
@@ -32,4 +32,7 @@ export QWEN_CACHE_HOME="$TACC_USERDIR/CSIT6000V-project-cache"
 mkdir -p -m 700 "$QWEN_CACHE_HOME"
 hostname
 printf 'SERVICE_BASE_URL=http://%s:8000/v1\n' "$(hostname)"
-bash "$QWEN_PROJECT_ROOT/serve.sh"
+# 第二处改动（2026-11-21）：经 supervise.sh 启动。作业不管怎么结束（vLLM 自己退出、被取消、到时限），
+# 都把 vLLM 整个进程组（API 服务 + GPU worker）停掉、等显存放出来再退出，并把停后的显存打进日志。
+# 课程同期给 cinecontext-qwen-e2e 发的清理更新修的就是 worker 在作业结束后还占着显存。服务参数不变。
+bash "$TACC_WORKDIR/supervise.sh" bash "$QWEN_PROJECT_ROOT/serve.sh"
