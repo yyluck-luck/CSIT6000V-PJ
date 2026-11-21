@@ -413,6 +413,37 @@ try {
   await js("document.querySelector('#brand').click()");
   check("logo returns to the landing", hadWork && await until("document.querySelector('.page.on').dataset.page === 'solve' && !document.querySelector('#landing').hidden && document.activeElement !== document.querySelector('#brand')", 2000), "work view open before: " + hadWork);
 
+  // 9b. Cmd/Ctrl+K: one box to go anywhere and do things
+  const cmdK = async () => { await send("Input.dispatchKeyEvent", { type: "keyDown", key: "k", code: "KeyK", windowsVirtualKeyCode: 75, modifiers: 4 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "k", code: "KeyK", windowsVirtualKeyCode: 75, modifiers: 4 }); };
+  const typeKey = async (key, code, vk) => { await send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk }); await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk }); };
+  await js("document.querySelector('.navbtn[data-page=\"history\"]').click()"); await sleep(200);
+  await cmdK();
+  const kOpen = await until("!document.querySelector('#cmdk').hidden && document.activeElement === document.querySelector('#cmdkQ') && document.querySelectorAll('#cmdkList .grp').length >= 2", 3000);
+  await send("Input.insertText", { text: "lab" });
+  const kLab = await until("/^Lab$/.test((document.querySelector('#cmdkList .it.on .l') || {}).textContent || '')", 2000);
+  await typeKey("Enter", "Enter", 13);
+  const kWent = await until("document.querySelector('#cmdk').hidden && document.querySelector('.page.on').dataset.page === 'lab'", 2000);
+  const anyTask = await js("TASKS[0].name");
+  await cmdK(); await until("!document.querySelector('#cmdk').hidden", 2000);
+  await send("Input.insertText", { text: anyTask });
+  await until(`/^${anyTask}$/.test((document.querySelector('#cmdkList .it.on .l') || {}).textContent || '')`, 2000);
+  await typeKey("Enter", "Enter", 13);
+  const kPicked = await until(`sel === ${JSON.stringify(anyTask)} && document.querySelector('.page.on').dataset.page === 'solve'`, 3000);
+  await cmdK(); await until("!document.querySelector('#cmdk').hidden", 2000);
+  await send("Input.insertText", { text: "new conv" });
+  await until("/New conversation/.test((document.querySelector('#cmdkList .it.on .l') || {}).textContent || '')", 2000);
+  await typeKey("ArrowDown", "ArrowDown", 40); await typeKey("ArrowUp", "ArrowUp", 38); await typeKey("Enter", "Enter", 13);
+  const kNew = await until("document.querySelector('.page.on').dataset.page === 'chat' && !document.querySelector('#chatLog .bub')", 3000);
+  await cmdK(); await until("!document.querySelector('#cmdk').hidden", 2000); await typeKey("Escape", "Escape", 27);
+  const kEsc = await until("document.querySelector('#cmdk').hidden", 1500);
+  await js("document.querySelector('#kbarBtn').click()");
+  const kBtn = await until("!document.querySelector('#cmdk').hidden", 1500); await typeKey("Escape", "Escape", 27);
+  check("Cmd/Ctrl+K: opens, filters, Enter goes to a page, picks a challenge, starts a conversation; Esc closes; the rail button opens it",
+    kOpen && kLab && kWent && kPicked && kNew && kEsc && kBtn, JSON.stringify({kOpen, kLab, kWent, kPicked, kNew, kEsc, kBtn}));
+  const smallK = await js("(async () => { document.querySelector('#kbarBtn').click(); await new Promise(r => setTimeout(r, 300)); return null; })()");
+  const smallPal = await js(SMALL); check("no small text in the command palette", !smallPal.length, smallPal.join(" | "));
+  await typeKey("Escape", "Escape", 27);
+
   // 10. narrow viewport + reduced motion
   await vp(390, 844); await nav(base + "/#/history"); await sleep(300);
   check("narrow: no horizontal overflow", await js("document.documentElement.scrollWidth <= innerWidth + 1"));

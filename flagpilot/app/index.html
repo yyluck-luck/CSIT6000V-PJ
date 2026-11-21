@@ -664,6 +664,21 @@
   #sheetWrap.open .bg{opacity:1}
   .sheet{position:relative;width:min(760px,92vw);height:min(80vh,780px);display:flex;flex-direction:column;padding:24px 26px 24px;background:var(--white);border:1.5px solid var(--ink);box-shadow:10px 10px 0 var(--ink);opacity:0;transform:translateY(10px);transition:transform .16s var(--ease),opacity .12s ease}
   #sheetWrap.open .sheet{opacity:1;transform:none}
+  /* Cmd/Ctrl+K: one box for pages, challenges, runs, conversations, experiments, models and actions */
+  #cmdk{position:fixed;inset:0;z-index:80;display:grid;align-items:start;justify-items:center;padding-top:12vh}
+  #cmdk .bg{position:absolute;inset:0;background:rgba(20,20,20,.32)}
+  .cmdk{position:relative;width:min(680px,94vw);max-height:min(70vh,640px);display:flex;flex-direction:column;background:var(--white);border:1.5px solid var(--ink);box-shadow:10px 10px 0 var(--ink)}
+  .cmdk input{border:0;border-bottom:1.5px solid var(--ink);padding:18px 22px;font:600 19px var(--font);background:transparent;outline:none} .cmdk input:focus-visible{outline:none}
+  #cmdkList{overflow:auto;padding:6px 0 8px;scrollbar-width:thin}
+  #cmdkList .grp{padding:12px 22px 4px;font:700 15px var(--font);color:var(--ink3)}
+  #cmdkList .it{display:flex;align-items:center;gap:12px;padding:10px 22px;cursor:pointer;min-width:0}
+  #cmdkList .it .l{font:600 16px var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+  #cmdkList .it .s{margin-left:auto;padding-left:14px;font:500 15px var(--mono);color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+  #cmdkList .it.on{background:var(--ink);color:#fff} #cmdkList .it.on .s{color:rgba(255,255,255,.75)} #cmdkList .it.on .g.ink{background:#fff}
+  #cmdkList mark{background:var(--yellow);color:var(--ink)} #cmdkList .none{padding:18px 22px;color:var(--ink2)}
+  .cmdk-ft{display:flex;gap:18px;padding:10px 22px;border-top:1px solid var(--rule2);font:500 15px var(--mono);color:var(--ink3)}
+  .kbar{margin:auto 14px 0;display:flex;align-items:center;gap:8px;border:1.5px solid var(--rule);background:var(--white);padding:9px 10px;font:600 15px var(--font);color:var(--ink2);cursor:pointer;transition:border-color .12s,color .12s}
+  .kbar:hover{border-color:var(--ink);color:var(--ink)} .kbar kbd{font:700 15px var(--mono);border:1.5px solid currentColor;padding:0 5px}
   .sheet-hd{display:flex;align-items:center;margin-bottom:6px}
   .sheet-hd h3{margin:0;font:800 30px var(--font);letter-spacing:-.02em;flex:1}
   .sheet .segc{width:100%;margin:16px 0 10px}
@@ -685,7 +700,7 @@
     :root{--rail:0px;--mar:18px}
     #rail{top:auto;right:0;width:auto;height:60px;flex-direction:row;padding:0;border-right:0;border-top:1px solid var(--rule)}
     .brand{display:none} #navs{display:flex;flex:1;border-top:0} .navbtn{justify-content:center;padding:0;height:60px;font-size:14px}
-    .navbtn .g,.navbtn .act,#navHover{display:none} #navPill{height:60px;width:20%;transform:translateX(var(--px,0px));transform-origin:0 50%}
+    .navbtn .g,.navbtn .act,#navHover,.kbar{display:none} #navPill{height:60px;width:20%;transform:translateX(var(--px,0px));transform-origin:0 50%}
     #navPill::before{width:auto;height:4px;right:0;bottom:auto} .navbtn .nt{left:auto;right:calc(50% - 30px);top:16px}
     #stage{bottom:60px} .stats{grid-template-columns:1fr} .arms{grid-template-columns:repeat(2,1fr)}
     .step .body{padding-left:8px} .step>summary{grid-template-columns:30px 70px minmax(0,1fr) 12px 16px} .step .tm{display:none}
@@ -721,6 +736,7 @@
     <button class="navbtn" data-page="upload"><i class="nt"></i><span class="lb">Upload</span><span class="g red"></span><i class="act"></i></button>
     <button class="navbtn" data-page="chat"><i class="nt"></i><span class="lb">Ask</span><span class="g d ink"></span><i class="act"></i></button>
   </div>
+  <button class="kbar" id="kbarBtn" aria-label="Search and commands (Cmd or Ctrl and K)"><kbd>⌘K</kbd>Search</button>
 </nav>
 
 <div id="island" class="idle" role="status" aria-live="polite" data-tip="Back to Solve">
@@ -986,6 +1002,11 @@
     <button class="btn plain" id="sheetOnline" style="margin-top:12px">Not here? Find one online<span class="arr">→</span></button>
   </div>
 </div>
+<div id="cmdk" hidden><div class="bg" data-close></div><div class="cmdk" role="dialog" aria-modal="true" aria-label="Search and commands">
+  <input id="cmdkQ" placeholder="A page, a challenge, a run, a conversation or a command" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="cmdkList" aria-autocomplete="list">
+  <div id="cmdkList" role="listbox"></div>
+  <div class="cmdk-ft"><span>↑↓ move</span><span>↵ open</span><span>esc close</span></div>
+</div></div>
 <div id="toast"></div>
 <script>
 const $ = s => document.querySelector(s);
@@ -2869,8 +2890,81 @@ $('#chatTools').onchange = showMount;
 $('#newChat').onclick = () => { if (chatBusy) return; chatId = null; chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); $('#chatLog').innerHTML = ''; started(false); loadThreads(); $('#chatInput').focus(); };
 
 /* ---------------- keyboard: / to search, Enter to run or send, Esc to close ---------------- */
+/* ---------------- Cmd/Ctrl+K: search and commands ---------------- */
+const CMDK = {items: [], shown: [], sel: 0, extra: {runs: [], threads: [], exps: []}};
+const toneGlyph = v => ({ok: 'c blue', bad: 'red', warn: 't yellow', run: 'spin'})[verdictTone(v)] || 'ring';
+function cmdkItems(){
+  const out = [], add = (group, label, sub, glyph, run, keys) => out.push({group, label, sub: sub || '', glyph, run, hay: `${label} ${sub || ''} ${keys || ''}`.toLowerCase()});
+  [['solve', 'Solve', 'pick a challenge and watch the agent', 'c blue'], ['history', 'Runs', 'every run, replayable', 'ink'], ['lab', 'Lab', 'which part of the agent matters', 't yellow'],
+   ['upload', 'Upload', 'upload or find a challenge online', 'red'], ['chat', 'Ask', 'the tutor', 'd ink']].forEach(([p, l, s, g]) => add('Pages', l, s, g, () => go(p), 'page go open'));
+  add('Actions', 'New conversation', 'Ask', 'd ink', () => { go('chat'); $('#newChat').click(); }, 'chat ask tutor new');
+  if (sel && !busy) add('Actions', 'Run ' + sel, 'with ' + prettyModel(LOCALMODEL), 'c blue', () => { go('solve'); $('#run').click(); }, 'solve start');
+  add('Actions', 'Choose a challenge', 'the picker', 'ring', () => { go('solve'); openSheet(); }, 'pick select');
+  add('Actions', `Turn step mode ${$('#ctlStep').checked ? 'off' : 'on'}`, 'each command waits for your OK', 'c blue', () => { const c = $('#ctlStep'); c.checked = !c.checked; c.dispatchEvent(new Event('change')); }, 'approve pause');
+  add('Actions', 'Compare tiers on one challenge', 'Lab', 't yellow', () => { go('lab'); labShow('compare'); }, 'experiment b0 b3');
+  add('Actions', 'Run a batch of challenges', 'Lab', 't yellow', () => { go('lab'); labShow('batch'); }, 'experiment heat map');
+  add('Actions', 'Diff two runs', 'Lab', 't yellow', () => { go('lab'); labShow('diff'); }, 'compare steps');
+  add('Actions', 'Find a challenge online', 'public CTF archive', 'red', () => { go('upload'); setTimeout(() => $('#impQ').focus(), 60); }, 'import github search archive');
+  add('Actions', QW.phase === 'ready' ? 'Disconnect Qwen on TACC' : QW.phase === 'starting' ? 'Stop starting Qwen on TACC' : 'Connect Qwen on TACC', 'two TACC GPUs', 'c blue', () => qwenToggle(), 'tacc qwen gpu');
+  for (const t of TASKS.concat(MINE)) add('Challenges', t.name, t.title || t.category || '', catOf(t.category)[1], () => { pick(t); go('solve'); }, `${t.category || ''} ${t.title || ''}`);
+  for (const r of CMDK.extra.runs) add('Runs', `${en(r.task)} · ${String(r.verdict || '').toUpperCase()}`, `${r.ablation || ''} · ${prettyModel(r.model) || ''} · ${ago(r.ts)}`, toneGlyph(r.verdict), () => openReplay(r.id), 'run replay ' + (r.ablation || ''));
+  for (const t of CMDK.extra.threads) add('Conversations', t.title, `${plural(t.turns, 'message')} · ${ago(t.ts)}`, t.model ? modelGlyph(t.model) : 'd ink', () => { go('chat'); openThread(t.id); }, 'thread chat ' + (t.model || ''));
+  for (const e of CMDK.extra.exps) add('Experiments', e.name, `${e.attempts} attempts · ${ago(e.ts)}`, 't yellow', () => { LAB.cur = e.id; go('lab'); labShow('results'); }, 'experiment lab ' + (e.models || []).join(' '));
+  for (const m of [...new Set([...MODELS, LOCALMODEL].filter(Boolean))]) add('Models', 'Answer with ' + prettyModel(m), 'this conversation', modelGlyph(m), () => { go('chat'); pickModel('local:' + m); }, 'model switch ' + m);
+  return out;
+}
+/* exact prefix > word prefix > substring > all words > letters in order; empty query shows pages, actions and the latest few */
+function cmdkScore(it, q){
+  if (!q) return {Pages: 5, Actions: 4, Runs: 2, Conversations: 2}[it.group] || 0;
+  const l = it.label.toLowerCase();
+  if (l.startsWith(q)) return 100; if (l.includes(' ' + q)) return 80; if (l.includes(q)) return 60;
+  const ws = q.split(/\s+/).filter(Boolean); if (ws.length > 1 && ws.every(w => it.hay.includes(w))) return 40;
+  if (it.hay.includes(q)) return 30;
+  let j = 0; for (const ch of l) if (ch === q[j]) j++; return j === q.length ? 10 : 0;
+}
+function cmdkRender(){
+  const q = $('#cmdkQ').value.trim().toLowerCase(), per = {}, rows = [];
+  CMDK.items.map(it => ({it, s: cmdkScore(it, q)})).filter(x => x.s > 0).sort((a, b) => b.s - a.s)
+    .forEach(x => { const g = x.it.group; per[g] = (per[g] || 0) + 1; if (per[g] <= (q ? 8 : 6) && rows.length < 48) rows.push(x.it); });
+  const order = ['Pages', 'Actions', 'Challenges', 'Runs', 'Conversations', 'Experiments', 'Models'];
+  rows.sort((a, b) => q ? 0 : order.indexOf(a.group) - order.indexOf(b.group));
+  const groups = q ? [...new Set(rows.map(r => r.group))] : order; CMDK.shown = [];
+  const mark = t => { if (!q) return esc(t); const i = t.toLowerCase().indexOf(q); return i < 0 ? esc(t) : esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length)); };
+  let html = '';
+  for (const g of groups){ const its = rows.filter(r => r.group === g); if (!its.length) continue; html += `<div class="grp">${g}</div>`;
+    for (const it of its){ const i = CMDK.shown.push(it) - 1; html += `<div class="it" role="option" id="cmdk-${i}" data-i="${i}"><span class="g ${it.glyph}"></span><span class="l">${mark(it.label)}</span><span class="s">${esc(it.sub)}</span></div>`; } }
+  $('#cmdkList').innerHTML = html || '<p class="none">Nothing matches. Try a challenge name, a page or "new conversation".</p>';
+  CMDK.sel = 0; cmdkMove(0);
+}
+function cmdkMove(d){ const n = CMDK.shown.length; if (!n) return; CMDK.sel = (CMDK.sel + d + n) % n;
+  qs('#cmdkList .it').forEach(el => el.classList.toggle('on', +el.dataset.i === CMDK.sel));
+  const el = $(`#cmdk-${CMDK.sel}`); if (el){ el.scrollIntoView({block: 'nearest'}); $('#cmdkQ').setAttribute('aria-activedescendant', el.id); } }
+function cmdkRun(i){ const it = CMDK.shown[i]; if (!it) return; cmdkClose(); try { it.run(); } catch(e){ console.error(e); } }
+async function cmdkOpen(){
+  const w = $('#cmdk'); if (!w.hidden){ cmdkClose(); return; }
+  if (!$('#sheetWrap').hidden) closeSheet();
+  CMDK.back = document.activeElement; w.hidden = false; $('#cmdkQ').value = ''; CMDK.items = cmdkItems(); cmdkRender(); $('#cmdkQ').focus();
+  if (!reduced()) w.querySelector('.cmdk').animate([{opacity: 0, transform: 'translateY(-10px) scale(.98)'}, {opacity: 1, transform: 'none'}], {duration: 220, easing: SPRING});
+  const [r, t, x] = await Promise.all([getJSON('/api/runs').catch(() => ({})), getJSON('/api/chat/sessions').catch(() => ({})), getJSON('/api/lab/experiments').catch(() => ({}))]);
+  CMDK.extra = {runs: (r.runs || []).filter(x => x.id && !x.running).slice(0, 30), threads: (t.sessions || []).slice(0, 30), exps: (x.experiments || []).slice(0, 20)};
+  if (!w.hidden){ CMDK.items = cmdkItems(); const keep = CMDK.sel; cmdkRender(); if (!$('#cmdkQ').value) cmdkMove(keep); }
+}
+function cmdkClose(){ const w = $('#cmdk'); if (w.hidden) return; w.hidden = true; if (CMDK.back && CMDK.back.focus && document.contains(CMDK.back)) CMDK.back.focus({preventScroll: true}); }
+$('#cmdkQ').addEventListener('input', cmdkRender);
+$('#cmdkQ').addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); cmdkMove(e.key === 'ArrowDown' ? 1 : -1); }
+  else if (e.key === 'Enter' && !e.isComposing){ e.preventDefault(); cmdkRun(CMDK.sel); }
+  else if (e.key === 'Escape'){ e.preventDefault(); cmdkClose(); }
+  else if (e.key === 'Tab'){ e.preventDefault(); cmdkMove(e.shiftKey ? -1 : 1); } });
+$('#cmdkList').addEventListener('click', e => { const it = e.target.closest('.it[data-i]'); if (it) cmdkRun(+it.dataset.i); });
+$('#cmdkList').addEventListener('mousemove', e => { const it = e.target.closest('.it[data-i]'); if (it && +it.dataset.i !== CMDK.sel){ CMDK.sel = +it.dataset.i; qs('#cmdkList .it').forEach(el => el.classList.toggle('on', el === it)); } });
+$('#cmdk').addEventListener('click', e => { if (e.target.closest('[data-close]')) cmdkClose(); });
+$('#kbarBtn').addEventListener('click', cmdkOpen);
+if (!/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) $('#kbarBtn kbd').textContent = 'Ctrl K';
+
 document.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
+  if (!$('#cmdk').hidden){ if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'){ e.preventDefault(); cmdkClose(); } return; }
   if (!$('#sheetWrap').hidden){
     if (e.key === 'Escape'){ e.preventDefault(); closeSheet(); }
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); kbMove(e.key === 'ArrowDown' ? 1 : -1); }
@@ -2878,7 +2972,7 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'Escape' && inspOpen()){ toggleInsp(false); return; }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'){ e.preventDefault(); openSheet(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'){ e.preventDefault(); cmdkOpen(); return; }
   if (typing) return;
   if (e.key === '/'){ e.preventDefault(); openSheet(); }
   else if (e.key === 'Enter' && page === 'solve' && !$('#run').disabled && !$('#run').hidden && !e.target.closest('button,a')){ e.preventDefault(); $('#run').click(); }
