@@ -272,10 +272,18 @@ def resolve_task(name: str) -> Task | None:
     """
     if not name:
         return None
-    hit = select(load_index(), names=[name])
+    hit = select(_index(), names=[name])
     if hit:
         return hit[0]
     return custom.get(str(name))
+
+
+def _index() -> list[Task]:
+    """内置题库；还没有（新克隆、题库没取下来）就是空的，页面照常可用（上传 / 导入 / 答疑 / 回放），不报 500。"""
+    try:
+        return load_index()
+    except FileNotFoundError:
+        return []
 
 
 def _label(model: str) -> str:
@@ -574,7 +582,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tasks":
             tasks = [{"name": t.name, "category": t.category, "scope": t.scope,
                       "title": t.title[:90], "custom": False, "has_gold": t.has_gold, "source": t.source}
-                     for t in load_index()]
+                     for t in _index()]
             mine = [{"name": t.name, "category": t.category, "scope": "custom",
                      "title": t.title[:90], "custom": True, "has_gold": t.has_gold,
                      "n_assets": len(t.assets), "source": t.source,

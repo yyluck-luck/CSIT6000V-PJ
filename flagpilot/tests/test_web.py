@@ -551,6 +551,24 @@ class TestWebAPI(unittest.TestCase):
         finally:
             self.post("/api/custom/delete", {"task": name})
 
+    def test_no_task_set_yet_still_serves_the_page(self):
+        """全新克隆、题库还没取下来：页面和接口照常可用（上传 / 导入 / 答疑 / 回放），不是 500。"""
+        keep = config.TASKS_ROOT
+        empty = self.tmp / "no-task-set"
+        empty.mkdir(exist_ok=True)
+        config.TASKS_ROOT = empty
+        try:
+            d = json.loads(self.get("/api/tasks"))
+            self.assertEqual(d["tasks"], [])
+            self.assertIn("custom_tasks", d)
+            self.assertIsNone(S.resolve_task("crypto-005"))
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.get("/api/task?name=crypto-005")
+            self.assertEqual(ctx.exception.code, 404)
+            ctx.exception.close()
+        finally:
+            config.TASKS_ROOT = keep
+
     def test_tasks_say_when_the_server_code_is_newer_than_the_process(self):
         from app import server
         self.assertFalse(json.loads(self.get("/api/tasks"))["stale"])

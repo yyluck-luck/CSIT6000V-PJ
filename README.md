@@ -27,7 +27,9 @@ cd CSIT6000V-PJ
 ```
 
 The browser opens at <http://127.0.0.1:8080> with the real agent ready. It needs **Python 3.10 or newer
-and nothing else**: no packages to install, no GPU, no setup.
+and git, nothing else**: no packages to install, no GPU, no setup. On the first run `./start.sh` fetches
+the 53 evaluation challenges once (InterCode-CTF, about 100 MB, about half a minute; see
+[Task set](#1-task-set)); offline it starts with the three bundled demo challenges instead.
 
 **Keys are included.** This repository is private, and [`shared.env`](shared.env) carries working keys
 (Gemini, and an OpenAI-compatible relay that serves DeepSeek, GLM, Qwen and GPT models), so a fresh clone
@@ -41,7 +43,7 @@ repository public.
 | `./start.sh` | Start on port 8080 and open the browser (if it is already running, just open it) |
 | `./start.sh --port 9000` | Use another port |
 | `./start.sh --model mock` | Offline demo model. Also `--model provider:deepseek`, `provider:glm`, `provider:qwen`, `provider:gpt`, or an exact model name |
-| `./start.sh --restart` | Restart, for example after `git pull` |
+| `./start.sh --restart` | Restart, for example after `git pull` (also retries fetching the challenges if the first run was offline) |
 | `./start.sh --stop` | Stop |
 
 The default model is `auto`: Gemini when a Gemini key is present, otherwise the first provider with a
@@ -733,7 +735,7 @@ any `runs.jsonl` ledger, including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 467 tests (17 need `cryptography`)
+python3 -m unittest discover -s tests -t . -q     # 468 tests (17 need `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web UI)
 node scripts/ui_check.mjs                         # 88 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 90 controls

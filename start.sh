@@ -8,8 +8,8 @@
 #   ./start.sh --restart        restart (after pulling new code)
 #   ./start.sh --stop           stop it
 #
-# Needs only Python 3.10 or newer: no packages to install. Keys come from shared.env (shipped with this
-# private repository) or from your own .env, which wins.
+# Needs only Python 3.10 or newer (and git, to fetch the evaluation challenges on the first run): no packages to
+# install. Keys come from shared.env (shipped with this private repository) or from your own .env, which wins.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -82,6 +82,14 @@ if [ "$ACTION" = restart ]; then stop; fi
 if up; then
   echo "FlagPilot is already running: $URL   (./start.sh --restart to restart it)"
 else
+  # first run on a fresh clone: fetch the evaluation challenges once (they are not stored in the repository)
+  if [ -z "${FLAGPILOT_TASKS:-}" ] && [ ! -f "$APP/tasks/index/tasks.jsonl" ]; then
+    echo "First run: fetching the evaluation challenges (InterCode-CTF, about 100 MB, only this once)..."
+    if ! "$PY" "$APP/scripts/fetch_taskset.py"; then
+      echo "Starting with the 3 bundled demo challenges instead; run ./start.sh --restart later to try again."
+      export FLAGPILOT_TASKS="$APP/demo-tasks"
+    fi
+  fi
   set -- --host 127.0.0.1 --port "$PORT" --model "$MODEL"
   [ -d "$APP/runs/tacc" ] && set -- "$@" --replay runs/tacc        # finished TACC runs show up in Runs and the Lab
   ( cd "$APP" || exit 1

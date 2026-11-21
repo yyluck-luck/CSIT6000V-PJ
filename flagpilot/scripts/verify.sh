@@ -260,7 +260,7 @@ if command -v node >/dev/null 2>&1; then
   if echo "$UI_OUT" | grep -q '^SKIP'; then
     record "网页交互（ui_check）" PASS "跳过：$(echo "$UI_OUT" | grep '^SKIP' | head -1)"
   elif [[ $UI_RC -eq 0 ]]; then
-    record "网页交互（ui_check）" PASS "$UI_LAST（切页、选题、实跑、回放、实验、上传、答疑、窄屏、无中文）"
+    record "网页交互（ui_check）" PASS "${UI_LAST}（切页、选题、实跑、回放、实验、上传、答疑、窄屏、无中文）"
   else
     record "网页交互（ui_check）" FAIL "$(echo "$UI_OUT" | grep '^FAIL' | head -2 | tr '\n' ' ')"
   fi
