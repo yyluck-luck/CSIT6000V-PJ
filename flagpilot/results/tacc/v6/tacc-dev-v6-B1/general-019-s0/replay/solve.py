@@ -1,0 +1,1 @@
+print(f"picoCTF{{{bin(42)[2:]}}}")

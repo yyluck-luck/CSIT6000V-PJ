@@ -9,6 +9,14 @@ The system runs against a served model (vLLM on TACC, or any OpenAI-compatible e
 web interface for task submission, live progress, and result review, and records every attempt as a
 replayable trace.
 
+> **Safety.** FlagPilot runs shell commands written by a language model on the machine that hosts it.
+> The sandbox is process-level, not a security boundary (see *Known limitations*, item 1). Run it on a
+> machine or account you can spare, or inside a VM or container.
+
+The README follows the NSDI '27 artifact guidelines: **Getting Started Instructions** (about 30 minutes)
+and **Detailed Instructions**, which open with the concrete [claims](#claims-and-how-to-check-them)
+this artifact supports and how to check each one.
+
 > **Assessment in one command:** `cd flagpilot && bash scripts/verify.sh` — 14 checks, no GPU, no network,
 > no model weights. The last two drive the web UI in headless Chrome (need Node ≥ 22 and Chrome; skipped otherwise).
 
@@ -18,7 +26,13 @@ in [`course_project.pdf`](course_project.pdf), and the proposal this artifact im
 
 ---
 
-## Quick start: one command
+## Getting Started Instructions
+
+Two paths, either of which takes well under 30 minutes. The **fastest path** starts the web app with
+the real models in one command. The **step-by-step path** (Steps 1–5) runs the pipeline on three
+bundled challenges with no model, no network and no keys, and shows the expected output at each step.
+
+### Fastest path: one command
 
 ```bash
 git clone https://github.com/yyluck-luck/CSIT6000V-PJ.git
@@ -26,7 +40,7 @@ cd CSIT6000V-PJ
 ./start.sh
 ```
 
-The browser opens at <http://127.0.0.1:8080> with the real agent ready. It needs **Python 3.10 or newer
+The browser opens at <http://127.0.0.1:8080> with the real agent ready. It needs **Python 3.11 or newer
 and git, nothing else**: no packages to install, no GPU, no setup. On the first run `./start.sh` fetches
 the 53 evaluation challenges once (InterCode-CTF, about 100 MB, about half a minute; see
 [Task set](#1-task-set)); offline it starts with the three bundled demo challenges instead.
@@ -43,11 +57,37 @@ repository public.
 | `./start.sh` | Start on port 8080 and open the browser (if it is already running, just open it) |
 | `./start.sh --port 9000` | Use another port |
 | `./start.sh --model mock` | Offline demo model. Also `--model provider:deepseek`, `provider:glm`, `provider:qwen`, `provider:gpt`, or an exact model name |
+| `./start.sh --check` | Check that every model provider answers with this copy's keys (one tiny request each); no server is started |
 | `./start.sh --restart` | Restart, for example after `git pull` (also retries fetching the challenges if the first run was offline) |
-| `./start.sh --stop` | Stop |
+| `./start.sh --stop` | Stop. `--stop` and `--restart` only touch the FlagPilot started from this folder; a port held by another copy is reported, not taken over |
 
 The default model is `auto`: Gemini when a Gemini key is present, otherwise the first provider with a
 working key, otherwise the offline demo model. The server log is `flagpilot/.run/web-8080.log`.
+
+Expected output of the first start, then of the API check:
+
+```text
+First run: fetching the evaluation challenges (InterCode-CTF, about 100 MB, only this once)...
+Evaluation challenges ready: 53 in flagpilot/tasks.
+FlagPilot is running: http://127.0.0.1:8080
+  model: provider:gemini   log: flagpilot/.run/web-8080.log   stop: ./start.sh --stop
+```
+
+```text
+$ ./start.sh --check
+  OK    Gemini    answered by gemini-flash-lite-latest in 2.1 s
+  OK    DeepSeek  answered by deepseek-v4.1-flash in 10.7 s
+  OK    GLM       answered by glm-5.3-flash in 2.5 s
+  OK    Qwen      answered by qwen3.8-flash in 2.4 s
+  OK    GPT       answered by gpt-6.2-astra in 2.6 s
+  when a provider fails, answers fall back to: deepseek-v4.1-flash
+  Qwen on TACC: needs no key; needs your own TACC account and the course SDK (tcloud found)
+```
+
+A quick end-to-end check in the browser: on **Solve**, pick `crypto-005` and press **Run**. With
+Gemini it ends `VERIFIED` in about 3 turns and 15 seconds; on **Ask**, any question gets an answer
+in a few seconds. Qwen on TACC needs no API key, only your own TACC account with the course SDK
+(§4); nothing in this repository can submit jobs on someone else's account.
 
 ### What you can do in the web app
 
@@ -63,9 +103,243 @@ The model menu lists providers (Gemini, DeepSeek, GLM, Qwen, GPT). For each, the
 model and switches silently to the next one when a model runs out of quota or fails. Notifications
 appear in the status island at the top; hover it for details.
 
+### Step-by-step path (no model, no network)
+
+Five steps from a terminal, each with its expected output: check the environment, solve the three
+bundled challenges with a scripted model, show that a wrong answer is rejected, open the web app, and
+replay finished runs.
+
+#### Prerequisites
+
+| Requirement | Notes |
+|---|---|
+| Python 3.11 or newer | **No third-party packages are required** for the core runtime |
+| A model endpoint | Optional for the quickstart: `--model mock` runs the full pipeline with no model |
+| Optional: `flagpilot/requirements.txt` | Only unlocks the `smt` action, encrypted storage, and two crypto libraries |
+
+```bash
+python3 -m pip install -r flagpilot/requirements.txt   # optional
+```
+
+Verified on Python 3.11–3.13 on macOS 14 (arm64) and on Linux (TACC compute node, Python 3.11).
+Every optional dependency degrades to an explicit "not available" message rather than a crash;
+`doctor` reports which ones are active.
+
+#### Setup
+
+```bash
+git clone <repository-url> flagpilot-artifact
+cd flagpilot-artifact/flagpilot
+export FLAGPILOT_TASKS="$PWD/demo-tasks"
+export FLAGPILOT_RUNS="$PWD/runs"        # optional; defaults to ./runs
+```
+
+`FLAGPILOT_TASKS` points at a task-set root. The bundled `demo-tasks/` is a complete, valid task
+set, so the quickstart needs no download.
+
+#### Step 1 — check the environment
+
+```bash
+python3 -m flagpilot doctor
+```
+
+Expected output (the CLI is localized in Chinese; field meanings are annotated):
+
+```text
+FlagPilot 0.1.0
+python           3.13.12  (.../bin/python3)
+题库             .../flagpilot/demo-tasks      # task-set root
+运行产物         .../flagpilot/runs            # output root
+
+题目数           3  Demo=3                     # 3 tasks loaded
+题库一致性       通过（3 题的目录与附件齐全）  # index and files agree
+泄漏检查         通过（无明文 gold、无题解目录） # no plaintext gold leaked
+
+网络隔离         proxy-only  ← 不可作为强隔离证据
+资源上限         可用
+隔离等级         process  ← 非容器，报告里必须如实说明
+容器             none
+SMT (z3)         可用
+反汇编           /usr/bin/objdump
+调试器           未找到  ← 只能靠 shell 调其它调试器
+```
+
+The `隔离等级` (isolation level) and `容器` (container) lines state what isolation was actually
+achieved. They are meant to be quoted in a report, not ignored: on a host without a container
+runtime this says `process`, and the artifact claims nothing stronger.
+
+If the task count line reports a missing `tasks/index/tasks.jsonl`, then `FLAGPILOT_TASKS` is not
+pointing at a task-set root.
+
+#### Step 2 — run the bundled demo end to end
+
+```bash
+python3 -m flagpilot batch --batch demo --model mock --limit 3 --workers 1
+```
+
+Three attempts, each with a fresh sandbox, a scripted policy, a replay, and a generated writeup.
+Expected output:
+
+```text
+[batch] demo: 3 题 × 1 seeds, model=mock, ablation=custom（截断 + 结构化工具 + 完整 prompt）
+[runner] 待跑 3 个 attempt，并发 1，调度：最长预计优先（LPT，参考 0 条历史）
+[1/3] demo-001-s0            VERIFIED   turns=3 0.21s
+[2/3] demo-002-s0            VERIFIED   turns=3 0.17s
+[3/3] demo-003-s0            VERIFIED   turns=3 0.16s
+[runner] 完成 3 个，用时 0.8s
+
+attempts        3   ablation=custom
+verified        3  (100.0%, 95% CI 43.9%–100.0%)
+raw (flag ok)   3  (100.0%, 95% CI 43.9%–100.0%)
+gap             0.0%
+wrong / budget / error  0 / 0 / 0
+mean turns      3.0
+mean wall       0.18 s
+mean tokens     519
+TTFT p50        1 ms（各题中位数之均值）
+wall p50/p95    0.2 / 0.2 s（n=3）
+solve p50/p95   0.2 / 0.4 s（verified 端到端，n=3）
+reasons         match=3
+by category:
+  Demo               n=3   verified=3   raw=3   v_rate=100% r_rate=100%
+
+失败归因：全部 verified，无失败可归因。
+```
+
+Timings vary by a few hundredths of a second between machines; the verdicts and counts do not.
+
+Per-attempt artifacts land in `runs/demo/<task>-s0/`: `trace.jsonl` (every event),
+`replay/solve.py` and `replay/challenge/` (the clean room used for the rerun), `no-material/`
+(the emptied copy used by gate 4), and `writeup.md`.
+
+#### Step 3 — verify that the verdict is not a rubber stamp
+
+A verifier that always says `verified` proves nothing. Corrupt every gold hash and confirm that the
+same run is now rejected:
+
+```bash
+cp -r demo-tasks /tmp/neg-tasks
+sed -i.bak 's/"gold_sha256": "[a-f0-9]*"/"gold_sha256": "0000000000000000000000000000000000000000000000000000000000000000"/' \
+  /tmp/neg-tasks/index/tasks.jsonl
+FLAGPILOT_TASKS=/tmp/neg-tasks python3 -m flagpilot run --task demo-001 --model mock --batch neg
+```
+
+Expected output (excerpt of the summary JSON):
+
+```json
+"verdict": "wrong",
+"reason": "wrong_flag",
+"first_submit_verdict": "wrong",
+"first_submit_reason": "wrong_flag"
+```
+
+The model produces the same flag and the same script; only the gold hash changed, and the verdict
+flips. That is the behaviour the evaluation depends on.
+
+#### Step 4 — open the web interface
+
+```bash
+./start.sh --model mock          # from the repository root; or: python3 -m flagpilot web --model mock
+```
+
+Open <http://127.0.0.1:8080>, pick a task on the left, and press run. The middle column streams the
+agent's turns (thought → action → real tool output → observation); the right column shows the
+verdict, the replay result, and the budget counters. A `writeup.md` download appears when the run
+finishes.
+
+What the five pages do (⌘K / Ctrl+K opens one box that reaches all of them, plus challenges, runs,
+conversations, experiments, models and common actions):
+
+- **Solve** — a run can be watched step by step: *Step mode* holds every command until you run it,
+  edit it first, or skip it; *Pause*, *Stop*, and a hint box that the agent reads on its next step.
+  Held time is not charged to the wall-clock budget, and hints, edits and skips are marked in the
+  trace. Every step has *Explain this step in Ask*.
+- **Runs** — every attempt, replayable step by step.
+- **Lab** — experiments on the agent itself (see §3, *Lab experiments*): results with 95% intervals
+  and paired tests, *Compare* (one challenge × models × tiers × repeats, in parallel), *Batch* (one
+  model over N challenges, live challenge × tier map), *Diff* (two runs aligned step by step, first
+  divergence marked), *Probe* (does the bare model already know the flag?) and *TACC batch*.
+- **Upload** — your own files, or *Find a challenge online*: search a public archive of about 500
+  past CTFs on GitHub (`sajjadium/ctf-archives`) or paste a link. Solution files are never attached;
+  a real `flag.txt` becomes the gold flag (hash only); links to local or private addresses are refused.
+  After an import, *Customise this challenge* edits the title, statement and category and sets the
+  target flag; *Draft with AI* rewrites the statement from the files and the imported text (the model
+  never sees the answer, and anything flag-shaped in its draft is removed). Challenges that ran as a
+  network service in their CTF are marked: their real flag never shipped with the files.
+- **Ask** — the tutor. Each conversation picks its own provider from the chip under the input; a
+  message held for Qwen can be sent to another model at once. Messages sent while a reply is coming in
+  queue up; any message can be recalled (it and its reply leave the thread and the model's context, and
+  its text returns to the box). Every flag the tutor states is checked against the gold hash (or,
+  without gold, against the session's real command output) and marked; a wrong one gets one correction
+  round. Saving a flag that a run could not back up as a challenge's answer asks for confirmation first.
+
+Screenshots: `flagpilot/docs/screenshots/01-solve.png`, `02-chat.png`; architecture:
+`flagpilot/docs/screenshots/architecture.svg`.
+
+#### Step 5 — replay a finished run without a model
+
+This is the path to use when reviewing results, and the one that needs no cluster and no GPU.
+Point the server at any directory of completed runs:
+
+```bash
+python3 -m flagpilot web --replay ./runs/demo --port 8080
+```
+
+```text
+FlagPilot demo → http://127.0.0.1:8080   model=mock
+回放模式：挂载 3 个已完成的 run（只读，不需要模型）
+  demo-001-s0   http://127.0.0.1:8080/?run=c6a6f48eaf3e   verified/match
+  demo-002-s0   http://127.0.0.1:8080/?run=597af7758ad6   verified/match
+  demo-003-s0   http://127.0.0.1:8080/?run=b4b8b8900546   verified/match
+```
+
+The run ids are hashes of the run directory, so they differ between machines. The interface is
+identical to a live run, because a replay entry and a live run are the same data structure on the
+server. Only runs that finished (they have a summary) are mounted.
+
+The same trace can be read as a timeline without a browser:
+
+```bash
+python3 -m flagpilot show --run-dir ./runs/demo/demo-001-s0
+python3 -m flagpilot show --run-dir ./runs/demo/demo-001-s0 --full   # include observations and scripts
+python3 -m flagpilot show --run-dir ./runs/demo/demo-001-s0 --out run.md
+```
+
+#### Expected result of the quickstart
+
+| Step | Command | Expected |
+|---|---|---|
+| 1 | `doctor` | 3 tasks loaded, index and leak checks pass |
+| 2 | `batch --model mock --limit 3` | 3/3 `verified`, about 0.7 s wall clock |
+| 3 | `run` with a corrupted gold | `wrong` / `wrong_flag` |
+| 4 | `web --model mock` | UI loads on port 8080; a run reaches `verified` |
+| 5 | `web --replay ./runs/demo` | 3 runs mounted, each opening at `verified/match` |
+
+Total elapsed time on a laptop: under one minute. No GPU, no API key, no network access.
+
 ---
 
-## Contents of this artifact
+## Detailed Instructions
+
+> All commands in this section run from the `flagpilot/` directory created in
+> [Setup](#setup), unless a step says otherwise. `python3 -m flagpilot` resolves the package
+> from there.
+
+### Claims and how to check them
+
+| # | Claim | Where | How to check |
+|---|---|---|---|
+| C1 | A flag counts only when a standalone script reproduces it in a clean sandbox and the answer depends on the challenge's material; typed-in, encoded or material-free answers are rejected | [How an attempt is judged](#how-an-attempt-is-judged) | Getting Started Step 3 (a correct run flips to `wrong` when the gold changes); `bash scripts/verify.sh` (check "判据负向"); `tests/test_verify.py` |
+| C2 | Main result: Qwen 3.8 27B on the 20-challenge dev split, four agent tiers B0–B3, two attempts each (n = 40 per tier), with Wilson 95% intervals and exact McNemar tests | [§3, batch `v7`](#3-reproducing-the-evaluation) | Offline from the committed records in `flagpilot/results/tacc/v7` (no model, no cluster); rerun on TACC with `deploy/tcloud/pipeline.sh` |
+| C3 | Raw flag accuracy overstates solving: per tier, how many correct flags the agent could not back with a reproducible script (the raw − verified gap) | §3, batch `v7` | Same records and commands as C2 |
+| C4 | Two engine fixes made during the evaluation (the full statement reaches the model; material written in the statement counts) raise the verified rate: `v6` as run, `v6` re-scored, `v7` | §3, batches `v6` and `v7` | `python3 scripts/rescore.py results/tacc/v6` re-checks every `v6` attempt with today's verifier |
+| C5 | The system works end to end: web app, live runs, replays, Lab statistics, hosted models with fail-over, and Qwen on TACC through the course SDK | Getting Started | `./start.sh`, `./start.sh --check`, `bash scripts/verify.sh` (14 checks, including 88 browser checks) |
+
+Not claimed: the E3 efficiency grid and the E4 escalation study (§3) are implemented and tested but
+were not run at scale, so no result is reported for them. The single DeepSeek baseline in
+`docs/EVALUATION_BASELINE.md` is reported as measured; it is not a matched comparison.
+
+### Contents of this artifact
 
 | Path | Contents |
 |---|---|
@@ -77,6 +351,7 @@ appear in the status island at the top; hover it for details.
 | `start.sh` | One-command start / restart / stop of the web app |
 | `shared.env`, `env.example` | The repository's shared keys (private repository), and a names-only template for your own `.env` |
 | `flagpilot/tests/` | Unit and integration tests (§6) |
+| `flagpilot/results/tacc/` | The evaluation's run records (every attempt's trace, script and write-up, and each batch's ledger and summary) for checking every reported number offline (§3) |
 | `flagpilot/scripts/` | Self-check, browser tests, re-scoring, secret scan, split generation, task-set builder, cluster tunnel, an Ollama start script |
 | `flagpilot/deploy/` | Slurm templates and an upload helper for a general cluster |
 | `flagpilot/docs/` | Design, dataset contract, TACC deployment, implementation status, screenshots |
@@ -139,221 +414,6 @@ consume each other. A repair is granted even when the model submits on its last 
 turns are recorded separately as `bonus_turns`. The summary records both `first_submit_verdict` and
 the final verdict, so "solved on the first try" can be separated from "solved after a repair" —
 otherwise the repair budget would be counted as model capability.
-
----
-
-## Getting Started Instructions
-
-### Prerequisites
-
-| Requirement | Notes |
-|---|---|
-| Python 3.11 or newer | **No third-party packages are required** for the core runtime |
-| A model endpoint | Optional for the quickstart: `--model mock` runs the full pipeline with no model |
-| Optional: `flagpilot/requirements.txt` | Only unlocks the `smt` action, encrypted storage, and two crypto libraries |
-
-```bash
-python3 -m pip install -r flagpilot/requirements.txt   # optional
-```
-
-Verified on Python 3.11–3.13 on macOS 14 (arm64) and on Linux (TACC compute node, Python 3.11).
-Every optional dependency degrades to an explicit "not available" message rather than a crash;
-`doctor` reports which ones are active.
-
-### Setup
-
-```bash
-git clone <repository-url> flagpilot-artifact
-cd flagpilot-artifact/flagpilot
-export FLAGPILOT_TASKS="$PWD/demo-tasks"
-export FLAGPILOT_RUNS="$PWD/runs"        # optional; defaults to ./runs
-```
-
-`FLAGPILOT_TASKS` points at a task-set root. The bundled `demo-tasks/` is a complete, valid task
-set, so the quickstart needs no download.
-
-### Step 1 — check the environment
-
-```bash
-python3 -m flagpilot doctor
-```
-
-Expected output (the CLI is localized in Chinese; field meanings are annotated):
-
-```text
-FlagPilot 0.1.0
-python           3.13.12  (.../bin/python3)
-题库             .../flagpilot/demo-tasks      # task-set root
-运行产物         .../flagpilot/runs            # output root
-
-题目数           3  Demo=3                     # 3 tasks loaded
-题库一致性       通过（3 题的目录与附件齐全）  # index and files agree
-泄漏检查         通过（无明文 gold、无题解目录） # no plaintext gold leaked
-
-网络隔离         proxy-only  ← 不可作为强隔离证据
-资源上限         可用
-隔离等级         process  ← 非容器，报告里必须如实说明
-容器             none
-SMT (z3)         可用
-反汇编           /usr/bin/objdump
-调试器           未找到  ← 只能靠 shell 调其它调试器
-```
-
-The `隔离等级` (isolation level) and `容器` (container) lines state what isolation was actually
-achieved. They are meant to be quoted in a report, not ignored: on a host without a container
-runtime this says `process`, and the artifact claims nothing stronger.
-
-If the task count line reports a missing `tasks/index/tasks.jsonl`, then `FLAGPILOT_TASKS` is not
-pointing at a task-set root.
-
-### Step 2 — run the bundled demo end to end
-
-```bash
-python3 -m flagpilot batch --batch demo --model mock --limit 3 --workers 1
-```
-
-Three attempts, each with a fresh sandbox, a scripted policy, a replay, and a generated writeup.
-Expected output:
-
-```text
-[batch] demo: 3 题 × 1 seeds, model=mock, ablation=custom（截断 + 结构化工具 + 完整 prompt）
-[runner] 待跑 3 个 attempt，并发 1
-[1/3] demo-001-s0            VERIFIED   turns=3 0.18s
-[2/3] demo-002-s0            VERIFIED   turns=3 0.2s
-[3/3] demo-003-s0            VERIFIED   turns=3 0.19s
-[runner] 完成 3 个，用时 0.7s
-
-attempts        3   ablation=custom
-verified        3  (100.0%, 95% CI 43.9%–100.0%)
-raw (flag ok)   3  (100.0%, 95% CI 43.9%–100.0%)
-gap             0.0%
-wrong / budget / error  0 / 0 / 0
-mean turns      3.0
-mean wall       0.19 s
-mean tokens     459
-TTFT p50        1 ms（各题中位数之均值）
-wall p50/p95    0.2 / 0.2 s（n=3）
-solve p50/p95   0.2 / 0.2 s（verified 端到端，n=3）
-reasons         match=3
-by category:
-  Demo               n=3   verified=3   raw=3   v_rate=100% r_rate=100%
-```
-
-Per-attempt artifacts land in `runs/demo/<task>-s0/`: `trace.jsonl` (every event),
-`replay/solve.py` and `replay/challenge/` (the clean room used for the rerun), `no-material/`
-(the emptied copy used by gate 4), and `writeup.md`.
-
-### Step 3 — verify that the verdict is not a rubber stamp
-
-A verifier that always says `verified` proves nothing. Corrupt every gold hash and confirm that the
-same run is now rejected:
-
-```bash
-cp -r demo-tasks /tmp/neg-tasks
-sed -i.bak 's/"gold_sha256": "[a-f0-9]*"/"gold_sha256": "0000000000000000000000000000000000000000000000000000000000000000"/' \
-  /tmp/neg-tasks/index/tasks.jsonl
-FLAGPILOT_TASKS=/tmp/neg-tasks python3 -m flagpilot run --task demo-001 --model mock --batch neg
-```
-
-Expected output (excerpt of the summary JSON):
-
-```json
-"verdict": "wrong",
-"reason": "wrong_flag",
-"first_submit_verdict": "wrong",
-"first_submit_reason": "wrong_flag"
-```
-
-The model produces the same flag and the same script; only the gold hash changed, and the verdict
-flips. That is the behaviour the evaluation depends on.
-
-### Step 4 — open the web interface
-
-```bash
-./start.sh --model mock          # from the repository root; or: python3 -m flagpilot web --model mock
-```
-
-Open <http://127.0.0.1:8080>, pick a task on the left, and press run. The middle column streams the
-agent's turns (thought → action → real tool output → observation); the right column shows the
-verdict, the replay result, and the budget counters. A `writeup.md` download appears when the run
-finishes.
-
-What the five pages do (⌘K / Ctrl+K opens one box that reaches all of them, plus challenges, runs,
-conversations, experiments, models and common actions):
-
-- **Solve** — a run can be watched step by step: *Step mode* holds every command until you run it,
-  edit it first, or skip it; *Pause*, *Stop*, and a hint box that the agent reads on its next step.
-  Held time is not charged to the wall-clock budget, and hints, edits and skips are marked in the
-  trace. Every step has *Explain this step in Ask*.
-- **Runs** — every attempt, replayable step by step.
-- **Lab** — experiments on the agent itself (see §3, *Lab experiments*): results with 95% intervals
-  and paired tests, *Compare* (one challenge × models × tiers × repeats, in parallel), *Batch* (one
-  model over N challenges, live challenge × tier map), *Diff* (two runs aligned step by step, first
-  divergence marked), *Probe* (does the bare model already know the flag?) and *TACC batch*.
-- **Upload** — your own files, or *Find a challenge online*: search a public archive of about 500
-  past CTFs on GitHub (`sajjadium/ctf-archives`) or paste a link. Solution files are never attached;
-  a real `flag.txt` becomes the gold flag (hash only); links to local or private addresses are refused.
-  After an import, *Customise this challenge* edits the title, statement and category and sets the
-  target flag; *Draft with AI* rewrites the statement from the files and the imported text (the model
-  never sees the answer, and anything flag-shaped in its draft is removed). Challenges that ran as a
-  network service in their CTF are marked: their real flag never shipped with the files.
-- **Ask** — the tutor. Each conversation picks its own provider from the chip under the input; a
-  message held for Qwen can be sent to another model at once. Messages sent while a reply is coming in
-  queue up; any message can be recalled (it and its reply leave the thread and the model's context, and
-  its text returns to the box). Every flag the tutor states is checked against the gold hash (or,
-  without gold, against the session's real command output) and marked; a wrong one gets one correction
-  round. Saving a flag that a run could not back up as a challenge's answer asks for confirmation first.
-
-Screenshots: `flagpilot/docs/screenshots/01-solve.png`, `02-chat.png`; architecture:
-`flagpilot/docs/screenshots/architecture.svg`.
-
-### Step 5 — replay a finished run without a model
-
-This is the path to use when reviewing results, and the one that needs no cluster and no GPU.
-Point the server at any directory of completed runs:
-
-```bash
-python3 -m flagpilot web --replay ./runs/demo --port 8080
-```
-
-```text
-FlagPilot demo → http://127.0.0.1:8080   model=mock
-回放模式：挂载 3 个已完成的 run（只读，不需要模型）
-  demo-001-s0   http://127.0.0.1:8080/?run=c6a6f48eaf3e   verified/match
-  demo-002-s0   http://127.0.0.1:8080/?run=597af7758ad6   verified/match
-  demo-003-s0   http://127.0.0.1:8080/?run=b4b8b8900546   verified/match
-```
-
-The interface is identical to a live run, because a replay entry and a live run are the same data
-structure on the server. Only runs that finished (they have a summary) are mounted.
-
-The same trace can be read as a timeline without a browser:
-
-```bash
-python3 -m flagpilot show --run-dir ./runs/demo/demo-001-s0
-python3 -m flagpilot show --run-dir ./runs/demo/demo-001-s0 --full   # include observations and scripts
-python3 -m flagpilot show --run-dir ./runs/demo/demo-001-s0 --out run.md
-```
-
-### Expected result of the quickstart
-
-| Step | Command | Expected |
-|---|---|---|
-| 1 | `doctor` | 3 tasks loaded, index and leak checks pass |
-| 2 | `batch --model mock --limit 3` | 3/3 `verified`, about 0.7 s wall clock |
-| 3 | `run` with a corrupted gold | `wrong` / `wrong_flag` |
-| 4 | `web --model mock` | UI loads on port 8080; a run reaches `verified` |
-| 5 | `web --replay ./runs/demo` | 3 runs mounted, each opening at `verified/match` |
-
-Total elapsed time on a laptop: under one minute. No GPU, no API key, no network access.
-
----
-
-## Detailed Instructions
-
-> All commands in this section run from the `flagpilot/` directory created in
-> [Setup](#setup), unless a step says otherwise. `python3 -m flagpilot` resolves the package
-> from there.
 
 ### 1. Task set
 
@@ -820,9 +880,7 @@ nothing (controls that would start TACC jobs, delete, stop or reach the internet
 | `tcloud could not open a session with TACC` | The platform's SDK could not create a remote session (it is retried three times) | Usually brief: try again in a minute |
 | `./start.sh` says the port is in use by something else | Another program listens on 8080 | `./start.sh --port 9000` |
 
----
-
-## Data and licensing
+### Data and licensing
 
 The bundled `demo-tasks/` is original to this artifact. The picoCTF-derived evaluation task set is
 not redistributed; `scripts/build_taskset.py` rebuilds it from the upstream InterCode-CTF release

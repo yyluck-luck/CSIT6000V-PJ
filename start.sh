@@ -120,6 +120,14 @@ else
       export FLAGPILOT_TASKS="$APP/demo-tasks"
     fi
   fi
+  # the evaluation's run records ship in flagpilot/results/tacc; Runs and the Lab read them from runs/tacc
+  if [ -d "$APP/results/tacc" ]; then
+    mkdir -p "$APP/runs/tacc"
+    for d in "$APP/results/tacc"/*/; do
+      n="$(basename "$d")"
+      [ -e "$APP/runs/tacc/$n" ] || cp -R "$d" "$APP/runs/tacc/$n"
+    done
+  fi
   set -- --host 127.0.0.1 --port "$PORT" --model "$MODEL"
   [ -d "$APP/runs/tacc" ] && set -- "$@" --replay runs/tacc        # finished TACC runs show up in Runs and the Lab
   ( cd "$APP" || exit 1
