@@ -1,0 +1,45 @@
+\input{stats.tex}
+\begin{center}
+{\LARGE\bfseries FlagPilot: a replay-verified CTF agent}\\[6pt]
+{\large CSIT6000V Advanced AI Computing and Systems, HKUST --- course project}\\[2pt]
+{\large GitHub repository submission}\\[10pt]
+Liu Yiyang (21326031) \quad·\quad Hong Yifan (21382877) \quad·\quad Zhang Huanrong (21346263)\\[4pt]
+{\small\SubmitDate}
+\end{center}
+\vspace{6pt}
+
+\section*{1. GitHub repository}
+\begin{description}[leftmargin=2.6cm,style=nextline]
+\item[Repository] \href{https://github.com/yyluck-luck/CSIT6000V-PJ}{\texttt{https://github.com/yyluck-luck/CSIT6000V-PJ}}
+\item[Version] default branch \texttt{main}, commit \href{https://github.com/yyluck-luck/CSIT6000V-PJ/commit/\SubmitCommitFull}{\texttt{\SubmitCommit}} (\SubmitCommitDate)
+\item[Access] The repository is private. The teaching team is given read access as collaborators for the whole grading period. It ships working API keys in \texttt{shared.env}, so it runs without any setup (see the README's \emph{Keys} section).
+\item[Start] \texttt{git clone https://github.com/yyluck-luck/CSIT6000V-PJ.git \&\& cd CSIT6000V-PJ \&\& ./start.sh}\\
+Python 3.11+ and git only. \texttt{./start.sh --check} confirms that every model provider answers.
+\end{description}
+
+\section*{2. Group contributions}
+\textbf{Basis: the GitHub commit history.} Every commit reachable from commit \href{https://github.com/yyluck-luck/CSIT6000V-PJ/commit/\SubmitCommitFull}{\texttt{\SubmitCommit}} on \texttt{main} (Section 1), \TotalCommits\ in all, is attributed to its author on GitHub. Merge commits are not counted, and \emph{lines added} leave out data files (PDFs, images, the committed run records and \texttt{shared.env}). The contribution text summarizes what each member's commits changed. The figures are computed from git when this PDF is built (\texttt{docs/submission/build.sh}), so anyone can recompute them with \texttt{git log --no-merges \SubmitCommit}.
+
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{11.0cm}>{\raggedleft\arraybackslash}p{2.6cm}@{}}
+\toprule
+\textbf{Member} & \textbf{Contribution (from their commits)} & \textbf{Commits / lines added / dates}\\
+\midrule
+\endhead
+Liu Yiyang\newline{\small GitHub \texttt{yyluck-luck}} &
+Course-project repository set-up. Serving and evaluation on TACC through the course SDK: the serving job, the one-command batch pipeline (serve, batch, download, cancel), workarounds for the course runtime, and vLLM clean-up. Track H one-command runs, cost and latency metrics, the test-split guard and the E3 grid. The model client and providers: quota-aware retries, provider chains with fail-over, relay endpoints. The web application: Solve (live runs, step mode, hints), Runs (replay), Lab (Wilson intervals, McNemar tests, batch heat map, run diff), Upload (archive search, import, AI drafting) and Ask (a tutor whose flags are checked). Engine and verifier fixes found during the evaluation (the full statement reaches the model; material in the statement counts; a key search no longer defeats the text check; replies stuck repeating themselves are cut off) and the re-scoring tool. Reliability of Qwen on TACC (no more cancelled healthy servers, SDK retries, job scope, home-directory clean-up), the start-up progress panel, Finish, run again with a hint, link correction for imports, replies in the user's language with math, and CI. The TACC evaluation batches \texttt{v5}--\texttt{v7}, one-command start, the API check and the README.
+& \LiuCommits\ / \LiuLines\newline{\small \LiuSpan}\\
+\addlinespace
+Zhang Huanrong\newline{\small GitHub \texttt{777study777}} &
+The first complete FlagPilot agent: agent loop, sandbox, tools, replay verifier and command line. The sandbox interpreter fix, the bundled synthetic demo tasks and the hermetic self-check. The pre-submit self-check and the material-free replay, and the decoy-material stage that catches scripts which read the files without using them. The 1-hour partition fix and result archiving. The README restructured for the NSDI artifact format, and the project proposal.
+& \ZhangCommits\ / \ZhangLines\newline{\small \ZhangSpan}\\
+\addlinespace
+Hong Yifan\newline{\small GitHub \texttt{YifanHong7}, also \texttt{Leoasuka}} &
+Configured API models in the command line and the web app. Solution write-ups and encrypted storage of run evidence. The frozen evaluation split and the recorded DeepSeek baseline. Project status and progress documentation.
+& \HongCommits\ / \HongLines\newline{\small \HongSpan}\\
+\bottomrule
+\end{longtable}
+
+\noindent\textbf{Note.} The account-to-member mapping follows the commit authors' names and e-mail addresses; \texttt{777study777} is matched to Zhang Huanrong by the proposal's division of work (member A: sandbox, toolbox, agent loop). Commit and line counts describe the repository, not effort: work done outside it (experiment analysis, the report and the slides) does not appear here. Per-commit detail: \href{https://github.com/yyluck-luck/CSIT6000V-PJ/graphs/contributors}{GitHub $\rightarrow$ Insights $\rightarrow$ Contributors}, or \texttt{git log --no-merges} in a clone.
+
+\section*{3. Repository README}
+The full contents of \texttt{README.md} at the commit above follow. Links to files in the repository point to that commit on GitHub.

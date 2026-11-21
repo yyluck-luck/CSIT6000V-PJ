@@ -30,22 +30,40 @@ if [[ -n "${FAKE_SESSION_FAILS:-}" ]]; then c=$(( $(cat "$st/sessfail" 2>/dev/nu
   if (( c <= FAKE_SESSION_FAILS )); then echo "[Tcloud Error] 2026/11/20 tcloudcli.go:140: Failed to create remote session" >&2; exit 1; fi; fi
 if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
 n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
+printf '%18s      tacc run.slur   yliutz  R       0:01      1 10-0-9-9\n' "$n" >> "$st/ps"
 echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-} excl=${FP_EXCLUDE:-}" >> "$st/record"
 printf 'Submitted batch job %s\n' "$n"
 """
 TCLOUD = r"""#!/usr/bin/env bash
 st="$FAKE_STATE"
 case "$1" in
-  cat) f=$(basename "$2"); n=$(echo "$f" | sed 's/[^0-9]//g'); mode=$(cat "$st/job-$n.mode" 2>/dev/null)
+  cat) if [[ -n "${FAKE_CAT_FLAKE:-}" ]]; then k=$(( $(cat "$st/flake" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$st/flake"
+          if (( k % 2 == 0 )); then echo "[Tcloud Error] 2026/11/21 tcloudcli.go:140: Failed to create remote session"; exit 1; fi; fi
+    f=$(basename "$2"); n=$(echo "$f" | sed 's/[^0-9]//g'); mode=$(cat "$st/job-$n.mode" 2>/dev/null)
     case "$mode" in
       serve) c=$(( $(cat "$st/cats-$n" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/cats-$n"
              if (( c <= ${FAKE_QUEUE:-0} )); then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
              if [[ "$n" == "${FAKE_PRECHECK_JOB:-}" ]]; then printf 'SDK_BOOTSTRAP=/env\r\nPRECHECK_FAIL node=10-0-1-12: port 8000 is already in use\r\n'; exit 0; fi
-             printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\nINFO:     Application startup complete.\r\n' ;;
-      batch) printf '[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@pd {"turn": 1, "d": "Let me "}\n@@pd {"turn": 1, "d": "look."}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
+             if [[ "$n" == "${FAKE_BUSY_JOB:-}" ]]; then
+               printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-8:8000/v1\r\n(EngineCore pid=1) ValueError: Free memory on device (5.10/23.59 GiB) on startup is less than desired GPU memory utilization (0.9, 21.23 GiB).\r\nsrun: error: 10-0-9-8: task 0: Exited with exit code 1\r\n'; exit 0; fi
+             if [[ "$n" == "${FAKE_SERVE_VANISH_JOB:-}" ]]; then grep -v "^ *$n " "$st/ps" > "$st/ps.new"; mv "$st/ps.new" "$st/ps"
+               printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\n(Worker_TP0 pid=9) Loading safetensors checkpoint shards:  40%% Completed | 2/5\r\n'; exit 0; fi
+             # every real vLLM start-up prints a harmless warning with a traceback (deep_gemm), and an INFO line about free memory
+             printf 'SDK_BOOTSTRAP=/env\r\nSERVICE_BASE_URL=http://10-0-9-9:8000/v1\r\n(APIServer pid=8) INFO 11-21 16:24:18 [api_utils.py:345]  version 0.26.0\r\n'
+             printf '(Worker_TP0 pid=9) WARNING 11-21 16:27:34 [import_utils.py:408] Traceback (most recent call last):\r\n'
+             printf '(Worker_TP0 pid=9) INFO 11-21 16:27:34 [gpu_worker.py:857] Free memory on device (23.19/23.59 GiB) on startup. Desired GPU memory utilization is (0.9, 21.23 GiB).\r\n'
+             if (( c > ${FAKE_QUEUE:-0} + ${FAKE_SERVE_WARN:-0} )); then printf 'INFO:     Application startup complete.\r\n'; fi ;;
+      batch) c=$(( $(cat "$st/cats-$n" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/cats-$n"
+             case "${FAKE_BATCH:-ok}" in
+               nomatch) printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n[fp] tier B3 -> x-B3 (761s left)\n没有匹配到题目\n[fp] batch x-B3 exited non-zero\n[fp] done: /x\n' "$n"; exit 0 ;;
+               vanish) printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n[fp] tier B3 -> x-B3 (761s left)\n' "$n"; grep -v "^ *$n " "$st/ps" > "$st/ps.new"; mv "$st/ps.new" "$st/ps"; exit 0 ;;
+               slow) printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n' "$n"; exit 0 ;;
+               partial) if (( c == 1 )); then printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@ev {"type": "summary", "verdict": "veri' "$n"; exit 0; fi ;;
+             esac
+             printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@pd {"turn": 1, "d": "Let me "}\n@@pd {"turn": 1, "d": "look."}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
              printf '@@ev {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1, "wall_s": 2.0}\n[fp] done: /x\n' ;;
       chat) if [[ -n "${FAKE_QUEUE_CHAT:-}" ]]; then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
-            printf '[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
+            printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
     esac ;;
   download) mkdir -p "${@: -1}/$(basename "${@: -2:1}")"; echo "download $*" >> "$st/record" ;;
   cancel) echo "cancel $3" >> "$st/record"
@@ -92,7 +110,7 @@ class TestFlakySession(unittest.TestCase):
         self.assertEqual((jid, why), ("", "unknown challenge: nope"))
 
 
-class TaccLiveCase(unittest.TestCase):
+class TaccHarness(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="fp-tacc-live-"))
         (self.tmp / "state").mkdir()
@@ -104,7 +122,7 @@ class TaccLiveCase(unittest.TestCase):
             "FLAGPILOT_TACC_SUBMIT": str(self.tmp / "submit.sh"), "TCLOUD_BIN": str(self.tmp / "tcloud"),
             "FAKE_STATE": str(self.tmp / "state"), "FLAGPILOT_TACC_POLL": "0.02", "FLAGPILOT_TACC_TICK": "0.02"})
         self.env.start()
-        os.environ.pop("FLAGPILOT_TASKS", None)          # 只看 tacc_live 自己给的题库（verify.sh 会设这个变量）
+        os.environ["FLAGPILOT_TASKS"] = str(Path(__file__).resolve().parent.parent / "demo-tasks")   # 核对题目用的本机题库（固定，不受 verify.sh 影响）
         tacc_live.STATE_FILE = self.tmp / "session.json"
         tacc_live.S.update(phase="idle", serve=None, node=None, url="", t0=0.0, ready=0.0, log=[], busy="", error="")
 
@@ -124,7 +142,13 @@ class TaccLiveCase(unittest.TestCase):
         self.assertGreater(s["remaining"], 3000)
 
     def record(self):
-        return (self.tmp / "state" / "record").read_text(encoding="utf-8")
+        try:
+            return (self.tmp / "state" / "record").read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+
+
+class TaccLiveCase(TaccHarness):
 
     def test_session_solve_chat_and_stop(self):
         self.ready()
@@ -195,6 +219,19 @@ class TaccLiveCase(unittest.TestCase):
         self.assertEqual(row["gold_sha256"], t.gold_sha256)
         self.assertIn(f"tasks/{alias}/note.txt", staged)
         self.assertNotIn("picoCTF{upload_gold_9}", staged)                 # 明文答案绝不出本机
+        # 集群上的作业带 --scope core 选题：这道题必须选得中（2026-11-21 babyrop 两次都"没有匹配到题目"）
+        from flagpilot.tasks import load_index, select
+        idx = self.tmp / "staged-set"
+        (idx / "index").mkdir(parents=True)
+        (idx / "index" / "tasks.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+        self.assertEqual([x.name for x in select(load_index(idx), names=[alias], scope="core")], [alias])
+
+    def test_batch_names_stay_unique_for_long_challenge_names(self):
+        names = {tacc_live.batch_name("custom-20261120-230626-babyrop-97be") for _ in range(20)}
+        self.assertEqual(len(names), 20, "the random suffix must survive the 40-character limit")
+        for n in names:
+            self.assertLessEqual(len(n), 40)
+            self.assertRegex(n, r"^web-custom-20261120-230626-babyr[a-z0-9-]*-[0-9a-f]{5}$")
 
     def test_submit_failure_reason_reaches_the_page(self):
         import contextlib
@@ -343,7 +380,7 @@ class TaccChatHTTP(unittest.TestCase):
         saved = config.RUNS_ROOT
         config.RUNS_ROOT = tmp
         try:
-            def fake_chat(m, h, t, tools, on_delta, on_tool, on_stage=None):
+            def fake_chat(m, h, t, tools, on_delta, on_tool, on_stage=None, cancelled=None):
                 on_stage({"stage": "queued", "job": "7"})
                 on_delta("Hi")
                 return {"answer": "Hi there", "steps": []}
@@ -393,6 +430,171 @@ class TaccChatHTTP(unittest.TestCase):
         finally:
             config.RUNS_ROOT = saved
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestRobustness(TaccHarness):
+    """2026-11-21 on the real cluster: every failure here once reached the page as "no result", a dead start or a hang."""
+
+    def events(self, task="demo-001", cancel_after=None, **env):
+        os.environ.update(env)
+        if tacc_live.S["phase"] != "ready":
+            self.ready()
+        evs, said, flag = [], [], {"x": False}
+        if cancel_after is not None:
+            threading.Timer(cancel_after, lambda: flag.update(x=True)).start()
+        d = tacc_live.run_task(task, "B3", self.tmp / "runs", evs.append, on_delta=lambda t, x: said.append(x),
+                               cancelled=lambda: flag["x"])
+        return d, evs, said
+
+    def test_the_harmless_vllm_traceback_is_not_a_crash(self):
+        os.environ["FAKE_SERVE_WARN"] = "3"            # three looks land between the warning and "ready"
+        self.ready()
+        self.assertNotIn("cancel 501", self.record(), "the healthy server must not be cancelled")
+        self.assertEqual(self.record().count("serve job="), 1)
+
+    def test_a_node_whose_gpus_are_taken_is_excluded_and_the_start_retried(self):
+        os.environ["FAKE_BUSY_JOB"] = "501"
+        self.ready()
+        subs = [l for l in self.record().splitlines() if l.startswith("serve job=")]
+        self.assertEqual(len(subs), 2)
+        self.assertTrue(subs[1].endswith(",10-0-9-8"))
+        self.assertIn("cancel 501", self.record())
+
+    def test_a_serve_job_that_vanishes_fails_the_start_with_a_reason(self):
+        os.environ.update(FAKE_SERVE_VANISH_JOB="501", FLAGPILOT_TACC_ALIVE_EVERY="0")
+        tacc_live.start()
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.status()["phase"] == "starting":
+            time.sleep(0.02)
+        s = tacc_live.status()
+        self.assertEqual(s["phase"], "failed")
+        self.assertIn("serve job 501 stopped", s["error"])
+        self.assertEqual(s["progress"]["detail"].get("weights_pct"), 40)
+
+    def test_start_up_progress_is_reported_step_by_step(self):
+        self.ready()
+        p = tacc_live.status()["progress"]
+        self.assertEqual(p["step"], "ready")
+        self.assertEqual([x["id"] for x in p["steps"]][:3], ["queue", "node", "vllm"])
+        self.assertTrue(all(x["state"] in ("done", "todo") for x in p["steps"]), p["steps"])
+        self.assertEqual(p["detail"]["node"], "10-0-9-9")
+        self.assertEqual(p["eta"], 0)
+        self.assertGreater(tacc_live.watch()["progress"]["typical"], 200)
+
+    def test_a_job_that_finds_no_challenge_says_so(self):
+        d, evs, _ = self.events(FAKE_BATCH="nomatch")
+        self.assertIsNone(d)
+        self.assertEqual(evs[-1]["type"], "error")
+        self.assertIn("not in the job's task set", evs[-1]["message"])
+
+    def test_a_half_written_line_is_read_once_it_is_complete(self):
+        d, evs, _ = self.events(FAKE_BATCH="partial")
+        self.assertIsNotNone(d)
+        self.assertEqual([e["type"] for e in evs].count("summary"), 1)
+        self.assertEqual(evs[-1]["verdict"], "verified")
+
+    def test_a_failed_log_read_neither_loses_nor_repeats_events(self):
+        d, evs, said = self.events(FAKE_CAT_FLAKE="1")
+        self.assertIsNotNone(d)
+        types = [e["type"] for e in evs if e["type"] != "tacc"]
+        self.assertEqual(types, ["meta", "model", "summary"])
+        self.assertEqual(said, ["Let me ", "look."])
+
+    def test_a_job_that_vanishes_without_finishing_is_noticed(self):
+        with mock.patch.object(tacc_live, "REASON_EVERY_S", 0):
+            t = time.time()
+            d, evs, _ = self.events(FAKE_BATCH="vanish")
+        self.assertIsNone(d)
+        self.assertLess(time.time() - t, 10, "noticed at once, not after 30 minutes")
+        self.assertIn("ran no attempt", evs[-1]["message"])
+
+    def test_finish_cancels_the_job_and_frees_the_slot_once_it_has_stopped(self):
+        d, evs, _ = self.events(FAKE_BATCH="slow", cancel_after=0.3)
+        self.assertIsNone(d)
+        self.assertNotIn("error", [e["type"] for e in evs], "finishing is not an error")
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.S["busy"]:
+            time.sleep(0.02)
+        self.assertEqual(tacc_live.S["busy"], "")
+        self.assertIn("cancel 502", self.record())
+
+    def test_a_session_about_to_end_asks_for_a_new_one_instead_of_submitting(self):
+        self.ready()
+        tacc_live.S["t0"] = time.time() - tacc_live.SESSION_S + 60          # one minute left
+        evs = []
+        self.assertIsNone(tacc_live.run_task("demo-001", "B3", self.tmp / "runs", evs.append))
+        self.assertTrue(evs[-1].get("renew"))
+        self.assertRegex(evs[-1]["message"], r"ends in (59|60) s")
+        rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None)
+        self.assertTrue(rep.get("renew"))
+        self.assertNotIn("batch job=", self.record())
+        self.assertNotIn("chat job=", self.record())
+
+    def test_a_challenge_outside_the_job_scope_is_staged_with_it(self):
+        root = self.tmp / "set"
+        (root / "index").mkdir(parents=True)
+        (root / "extra-001").mkdir()
+        (root / "extra-001" / "data.txt").write_text("x")
+        (root / "index" / "tasks.jsonl").write_text(json.dumps({"task_id": 1, "name": "extra-001", "category": "misc",
+            "title": "t", "query": "q", "gold_sha256": "0" * 64, "assets": ["data.txt"], "assets_dir": "extra-001",
+            "scope": "extra-gs"}) + "\n")
+        os.environ["FLAGPILOT_TASKS"] = str(root)
+        d, evs, _ = self.events("extra-001")
+        self.assertIsNotNone(d)
+        staged = (self.tmp / "state" / "staged").read_text(encoding="utf-8")
+        row = [json.loads(l) for l in staged.splitlines() if l.startswith("{") and "extra-001" in l][-1]   # the batch job's copy
+        self.assertEqual((row["name"], row["scope"]), ("extra-001", "core"))
+        self.assertIn("tasks=extra-001 ", self.record())
+
+    def test_an_unknown_challenge_is_stopped_before_submitting(self):
+        d, evs, _ = self.events("no-such-challenge")
+        self.assertIsNone(d)
+        self.assertIn("cannot run on TACC", evs[-1]["message"])
+        self.assertNotIn("batch job=", self.record())
+
+    def test_recalling_a_question_cancels_its_job(self):
+        self.ready()
+        os.environ["FAKE_QUEUE_CHAT"] = "1"
+        flag = {"x": False}
+        threading.Timer(0.3, lambda: flag.update(x=True)).start()
+        rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None, cancelled=lambda: flag["x"])
+        self.assertTrue(rep.get("cancelled"))
+        t = time.time()
+        while time.time() - t < 5 and "cancel 502" not in self.record():
+            time.sleep(0.02)
+        self.assertIn("cancel 502", self.record())
+
+    def test_submission_retries_are_shown_while_they_happen(self):
+        self.ready()
+        os.environ.update(FAKE_SESSION_FAILS="2", FLAGPILOT_TACC_RETRY_WAIT="0")
+        (self.tmp / "state" / "sessfail").write_text("0")
+        stages = []
+        rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None, stages.append)
+        self.assertEqual(rep["answer"], "Hello from Qwen")
+        notes = [s for s in stages if s["stage"] == "retrying"]
+        self.assertEqual(len(notes), 2)
+        self.assertIn("trying again", notes[0]["message"])
+
+    def test_a_rerun_hint_reaches_the_tacc_job_in_the_statement(self):
+        self.ready()
+        d = tacc_live.run_task("demo-001", "B3", self.tmp / "runs", lambda e: None, hint="look at the header")
+        self.assertIsNotNone(d)
+        staged = (self.tmp / "state" / "staged").read_text(encoding="utf-8")
+        row = [json.loads(l) for l in staged.splitlines() if l.startswith("{") and '"demo-001"' in l][-1]
+        self.assertTrue(row["query"].endswith("Hint from the user: look at the header"), row["query"][-80:])
+        self.assertEqual(row["scope"], "core")
+        self.assertIn("tasks=demo-001 ", self.record())
+
+    def test_the_watchdog_notices_a_service_that_died(self):
+        self.ready()
+        os.environ.update(FLAGPILOT_TACC_WATCH="0.02", FLAGPILOT_TACC_ALIVE_EVERY="0")
+        threading.Thread(target=tacc_live._watchdog, args=("501",), daemon=True).start()
+        (self.tmp / "state" / "ps").write_text("")
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.status()["phase"] == "ready":
+            time.sleep(0.02)
+        self.assertEqual(tacc_live.status()["phase"], "failed")
+        self.assertIn("has ended on TACC", tacc_live.status()["error"])
 
 
 if __name__ == "__main__":

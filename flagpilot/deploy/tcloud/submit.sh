@@ -4,6 +4,7 @@
 #   deploy/tcloud/submit.sh serve                        # 起课程模型服务 qwen3.8-27b（2×3090，≤1h）
 #   deploy/tcloud/submit.sh doctor                       # CPU 自检：SDK 引导、课程 Python、题库泄漏检查
 #   deploy/tcloud/submit.sh batch http://NODE:8000/v1    # 对正在运行的服务跑一个批次
+#   FP_DROP="批次 …" deploy/tcloud/submit.sh cleanup     # 清理 TACC 家目录（盘满时也交得上去，见 cleanup/job.sh）
 #
 # batch 的参数用环境变量给：
 #   FP_BATCH（默认 tacc-smoke）  FP_SPLIT（默认 dev）  FP_LIMIT  FP_TASKS（逗号分隔题名）
@@ -38,7 +39,7 @@ STAGE="${STAGE_ROOT}/${NAME}"
 mkdir -p "$STAGE"
 case "$MODE" in
   serve)
-    cp "$HERE"/serve/tuxiv.conf "$HERE"/serve/job.sh "$HERE"/serve/main.py "$STAGE"/
+    cp "$HERE"/serve/tuxiv.conf "$HERE"/serve/job.sh "$HERE"/serve/main.py "$HERE"/serve/supervise.sh "$STAGE"/
     ;;
   doctor|batch|chat)
     cp "$HERE"/client/tuxiv.conf "$HERE"/client/job.sh "$HERE"/client/run_flagpilot.py "$STAGE"/
@@ -178,8 +179,18 @@ PY
     fi
     echo "[tcloud] 包大小 $(du -sh "$STAGE" | cut -f1)；run.env：$(tr '\n' ' ' < "$STAGE/run.env")"
     ;;
+  cleanup)
+    # 只交 job.sh + tuxiv.conf + run.env（几 KB）：家目录满了也上得去。复用 flagpilot-client 这个 WORKDIR，
+    # 上一批解开的题库和随包库被这几个小文件替换掉。
+    cp "$HERE"/client/tuxiv.conf "$STAGE"/
+    cp "$HERE"/cleanup/job.sh "$STAGE"/job.sh
+    [[ -z "${FP_DROP:-}" || "$FP_DROP" =~ ^[A-Za-z0-9._-]+([[:space:]]+[A-Za-z0-9._-]+)*$ ]] \
+      || { echo "FP_DROP: batch names separated by spaces" >&2; exit 1; }
+    printf 'FP_MODE=cleanup\nFP_DROP=%q\n' "${FP_DROP:-}" > "$STAGE/run.env"
+    perl -pi -e "s/time=00:45:00/time=00:10:00/" "$STAGE/tuxiv.conf"
+    ;;
   *)
-    echo "未知模式 ${MODE}（serve | doctor | batch）" >&2; exit 1 ;;
+    echo "未知模式 ${MODE}（serve | doctor | batch | chat | cleanup）" >&2; exit 1 ;;
 esac
 
 if [[ -n "${FP_EXCLUDE:-}" ]]; then
@@ -190,7 +201,7 @@ if [[ -n "${FP_EXCLUDE:-}" ]]; then
 fi
 
 if [[ "${FP_DRY_RUN:-0}" == "1" ]]; then trap - EXIT; echo "[tcloud] dry run，未提交：$STAGE"; exit 0; fi
-if [[ "$MODE" != serve ]]; then
+if [[ "$MODE" != serve && "$MODE" != cleanup ]]; then
   # SDK 上传是按文件逐个走一趟的（2026-11-20 实测每个约 0.7 s；带随包库的单题作业有 200 多个文件，光传就要两分钟）。
   # 除了 SDK 自己要读的 tuxiv.conf、作业入口 job.sh 和 run.env，其余打成一个 payload.tgz，job.sh 开头解开。
   # COPYFILE_DISABLE：macOS 的 tar 默认给每个文件附一份 ._* 扩展属性，解到 Linux 上全是垃圾（GNU tar 忽略这个变量）
@@ -198,4 +209,20 @@ if [[ "$MODE" != serve ]]; then
 fi
 echo "[tcloud] 暂存目录 ${STAGE}，提交中…"
 cd "$STAGE"
-tcloud submit
+# TACC 的登录网关忙时会直接断开 SSH 握手（"Failed to create remote session"，2026-11-20/21 反复出现）：
+# 这时什么都还没交上去，等一会儿再交不会重复。别的错误原样报出、不重试。FP_SUBMIT_TRIES=1 关掉重试
+# （网页自己重试，好把每次等待显示在页面上）。
+TRIES="${FP_SUBMIT_TRIES:-5}"
+[[ "$TRIES" =~ ^[0-9]+$ ]] && (( TRIES >= 1 )) || TRIES=5
+for (( i = 1; i <= TRIES; i++ )); do
+  rc=0; out=$(tcloud submit 2>&1) || rc=$?
+  printf '%s\n' "$out"
+  grep -q 'Submitted batch job' <<<"$out" && exit "$rc"      # submitted: report tcloud's own status, as before
+  if (( i < TRIES )) && grep -q -e 'Failed to create remote session' -e 'ssh: handshake failed' <<<"$out"; then
+    wait_s=$(( i * i * ${FP_SUBMIT_WAIT:-5} ))
+    echo "[tcloud] TACC's login gateway dropped the connection; trying again in ${wait_s} s ($(( i + 1 ))/${TRIES})" >&2
+    sleep "$wait_s"
+    continue
+  fi
+  exit "$(( rc ? rc : 1 ))"
+done

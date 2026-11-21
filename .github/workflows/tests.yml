@@ -1,0 +1,55 @@
+# Every push and pull request: the unit tests on each supported Python, plus syntax checks of the web page's
+# script and of every shell script. No keys are used: the tests fake every model, GitHub and TACC.
+# The browser checks (scripts/ui_check.mjs, scripts/click_all.mjs) run locally with scripts/verify.sh.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: unit tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    env:
+      FLAGPILOT_NO_DOTENV: "1"     # never read shared.env or .env in CI
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: optional libraries (the tests that need them run instead of being skipped)
+        run: python -m pip install --disable-pip-version-check -q -r flagpilot/requirements-encryption.txt
+      - name: unit tests
+        working-directory: flagpilot
+        run: python -m unittest discover -s tests -t .
+
+  syntax:
+    name: page script and shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: the web page's script parses
+        run: |
+          python3 - <<'PY'
+          import re
+          s = open("flagpilot/app/index.html", encoding="utf-8").read()
+          open("/tmp/page.js", "w", encoding="utf-8").write("\n;\n".join(re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", s, re.S)))
+          PY
+          node --check /tmp/page.js
+          node --check flagpilot/scripts/ui_check.mjs
+          node --check flagpilot/scripts/click_all.mjs
+      - name: every shell script parses
+        run: git ls-files '*.sh' | xargs -n1 bash -n

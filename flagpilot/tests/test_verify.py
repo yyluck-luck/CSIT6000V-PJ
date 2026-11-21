@@ -254,12 +254,45 @@ class TestChallengeTextMaterial(unittest.TestCase):
                             limits=SandboxLimits(action_timeout_s=20.0))
         self.assertEqual((r.verdict, r.reason), ("verified", "match"), r.detail)
 
+    def test_a_key_search_cannot_undo_the_change(self):
+        """v7 B3 crypto-072-s0: the script brute-forces a Caesar key over the statement's ciphertext. A uniform shift of
+        the ciphertext was just another key, so the flag survived and a correct solution was judged material-free."""
+        steps = [verify._step(i) for i in range(400)]
+        self.assertEqual(set(steps), {1, 2, 3})
+        for period in range(1, 40):
+            self.assertFalse(all(steps[i] == steps[i + period] for i in range(len(steps) - period)), period)
+        import string
+        alpha = string.ascii_lowercase[:16]
+        def enc(plain, key):                                   # picoCTF "new caesar": base16 over a-p, then a shift
+            b16 = "".join(alpha[b >> 4] + alpha[b & 15] for b in plain.encode())
+            return "".join(alpha[(alpha.index(c) + alpha.index(key)) % 16] for c in b16)
+        inner = "et_tu?_" + FLAG[len("picoCTF{"):-1][:20]
+        ct = enc(inner, "k")
+        task = make_text_task(self.root, f"We found a brand new type of encryption, can you break the secret code? (Wrap with picoCTF{{}}) {ct}")
+        script = ("import string\nALPHABET = string.ascii_lowercase[:16]\n"
+                  f"enc = '{ct}'\n"
+                  "def dec16(s):\n    return ''.join(chr((ALPHABET.index(s[i]) << 4) | ALPHABET.index(s[i + 1])) for i in range(0, len(s), 2))\n"
+                  "for k in ALPHABET:\n    d = ''.join(ALPHABET[(ALPHABET.index(c) - ALPHABET.index(k)) % 16] for c in enc)\n"
+                  "    try:\n        p = dec16(d)\n    except ValueError:\n        continue\n"
+                  "    if all(32 <= ord(ch) < 127 for ch in p):\n        print('picoCTF{' + p + '}')\n        break\n")
+        flag = "picoCTF{" + inner + "}"
+        task.gold_sha256 = hashlib.sha256(flag.encode()).hexdigest()
+        r = verify.evaluate(task, flag, script, self.root, timeout_s=20.0, limits=SandboxLimits(action_timeout_s=20.0))
+        self.assertEqual((r.verdict, r.reason), ("verified", "match"), r.detail)
+        hidden = ",".join(str(ord(c)) for c in flag)            # the same key search, then the flag typed in: still caught
+        cheat = script.replace("print('picoCTF{' + p + '}')", "pass") + f"print(''.join(map(chr, [{hidden}])))\n"
+        r = verify.evaluate(task, flag, cheat, self.root, timeout_s=20.0, limits=SandboxLimits(action_timeout_s=20.0))
+        self.assertEqual((r.verdict, r.reason), ("unverified", "hardcoded_no_material"), r.detail)
+
     def test_perturb_only_touches_the_chosen_literals(self):
         script = "msg = '中文' ; ct = 'abcdefghiz'\nn = 1234567890\nprint(f'{ct} done', msg)\n"
         nodes = verify.text_literals(script, "here: abcdefghiz and 1234567890", FLAG)
         self.assertEqual(sorted(type(n.value).__name__ for n in nodes), ["int", "str"])
         out = verify.perturb_literals(script, nodes)
-        self.assertIn("ct = 'bcdefghija'", out)
+        ct = out.split("ct = '", 1)[1].split("'", 1)[0]
+        self.assertEqual(len(ct), 10)
+        self.assertTrue(ct.isalpha() and ct.islower(), ct)
+        self.assertTrue(all(a != b for a, b in zip(ct, "abcdefghiz")), "every letter changes")
         self.assertIn("n = 1234567891", out)
         self.assertIn("msg = '中文'", out)
         self.assertIn("print(f'{ct} done', msg)", out)

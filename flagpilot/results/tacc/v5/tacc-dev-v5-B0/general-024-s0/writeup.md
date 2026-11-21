@@ -1,0 +1,170 @@
+# FlagPilot Solution Writeup
+
+## Run
+
+```text
+Task: general-024
+Category: General Skills
+Model: qwen3.8-27b
+Run: general-024-s0
+Verdict: verified
+Reason: match
+```
+
+The verdict below is the recorded outcome. Model reasoning is a self-report; tool and replay outputs are recorded execution evidence.
+
+## Challenge
+
+```text
+Run the Python script code.py in the same directory as codebook.txt.
+
+Files provided (in ./challenge/):
+  - code.py
+  - codebook.txt
+```
+
+## Recorded Steps
+
+### Model call 1
+
+Model output (self-reported):
+
+```json
+{"thought": "Inspect the files first.", "action": "shell", "cmd": "cat ./challenge/code.py; echo '---'; cat ./challenge/codebook.txt"}
+```
+
+### Tool: shell
+
+```text
+Command: cat ./challenge/code.py; echo '---'; cat ./challenge/codebook.txt
+Exit code: 0
+Timed out: False
+Duration: 553 ms
+```
+
+Recorded observation excerpt:
+
+```text
+[step 1] shell: cat ./challenge/code.py; echo '---'; cat ./challenge/codebook.txt
+exit=0  time=0.55s
+--- output ---
+
+import random
+import sys
+
+
+
+def str_xor(secret, key):
+    #extend key to secret length
+    new_key = key
+    i = 0
+    while len(new_key) < len(secret):
+        new_key = new_key + key[i]
+        i = (i + 1) % len(key)        
+    return "".join([chr(ord(secret_c) ^ ord(new_key_c)) for (secret_c,new_key_c) in zip(secret,new_key)])
+
+
+flag_enc = chr(0x13) + chr(0x01) + chr(0x17) + chr(0x07) + chr(0x2c) + chr(0x3a) + chr(0x2f) + chr(0x1a) + chr(0x0d) + chr(0x53) + chr(0x0c) + chr(0
+```
+
+### Model call 2
+
+Model output (self-reported):
+
+```json
+{"thought": "Run the script from the challenge directory so codebook.txt is found.", "action": "shell", "cmd": "cd ./challenge && python3 code.py"}
+```
+
+### Tool: shell
+
+```text
+Command: cd ./challenge && python3 code.py
+Exit code: 0
+Timed out: False
+Duration: 921 ms
+```
+
+Recorded observation excerpt:
+
+```text
+[step 2] shell: cd ./challenge && python3 code.py
+exit=0  time=0.92s
+--- output ---
+picoCTF{c0d3b00k_455157_d9aa2df2}
+
+```
+
+### Model call 3
+
+Model output (self-reported):
+
+```json
+{"thought": "Got the flag.", "action": "submit", "flag": "picoCTF{c0d3b00k_455157_d9aa2df2}", "script": "import sys\nsys.path.insert(0,'./challenge')\nimport code\nprint(code.str_xor(code.flag_enc, 'azbycxdwevfugthsirjqkplomn'[4]+codebook[14] if False else ''))\n"}
+```
+
+### Model call 4
+
+Model output (self-reported):
+
+```json
+{"thought": "Write a standalone script that reads codebook.txt and computes the password and flag.", "action": "submit", "flag": "picoCTF{c0d3b00k_455157_d9aa2df2}", "script": "import sys\nsys.path.insert(0, './challenge')\nimport code\n\nwith open('./challenge/codebook.txt') as f:\n    codebook = f.read()\n\npassword = (codebook[4] + codebook[14] + codebook[13] + codebook[14] +\n            codebook[23] + codebook[25] + codebook[16] + codebook[0] +\n            codebook[25])\n\nflag = code.str_xor(code.flag_enc, password)\nprint(flag)\n"}
+```
+
+## Submission
+
+Submission attempts: 2
+
+Submitted flag:
+
+```text
+picoCTF{c0d3b00k_455157_d9aa2df2}
+```
+
+Submitted solve.py:
+
+```python
+import sys
+sys.path.insert(0, './challenge')
+import code
+
+with open('./challenge/codebook.txt') as f:
+    codebook = f.read()
+
+password = (codebook[4] + codebook[14] + codebook[13] + codebook[14] +
+            codebook[23] + codebook[25] + codebook[16] + codebook[0] +
+            codebook[25])
+
+flag = code.str_xor(code.flag_enc, password)
+print(flag)
+
+```
+
+## Replay Verification
+
+```text
+Verdict: verified
+Reason: match
+Gold checked: True
+Exit code: 0
+Duration: 326 ms
+Detail: 重放复现出同一个 flag
+```
+
+Recorded replay stdout:
+
+```text
+picoCTF{c0d3b00k_455157_d9aa2df2}
+
+```
+
+## Usage
+
+```text
+Turns: 4
+Wall time: 17.27 s
+Input tokens: 3697
+Output tokens: 371
+Estimated cost: $0.000000
+```
+
+Observation and stderr excerpts are limited by the trace recorder. Token/cost figures use recorded application estimates, not a provider invoice.

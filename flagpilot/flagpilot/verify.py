@@ -238,10 +238,14 @@ def dry_run(
         return DryRunResult(False, "no_output", stderr="没有提供脚本")
 
     dest = _make_run_dir(task, tasks_root, keep_dir, "dryrun")
-    _stage(dest, task, tasks_root, with_material=True)
-    res = _run_script(dest, script, timeout_s, limits)
-    stdout = res.stdout or ""
-    tail = _stderr_tail(res.stderr, dest)
+    try:
+        _stage(dest, task, tasks_root, with_material=True)
+        res = _run_script(dest, script, timeout_s, limits)
+        stdout = res.stdout or ""
+        tail = _stderr_tail(res.stderr, dest)
+    finally:
+        if keep_dir is None:                # nobody keeps it: do not leave it in the task set (.dryrun-tmp piled up)
+            shutil.rmtree(dest, ignore_errors=True)
 
     if res.timed_out:
         return DryRunResult(False, "timeout", stdout, tail, res.exit_code,
@@ -399,20 +403,42 @@ def text_literals(script: str, text: str, flag: str) -> list:
     return out
 
 
-def _shift(c: str) -> str:
-    for lo, hi in (("a", "z"), ("A", "Z"), ("0", "9")):
-        if lo <= c <= hi:
-            return lo if c == hi else chr(ord(c) + 1)
-    return c
+def _step(i: int) -> int:
+    """第 i 个字符挪几位：1、2 或 3，按位置伪随机、没有短周期。
+
+    以前所有字母一律挪一位。凯撒一类的题（crypto-072 "new caesar"）脚本会穷举密钥，统一挪一位只等于换了个密钥，
+    穷举照样解出同一个 flag——正确的解法被判成"答案不依赖题面"（v7 B3 crypto-072-s0）。按位置挪不同的位数，
+    任何单个密钥、短周期的维吉尼亚密钥都抵消不了。"""
+    return 1 + ((i * 2654435761) >> 11) % 3
+
 
 
 def _perturbed(v):
-    """同长度、同字符类的另一个值：字母和数字各自往后挪一位（z→a、9→0），其余字符不动。"""
-    if isinstance(v, bytes):
-        return v.decode("latin-1").translate({i: _shift(chr(i)) for i in range(256)}).encode("latin-1")
+    """同长度的另一个值，字母和数字只在这个字面量自己用到的字符里挪 _step(位置) 位（循环），其余字符不动；整数加减 1。
+
+    只在自己的字符里挪：十六进制还是十六进制、base64 还是合法 base64、a–p 的密文还在 a–p 里。改过的输入就能照常
+    算下去，算出别的东西，而不是一出错就停——以前挪出了字母表（p→q），脚本当场报错，"报错"被当成"依赖题面"，
+    脚本最后写死的 flag 反而躲过了检查。某一类只用到一个字符时，在整个类里挪。"""
     if isinstance(v, int):
         return v + 1 if v >= 0 else v - 1
-    return "".join(_shift(c) for c in v)
+    text = v.decode("latin-1") if isinstance(v, bytes) else v
+    groups: dict[str, list[str]] = {}
+    for lo, hi in (("a", "z"), ("A", "Z"), ("0", "9")):
+        used = sorted({c for c in text if lo <= c <= hi})
+        if len(used) < 2:
+            used = [chr(x) for x in range(ord(lo), ord(hi) + 1)]
+        for c in used:
+            groups[c] = used
+    out = []
+    for i, c in enumerate(text):
+        g = groups.get(c)
+        if g is None:
+            out.append(c)
+            continue
+        k = _step(i) % len(g) or 1                    # never 0: every letter and digit changes
+        out.append(g[(g.index(c) + k) % len(g)])
+    s = "".join(out)
+    return s.encode("latin-1") if isinstance(v, bytes) else s
 
 
 def perturb_literals(script: str, nodes: list) -> str:
@@ -511,6 +537,20 @@ def evaluate(
         return ReplayResult("unverified", "no_output", "没有提供 solve.py",
                             gold_checked=gold_known)
 
+    if keep_dir is None:
+        # 没人要留证据（rescore、测试）：重放和材料检验都放进本次专用的目录，用完删掉。以前放在题库的
+        # .replay-tmp 下不删，材料检验的子目录（no-material 等）还在几次评测之间共用同一个父目录。
+        own = _make_run_dir(task, tasks_root, None, "replay")
+        try:
+            return _replay(task, submitted_flag, script, tasks_root, timeout_s, limits, own / "replay", material_free, gold_known)
+        finally:
+            shutil.rmtree(own, ignore_errors=True)
+    return _replay(task, submitted_flag, script, tasks_root, timeout_s, limits, Path(keep_dir), material_free, gold_known)
+
+
+def _replay(task: Task, submitted_flag: str, script: str, tasks_root: Path, timeout_s: float,
+            limits: SandboxLimits | None, keep_dir: Path, material_free: bool, gold_known: bool) -> ReplayResult:
+    """evaluate 的后半段：干净目录重放，再做材料检验。keep_dir 是本次重放的目录，检验目录建在它旁边。"""
     # 第三道：干净目录重跑
     replay_dir = _make_run_dir(task, tasks_root, keep_dir, "replay")
     # 只从题库根目录拷附件，不用 agent 工作目录里的副本——

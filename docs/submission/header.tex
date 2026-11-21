@@ -1,0 +1,32 @@
+% extra preamble for the submission PDF (pandoc's standalone LaTeX template + these lines)
+\usepackage{xcolor}
+\usepackage{fvextra}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\footnotesize}
+\RecustomVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,fontsize=\footnotesize,commandchars=\\\{\}}
+\renewenvironment{verbatim}{\VerbatimEnvironment\begin{Verbatim}[breaklines,breakanywhere,fontsize=\footnotesize,frame=leftline,framerule=1.2pt,rulecolor=\color{black!25},xleftmargin=6pt]}{\end{Verbatim}}
+\usepackage{etoolbox}
+\AtBeginEnvironment{longtable}{\small}
+\setlength{\LTpre}{6pt}\setlength{\LTpost}{6pt}
+\usepackage{newunicodechar}
+\newfontfamily\fallbackfont{Arial Unicode MS}[Scale=MatchLowercase]
+\newunicodechar{⌘}{{\fallbackfont ⌘}}
+\newunicodechar{↗}{{\fallbackfont ↗}}
+\newunicodechar{►}{{\fallbackfont ►}}
+\newunicodechar{→}{{\fallbackfont →}}
+\usepackage{fancyhdr}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small CSIT6000V course project · FlagPilot}
+\fancyhead[R]{\small GitHub repository submission}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\setlength{\headheight}{14pt}
+\usepackage{enumitem}
+\setlist{itemsep=1pt,topsep=3pt}
+\usepackage{array,booktabs}
+\renewcommand{\arraystretch}{1.25}
+\setlength{\emergencystretch}{3em}
+\usepackage{xurl}
+\setmonofont{Menlo}[Scale=MatchLowercase,HyphenChar={-}]   % long code words may break at the end of a line
+
+% long identifiers such as enable_prefix_caching may break after an underscore
+\renewcommand{\_}{\textunderscore\allowbreak}

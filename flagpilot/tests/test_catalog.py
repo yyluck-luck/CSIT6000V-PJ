@@ -139,6 +139,21 @@ class TestCatalog(unittest.TestCase):
         self.assertEqual(catalog.gold_from("not a flag"), "")
         self.assertEqual(catalog.gold_from("picoCTF{s0me_r3al_0ne}\n"), "picoCTF{s0me_r3al_0ne}")
 
+    def test_a_challenge_whose_description_is_the_material_imports_without_files(self):
+        """picoCTF 2019 "13": the ROT13 line is in the README; there is nothing else to attach."""
+        def only_readme(url, limit=None, accept=""):
+            if url.endswith("/contents/ctfs?ref=main"):
+                return json.dumps([{"name": "picoCTF", "sha": "abc", "type": "dir"}]).encode()
+            if "/git/trees/abc" in url:
+                return json.dumps({"tree": [{"path": "2019", "type": "tree"}, {"path": "2019/crypto", "type": "tree"},
+                                            {"path": "2019/crypto/13", "type": "tree"},
+                                            {"path": "2019/crypto/13/README.md", "type": "blob", "size": 60}], "truncated": False}).encode()
+            return b"# 13\nCryptography can be easy, do you know what ROT13 is? cvpbPGS{abg_gbb_onq_bs_n_ceboyrz}"
+        with mock.patch.object(catalog, "_get", side_effect=only_readme):
+            out = catalog.import_archive("ctfs/picoCTF/2019/crypto/13")
+        self.assertEqual(out["task"].assets, [])
+        self.assertIn("cvpbPGS{", out["task"].query)
+
     def test_bad_paths_are_refused(self):
         for bad in ("ctfs/picoCTF/../../etc", "etc/passwd", "ctfs/picoCTF/2019/nope"):
             with self.assertRaises(catalog.CatalogError):
