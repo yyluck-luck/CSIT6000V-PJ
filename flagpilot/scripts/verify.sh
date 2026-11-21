@@ -268,6 +268,21 @@ else
   record "网页交互（ui_check）" PASS "跳过：没有 node"
 fi
 
+# ---------------------------------------------------------------- 14. 每个控件点一遍（点了没反应 / 点了报错）
+# 不点会动 TACC、删除、停止或联网的控件；没有 Node / Chrome 时同样记为跳过。
+if command -v node >/dev/null 2>&1; then
+  CK_OUT=$(node scripts/click_all.mjs 2>&1); CK_RC=$?
+  if echo "$CK_OUT" | grep -q '^SKIP'; then
+    record "每个控件点一遍（click_all）" PASS "跳过：$(echo "$CK_OUT" | grep '^SKIP' | head -1)"
+  elif [[ $CK_RC -eq 0 ]]; then
+    record "每个控件点一遍（click_all）" PASS "$(echo "$CK_OUT" | tail -1)"
+  else
+    record "每个控件点一遍（click_all）" FAIL "$(echo "$CK_OUT" | grep -E '^(DEAD|ERROR)' | head -3 | tr '\n' ' ')"
+  fi
+else
+  record "每个控件点一遍（click_all）" PASS "跳过：没有 node"
+fi
+
 # ---------------------------------------------------------------- 汇总
 echo
 printf '%s\n' "${ROWS[@]}"
