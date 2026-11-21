@@ -119,6 +119,17 @@ class TestGemini(unittest.TestCase):
         self.assertEqual(busy_wait_s('"retryDelay": "12s"', None, 0), 12.0)
         self.assertEqual(busy_wait_s("", None, 0), 2.0)
         self.assertEqual(busy_wait_s('"retryDelay": "90s"', None, 1), 20.0)   # 有上限
+        self.assertEqual(busy_wait_s("Please retry in 43.6s.", None, 0, cap=65.0), 43.6)
+
+    def test_quota_kind_reads_google_details(self):
+        """429 是按分钟还是按天：按分钟就照服务端说的等，按天就直接失败（等也没用）。"""
+        from flagpilot.client import quota_kind
+        minute = '{"error": {"code": 429, "details": [{"violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]}, {"retryDelay": "43s"}]}}'
+        day = '{"error": {"code": 429, "details": [{"violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}'
+        self.assertEqual(quota_kind(minute), "minute")
+        self.assertEqual(quota_kind(day), "day")
+        self.assertEqual(quota_kind("Please retry in 12s."), "minute")
+        self.assertEqual(quota_kind("Too many requests"), "")
 
     def test_model_list_strips_prefix_and_drops_non_chat_models(self):
         listing = {"data": [{"id": "models/gemini-3.8-flash"}, {"id": "models/gemini-2.5-flash-preview-tts"},

@@ -89,7 +89,7 @@ class TestExperiments(unittest.TestCase):
         self.assertEqual(lab.find_run(self.root, rid), (self.root / "tacc" / "v9" / "tacc-dev-v9-B0" / "a-s0").resolve())
         self.assertEqual(exp["categories"]["Web"]["B0"], [0, 1])
         csv = lab.csv_rows(exp).splitlines()
-        self.assertEqual(csv[0], "experiment,arm,model,tier,task,category,seed,verdict,turns,wall_s")
+        self.assertEqual(csv[0], "experiment,arm,model,tier,task,category,seed,verdict,turns,wall_s,counted")
         self.assertEqual(len(csv), 1 + 8)
 
     def test_bad_ids_are_refused(self):
@@ -110,6 +110,65 @@ class TestExperiments(unittest.TestCase):
         self.assertIn("not significant (paired McNemar p = 0.06", lab.conclude(arms, pairs, 10))   # 5:0 is still p = .0625
         pairs[0].update(only_b=10, p=lab.mcnemar(0, 10))
         self.assertIn("The gap is significant (paired McNemar p = 0.002)", lab.conclude(arms, pairs, 10))
+
+
+class TestInfrastructureFailures(unittest.TestCase):
+    """限流 / 过载不是模型的成绩：不进成功率、区间和配对检验，单独计数，可以原样重跑。"""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="fp-lab-infra-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _local(self):
+        d = self.root / "lab" / "e1"
+        d.mkdir(parents=True)
+        (d / "meta.json").write_text(json.dumps({"label": "infra", "keys": ["mock~B3"], "arms": [{"model": "mock", "tier": "B3"}],
+                                                 "tasks": ["a", "b", "c"], "seeds": 1, "workers": 1}))
+        quota = dict(_row("b", "error"), reason="model: HTTP 429: You exceeded your current quota")
+        _write_arm(d / "mock~B3", [_row("a", "verified"), quota, _row("c", "wrong")])
+        return d
+
+    def test_rate_limited_attempts_are_not_counted(self):
+        self._local()
+        exp = lab.experiment(self.root, "local/e1")
+        (arm,) = exp["arms"]
+        self.assertEqual((arm["n"], arm["verified"], arm["infra"], exp["infra"], exp["attempts"]), (2, 1, 1, 1, 3))
+        cell = {t["task"]: t["cells"]["mock~B3"][0] for t in exp["tasks"]}["b"]
+        self.assertTrue(cell.get("infra"))
+        self.assertIn("1 attempt hit rate limits or outages and is not counted", exp["conclusion"])
+        self.assertIn(",no", lab.csv_rows(exp))
+        self.assertTrue(lab.is_infra({"verdict": "error", "reason": "model: HTTP 503: overloaded"}))
+        self.assertFalse(lab.is_infra({"verdict": "error", "reason": "model: HTTP 400: bad request"}))
+        self.assertFalse(lab.is_infra({"verdict": "budget", "reason": "max_turns"}))
+
+    def test_a_rerun_replaces_the_failed_row(self):
+        d = self._local()
+        tasks = {n: SimpleNamespace(name=n, category="Crypto", task_id=1) for n in "abc"}
+
+        def fake_attempt(task, cfg, out_dir, seed, hook):
+            return {"verdict": "verified", "turns": 3, "wall_s": 1.0}
+        orig = lab.replace
+        lab.replace = lambda cfg, **kw: SimpleNamespace(**{**vars(cfg), **kw})
+        try:
+            r = lab.retry_infra(self.root, "local/e1", tasks.get, lambda tier, model: SimpleNamespace(tier=tier, model=model, memory=True),
+                                run_attempt=fake_attempt)
+            self.assertEqual(r["total"], 1)
+            for _ in range(200):
+                if lab.status("e1")["finished"]:
+                    break
+                time.sleep(0.02)
+        finally:
+            lab.replace = orig
+        exp = lab.experiment(self.root, "local/e1")
+        (arm,) = exp["arms"]
+        self.assertEqual((arm["n"], arm["verified"], arm["infra"]), (3, 2, 0))
+        self.assertEqual(sum(1 for _ in (d / "mock~B3" / "runs.jsonl").read_text().splitlines()), 4, "the old row stays on disk; the newest wins")
+        with self.assertRaises(ValueError):
+            lab.retry_infra(self.root, "local/e1", tasks.get, lambda tier, model: None)
+        with self.assertRaises(ValueError):
+            lab.retry_infra(self.root, "tacc/v9", tasks.get, lambda tier, model: None)
 
 
 class TestLocalExperiment(unittest.TestCase):

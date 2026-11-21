@@ -40,17 +40,32 @@ MIN_FIT_TOKENS = 256        # 比这还小就不值得再要一轮了：上下�
 BUSY_CODES = (429, 503)
 BUSY_RETRIES = 2
 BUSY_WAIT_CAP_S = 20.0
+# 按分钟计的配额（Gemini 免费层每分钟十几次）：服务端会说等多久（常见 30–60 秒），照着等，多给几次机会；
+# 按天计的配额用完了就别等了，直接说清楚。2026-11-20 Lab 实测：旧的 20 秒 × 2 次不够，40 次里 5 次记成了 error。
+QUOTA_RETRIES = 4
+QUOTA_WAIT_CAP_S = 65.0
 
 
-def busy_wait_s(detail: str, retry_after: str | None, attempt: int) -> float:
-    """429 / 503 该等多久：Retry-After 头 > Google 错误体里的 retryDelay > 2、5 秒退避。上限 20 秒。"""
-    for raw in (retry_after or "", (re.search(r'"retryDelay"\s*:\s*"([\d.]+)s"', detail or "") or [None, ""])[1]):
+def quota_kind(body: str) -> str:
+    """Google 429 体里是哪种配额：minute（等一会儿就好）/ day（今天用完了）/ ''（看不出来）。"""
+    ids = re.findall(r'"quotaId"\s*:\s*"([^"]+)"', body or "")
+    if any("PerDay" in q for q in ids):
+        return "day"
+    if any("PerMinute" in q for q in ids) or re.search(r"retry in [\d.]+\s*s", body or "", re.I):
+        return "minute"
+    return ""
+
+
+def busy_wait_s(detail: str, retry_after: str | None, attempt: int, cap: float = BUSY_WAIT_CAP_S) -> float:
+    """429 / 503 该等多久：Retry-After 头 > Google 错误体里的 retryDelay > 正文里的 "retry in Ns" > 2、5 秒退避。有上限。"""
+    for raw in (retry_after or "", (re.search(r'"retryDelay"\s*:\s*"([\d.]+)s"', detail or "") or [None, ""])[1],
+                (re.search(r"retry in ([\d.]+)\s*s", detail or "", re.I) or [None, ""])[1]):
         try:
             if raw:
-                return min(BUSY_WAIT_CAP_S, max(0.5, float(raw)))
+                return min(cap, max(0.5, float(raw)))
         except ValueError:
             pass
-    return min(BUSY_WAIT_CAP_S, (2.0, 5.0)[min(attempt, 1)])
+    return min(cap, (2.0, 5.0)[min(attempt, 1)])
 MAX_FIT_RETRIES = 2
 
 
@@ -226,16 +241,23 @@ class ChatClient:
                         if ch.get("finish_reason"):
                             finish = ch["finish_reason"]
         except urllib.error.HTTPError as e:
-            detail = ""
+            body = ""
             try:
-                detail = e.read().decode("utf-8", "replace")[:500]
+                # 整个错误体用来判断（Google 把 quotaId / retryDelay 放在 details 里，靠后）；显示只留前 500 字
+                body = e.read().decode("utf-8", "replace")[:6000]
             except Exception:
                 pass
             finally:
                 # HTTPError 自己持有响应体（3.12 起是临时文件包装），不关就漏一个句柄。
                 e.close()
-            if e.code in BUSY_CODES and _busy_retries < BUSY_RETRIES:
-                time.sleep(busy_wait_s(detail, e.headers.get("Retry-After") if e.headers else None, _busy_retries))
+            detail = body[:500]
+            kind = quota_kind(body) if e.code == 429 else ""
+            if kind == "day":
+                return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
+                                  error="HTTP 429: the daily free quota for this model is used up; try again tomorrow or use another model")
+            if e.code in BUSY_CODES and _busy_retries < (QUOTA_RETRIES if kind == "minute" else BUSY_RETRIES):
+                time.sleep(busy_wait_s(body, e.headers.get("Retry-After") if e.headers else None, _busy_retries,
+                                       cap=QUOTA_WAIT_CAP_S if kind == "minute" else BUSY_WAIT_CAP_S))
                 retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
                                       _busy_retries=_busy_retries + 1)
                 retry.note = (retry.note + " " if retry.note else "") + f"服务端忙（HTTP {e.code}），重试后成功"

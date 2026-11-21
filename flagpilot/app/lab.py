@@ -34,6 +34,9 @@ from flagpilot import storage
 TIERS = ("B0", "B1", "B2", "B3")
 MAX_TASKS, MAX_ARMS, MAX_SEEDS, MAX_JOBS = 60, 8, 5, 400
 _EXP_RE = re.compile(r"^(tacc|local)/([\w.-]{1,80})$")
+# 基础设施失败（限流、过载、断网、运行器自己崩了）：说明不了模型解不解得出，不进成功率、区间和配对检验，
+# 单独计数、可以重跑。模型真的答错 / 超轮次 / 协议错都不算在这里。
+_INFRA = re.compile(r"^(model: (HTTP (408|429|5\d\d)|stream error|URLError|TimeoutError|timeout|ConnectionError|RemoteDisconnected|IncompleteRead)|exception: )", re.I)
 RUN_DIRS: dict[str, Path] = {}       # 回放 id → 运行目录（读实验时顺手建索引，/api/result 按它挂载）
 JOBS: dict[str, dict] = {}           # 正在跑的本地实验：目录名 → 实时状态
 _LOCK = threading.Lock()
@@ -81,11 +84,20 @@ def _pct(x: float) -> str:
 
 # ---------------------------------------------------------------- 读实验
 
+def is_infra(r: dict) -> bool:
+    return r.get("verdict") == "error" and bool(_INFRA.match(str(r.get("reason") or "")))
+
+
 def _rows(f: Path) -> list[dict]:
+    """一组的结果；同一次 attempt 重跑过就以最后一条为准。"""
     try:
-        return [r for r in storage.read_records(f) if r.get("verdict")]
+        rows = [r for r in storage.read_records(f) if r.get("verdict")]
     except Exception:
         return []
+    last: dict[str, dict] = {}
+    for i, r in enumerate(rows):
+        last[str(r.get("run_id") or f"#{i}")] = r
+    return list(last.values())
 
 
 def _arm_name(name: str) -> tuple[str, str]:
@@ -162,18 +174,27 @@ def _experiment(src: str, d: Path, arm_dirs: list[Path], detail: bool) -> dict |
         m, tier = _arm_name(a.name)
         model = m or next((str(r.get("model")) for r in rows if r.get("model")), "")
         key = a.name if src == "local" else tier
+        infra = [r for r in rows if is_infra(r)]
         for r in rows:
             rd = a / str(r.get("run_id") or "")
             rid = run_id_of(rd) if r.get("run_id") and rd.is_dir() else None
             if rid:
                 RUN_DIRS[rid] = rd
             ok = r["verdict"] == "verified"
+            bad_infra = is_infra(r)
             t = tasks.setdefault(r.get("task") or "?", {"task": r.get("task") or "?", "category": r.get("category") or "", "cells": {}})
             t["cells"].setdefault(key, []).append({"seed": r.get("seed", 0), "verdict": r["verdict"], "turns": r.get("turns"),
-                                                  "wall_s": r.get("wall_s"), "run": rid})
-            c = cats.setdefault(r.get("category") or "Other", {}).setdefault(key, [0, 0])
-            c[0] += ok
-            c[1] += 1
+                                                  "wall_s": r.get("wall_s"), "run": rid, **({"infra": True} if bad_infra else {})})
+            if not bad_infra:
+                c = cats.setdefault(r.get("category") or "Other", {}).setdefault(key, [0, 0])
+                c[0] += ok
+                c[1] += 1
+        rows = [r for r in rows if not is_infra(r)]
+        if not rows:
+            arms.append({"key": key, "tier": tier, "model": model, "label": tier if not m else f"{pretty_model(m)} · {tier}",
+                         "n": 0, "verified": 0, "rate": 0.0, "ci": [0.0, 0.0], "turns": 0, "wall_p50": 0, "tokens": 0,
+                         "verdicts": {}, "infra": len(infra)})
+            continue
         n, k = len(rows), sum(r["verdict"] == "verified" for r in rows)
         lo, hi = wilson(k, n)
         walls = sorted(float(r.get("wall_s") or 0) for r in rows)
@@ -186,12 +207,13 @@ def _experiment(src: str, d: Path, arm_dirs: list[Path], detail: bool) -> dict |
                      "turns": round(sum(int(r.get("turns") or 0) for r in rows) / n, 2),
                      "wall_p50": round(walls[n // 2], 2),
                      "tokens": round(sum(int(r.get("total_tokens") or 0) for r in rows) / n),
-                     "verdicts": verdicts})
+                     "verdicts": verdicts, "infra": len(infra)})
     pairs = []
-    for i, A in enumerate(arms):
-        for B in arms[i + 1:]:
-            ya = {(t, c["seed"]): c["verdict"] == "verified" for t, v in tasks.items() for c in v["cells"].get(A["key"], [])}
-            yb = {(t, c["seed"]): c["verdict"] == "verified" for t, v in tasks.items() for c in v["cells"].get(B["key"], [])}
+    counted = [a for a in arms if a["n"]]
+    for i, A in enumerate(counted):
+        for B in counted[i + 1:]:
+            ya = {(t, c["seed"]): c["verdict"] == "verified" for t, v in tasks.items() for c in v["cells"].get(A["key"], []) if not c.get("infra")}
+            yb = {(t, c["seed"]): c["verdict"] == "verified" for t, v in tasks.items() for c in v["cells"].get(B["key"], []) if not c.get("infra")}
             both = ya.keys() & yb.keys()
             oa = sum(ya[x] and not yb[x] for x in both)
             ob = sum(yb[x] and not ya[x] for x in both)
@@ -199,8 +221,9 @@ def _experiment(src: str, d: Path, arm_dirs: list[Path], detail: bool) -> dict |
     live = JOBS.get(d.name) if src == "local" else None
     models = sorted({a["model"] for a in arms if a["model"]})
     exp = {"id": f"{src}/{d.name}", "source": src, "name": meta.get("label") or _tacc_name(d.name, arm_dirs), "ts": d.stat().st_mtime,
-           "models": models, "n_tasks": len(tasks), "attempts": sum(a["n"] for a in arms),
-           "arms": arms, "pairs": pairs, "conclusion": conclude(arms, pairs, len(tasks)),
+           "models": models, "n_tasks": len(tasks), "attempts": sum(a["n"] + a["infra"] for a in arms),
+           "infra": sum(a["infra"] for a in arms),
+           "arms": arms, "pairs": pairs, "conclusion": conclude(counted, pairs, len(tasks), sum(a["infra"] for a in arms)),
            "running": bool(live and not live.get("finished")), "planned": meta.get("keys") or []}
     if live:
         exp["live"] = status(d.name)
@@ -220,8 +243,14 @@ def _tacc_name(name: str, arm_dirs: list[Path]) -> str:
     return name
 
 
-def conclude(arms: list[dict], pairs: list[dict], n_tasks: int) -> str:
-    """一句话结论：谁最好、差多少、差距是否显著（配对 McNemar）。"""
+def conclude(arms: list[dict], pairs: list[dict], n_tasks: int, infra: int = 0) -> str:
+    """一句话结论：谁最好、差多少、差距是否显著（配对 McNemar）；基础设施失败另说一句。"""
+    tail = (f" {infra} attempt{'s' if infra != 1 else ''} hit rate limits or outages and {'are' if infra != 1 else 'is'} not counted."
+            if infra else "")
+    return _conclude(arms, pairs, n_tasks) + tail
+
+
+def _conclude(arms: list[dict], pairs: list[dict], n_tasks: int) -> str:
     if not arms:
         return ""
     def ci(a):
@@ -251,14 +280,14 @@ def csv_rows(exp: dict) -> str:
     import io
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["experiment", "arm", "model", "tier", "task", "category", "seed", "verdict", "turns", "wall_s"])
+    w.writerow(["experiment", "arm", "model", "tier", "task", "category", "seed", "verdict", "turns", "wall_s", "counted"])
     arms = {a["key"]: a for a in exp.get("arms", [])}
     for t in exp.get("tasks", []):
         for key, cells in t["cells"].items():
             a = arms.get(key, {})
             for c in cells:
                 w.writerow([exp["id"], a.get("label", key), a.get("model", ""), a.get("tier", ""), t["task"], t["category"],
-                            c["seed"], c["verdict"], c["turns"], c["wall_s"]])
+                            c["seed"], c["verdict"], c["turns"], c["wall_s"], "no" if c.get("infra") else "yes"])
     return buf.getvalue()
 
 
@@ -286,9 +315,40 @@ def start(runs_root: Path, tasks: list, arms: list[dict], seeds: int, workers: i
             "workers": workers, "created": time.time()}
     storage.atomic_write(d / "meta.json", json.dumps(meta, ensure_ascii=False).encode())
     jobs = [(key, a, t, s) for s in range(seeds) for t in tasks for key, a in zip(keys, arms)]
+    _launch(d, jobs, workers, make_cfg, run_attempt, on_done)
+    return {"id": f"local/{eid}", "total": len(jobs)}
+
+
+def retry_infra(runs_root: Path, eid: str, resolve: Callable[[str], object], make_cfg: Callable[[str, str | None], object],
+                run_attempt: Callable | None = None) -> dict:
+    """把一个本地实验里因限流 / 过载等失败的 attempt 原样重跑一遍（同题、同组、同 seed，结果以新的一条为准）。"""
+    d = exp_dir(runs_root, eid)
+    if d is None or not eid.startswith("local/"):
+        raise ValueError("Only experiments started here can be re-run")
+    if (JOBS.get(d.name) or {}).get("finished") is None and d.name in JOBS:
+        raise ValueError("The experiment is still running")
+    meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+    arm_of = dict(zip(meta.get("keys") or [], meta.get("arms") or []))
+    jobs = []
+    for a in _arm_dirs(d):
+        for r in _rows(a / "runs.jsonl"):
+            if is_infra(r) and a.name in arm_of:
+                t = resolve(str(r.get("task")))
+                if t is not None:
+                    jobs.append((a.name, arm_of[a.name], t, int(r.get("seed") or 0)))
+    if not jobs:
+        raise ValueError("Nothing to re-run: no attempt failed for rate limits or outages")
+    if run_attempt is None:
+        from flagpilot.agent import run_attempt as _ra
+        run_attempt = _ra
+    _launch(d, jobs, int(meta.get("workers") or 1), make_cfg, run_attempt, None)
+    return {"id": eid, "total": len(jobs)}
+
+
+def _launch(d: Path, jobs: list, workers: int, make_cfg, run_attempt, on_done) -> None:
     st = {"total": len(jobs), "done": 0, "running": {}, "stop": False, "t0": time.time(), "finished": None, "errors": 0}
     with _LOCK:
-        JOBS[eid] = st
+        JOBS[d.name] = st
 
     def one(job) -> None:
         key, a, t, s = job
@@ -333,7 +393,6 @@ def start(runs_root: Path, tasks: list, arms: list[dict], seeds: int, workers: i
             st["finished"] = time.time()
 
     threading.Thread(target=main, daemon=True).start()
-    return {"id": f"local/{eid}", "total": len(jobs)}
 
 
 def status(name: str) -> dict | None:

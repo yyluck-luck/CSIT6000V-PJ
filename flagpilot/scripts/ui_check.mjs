@@ -9,7 +9,7 @@
 // four-tier sweep with the compare slider, upload (gooey gold flag), the Ask page (Enter to send,
 // typing dots, threads), a narrow viewport, reduced motion, and "no CJK text on screen".
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -203,6 +203,20 @@ try {
   check("compare slider follows the drag", parseFloat(moved) < 40, "x=" + moved);
   const smallLab = await js(SMALL); check("no small text on Lab", !smallLab.length, smallLab.join(" | "));
   await noCJK("lab");
+
+  // 7b. an attempt that hit a rate limit is striped, not counted, and can be re-run from the results
+  const demoTask = await js("fetch('/api/tasks').then(r => r.json()).then(d => d.tasks[0].name)");
+  const infraDir = join(work, "runs", "lab", "infra-demo");
+  mkdirSync(join(infraDir, "mock~B3"), { recursive: true });
+  writeFileSync(join(infraDir, "meta.json"), JSON.stringify({ label: "Rate-limit demo", keys: ["mock~B3"], arms: [{ model: "mock", tier: "B3" }], tasks: [demoTask], seeds: 1, workers: 1 }));
+  writeFileSync(join(infraDir, "mock~B3", "runs.jsonl"), JSON.stringify({ run_id: demoTask + "-s0", task: demoTask, category: "Demo", seed: 0, verdict: "error", reason: "model: HTTP 429: You exceeded your current quota", turns: 1, wall_s: 1 }) + "\n");
+  await js("document.querySelector('.navbtn[data-page=\"lab\"]').click(); document.querySelector('#labSeg button[data-lab=\"results\"]').click()");
+  await until("document.querySelector('#expList .exp[data-id=\"local/infra-demo\"]')", 5000);
+  await js("document.querySelector('#expList .exp[data-id=\"local/infra-demo\"]').click()");
+  const striped = await until("document.querySelector('#expView .hc i.infra') && document.querySelector('#expView [data-retry]') && /not counted/.test(document.querySelector('#expView .concl').textContent)", 5000);
+  if (striped) await js("document.querySelector('#expView [data-retry]').click()");
+  const rerun = striped && await until("!document.querySelector('#expView .hc i.infra') && !document.querySelector('#expView .livebar') && document.querySelector('#expView .hc i[data-run]') && !/not counted/.test(document.querySelector('#expView .concl').textContent)", 60000);
+  check("lab: a rate-limited attempt is striped, not counted, and re-runs from the results", striped && rerun, JSON.stringify({striped, rerun}));
 
   // 8. upload with the gooey gold field
   await js("document.querySelector('.navbtn[data-page=\"upload\"]').click()");

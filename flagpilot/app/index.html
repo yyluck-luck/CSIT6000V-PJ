@@ -470,6 +470,7 @@
   .heat .tn{font:600 15px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .heat .cat{padding:8px 10px;font:700 15px var(--font);color:var(--ink2);background:var(--paper);border-bottom:1px solid var(--rule2)}
   .hc{display:flex;gap:3px} .hc i{flex:1;height:26px;background:var(--rule2);transition:transform .15s var(--ease)} .hc i[data-run]{cursor:pointer} .hc i[data-run]:hover{transform:scaleY(1.18)}
   .hc i.ok{background:var(--blue)} .hc i.warn{background:var(--yellow)} .hc i.bad{background:var(--red)} .hc i.idle{background:var(--ink3)} .hc i.run{background:var(--ink);animation:blink 1s steps(2) infinite}
+  .hc i.infra{background:repeating-linear-gradient(135deg,var(--rule2) 0 5px,var(--ink3) 5px 7px)}
   .hc i.new{animation:land .55s var(--spring)} @keyframes land{from{transform:scale(.25);opacity:0}}
   /* find a challenge online: a public CTF archive on GitHub, or a link */
   .imp{margin-top:34px;background:var(--white);border:1.5px solid var(--ink);padding:20px 22px 22px}
@@ -2224,8 +2225,10 @@ function renderExp(exp, host, me){
   const labelOf = k => (arms.find(a => a.key === k) || {}).label || armLabel(k);
   const prog = live && !live.finished ? `<div class="livebar"><span>${live.done} of ${live.total} attempts · ${live.running.length} running · ${fmtClock(live.elapsed)}</span><span class="bar"><i style="--p:${live.total ? live.done / live.total : 0}"></i></span>`
     + (live.stopping ? '<span>Stopping after the running attempts…</span>' : `<button class="btn plain" data-stop="${esc(exp.id)}">Stop</button>`) + '</div>' : '';
+  const counted = arms.filter(a => a.n > 0);
   host.innerHTML = `<div class="expv">${prog}<p class="concl">${esc(exp.conclusion || (exp.running ? 'Waiting for the first attempts to finish…' : 'No finished attempts.'))}</p>`
-    + (arms.length ? `<div class="forestbox">${forestSVG(arms)}</div>` : '') + pairsHTML(exp, labelOf) + heatHTML(exp, keys, labelOf, me) + catsHTML(exp, keys, labelOf)
+    + (exp.infra && exp.source === 'local' && !exp.running ? `<p class="hint" style="margin:-8px 0 16px">Striped squares failed for reasons outside the model (rate limits, outages). <button class="dbtn" data-retry="${esc(exp.id)}">Re-run ${exp.infra === 1 ? 'it' : 'them'}</button></p>` : '')
+    + (counted.length ? `<div class="forestbox">${forestSVG(counted)}</div>` : '') + pairsHTML(exp, labelOf) + heatHTML(exp, keys, labelOf, me) + catsHTML(exp, keys, labelOf)
     + `<div class="actions"><a class="btn" href="/api/lab/export?id=${encodeURIComponent(exp.id)}" download>Export CSV</a>${arms.length ? '<button class="btn" data-svg>Export chart (SVG)</button>' : ''}</div></div>`;
   if (!me.drawn && !reduced()){
     host.querySelectorAll('.forest .ci').forEach((l, i) => { const n = l.getTotalLength(); l.animate([{strokeDasharray: `0 ${n}`}, {strokeDasharray: `${n} 0`}], {duration: 650, delay: 90 * i, easing: EASE}); });
@@ -2261,7 +2264,7 @@ function heatHTML(exp, keys, labelOf, me){
     const firsts = keys.map(k => [((t.cells[k] || [])[0] || {}).run, `${t.task} · ${labelOf(k)}`]).filter(x => x[0]);
     html += `<div class="hr"><span class="tn" title="${esc(t.task)}">${esc(t.task)}</span>` + keys.map(k => { const cs = t.cells[k] || [], on = running.has(k + '|' + t.task);
       return '<span class="hc">' + cs.map(c => { const id = k + '|' + t.task + '|' + c.seed, fresh = me.drawn && !me.seen.has(id); me.seen.add(id);
-        return `<i class="${verdictTone(c.verdict)}${fresh ? ' new' : ''}"${c.run ? ` data-run="${esc(c.run)}"` : ''} data-tip="${esc(`${t.task} · ${labelOf(k)} · ${(V[c.verdict] || [, , String(c.verdict).toUpperCase()])[2]} · ${c.turns ?? '—'} turns · ${c.wall_s ?? '—'} s`)}"></i>`; }).join('')
+        return `<i class="${c.infra ? 'infra' : verdictTone(c.verdict)}${fresh ? ' new' : ''}"${c.run ? ` data-run="${esc(c.run)}"` : ''} data-tip="${esc(c.infra ? `${t.task} · ${labelOf(k)} · not counted: rate limit or outage` : `${t.task} · ${labelOf(k)} · ${(V[c.verdict] || [, , String(c.verdict).toUpperCase()])[2]} · ${c.turns ?? '—'} turns · ${c.wall_s ?? '—'} s`)}"></i>`; }).join('')
         + (on ? '<i class="run" data-tip="Running"></i>' : '') + (!cs.length && !on ? '<i></i>' : '') + '</span>'; }).join('')
       + `<span>${firsts.length >= 2 ? `<button class="dbtn" data-diff="${esc(JSON.stringify([firsts[0], firsts[firsts.length - 1]]))}">Diff</button>` : ''}</span></div>`;
   }
@@ -2275,6 +2278,10 @@ function exportSVG(svg){ if (!svg) return; const cs = getComputedStyle(document.
 $('#pLab').addEventListener('click', e => {
   const c = e.target.closest('.hc i[data-run]'); if (c){ openReplay(c.dataset.run); return; }
   const d = e.target.closest('[data-diff]'); if (d){ try { diffPreset = JSON.parse(d.dataset.diff); } catch(_){ diffPreset = null; } labShow('diff'); return; }
+  const rr = e.target.closest('[data-retry]'); if (rr){ const host = rr.closest('#expView,#cmpView,#batView'); rr.disabled = true;
+    fetch('/api/lab/retry', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: rr.dataset.retry})}).then(r => r.json())
+      .then(d => { if (d.error) throw new Error(d.error); toast(`Re-running ${plural(d.total, 'attempt')}`); railMark('lab', 'working'); openExp(d.id, host); })
+      .catch(err => { rr.disabled = false; toast(err.message); }); return; }
   const s = e.target.closest('[data-stop]'); if (s){ s.disabled = true; s.textContent = 'Stopping…'; fetch('/api/lab/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: s.dataset.stop})}); return; }
   const x = e.target.closest('[data-svg]'); if (x){ exportSVG(x.closest('.expv').querySelector('svg.forest')); return; }
   const ex = e.target.closest('.exp[data-id]'); if (ex){ LAB.cur = ex.dataset.id; qs('#expList .exp').forEach(b => b.classList.toggle('on', b === ex)); openExp(ex.dataset.id, $('#expView')); }

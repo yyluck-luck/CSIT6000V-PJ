@@ -505,7 +505,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/run/control",
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control",
                   "/api/catalog/import")
         if path not in routes:
             return self._json(404, {"error": "not found"})
@@ -541,6 +541,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._run_control(payload)
         if path == "/api/catalog/import":
             return self._catalog_import(payload)
+        if path == "/api/lab/retry":
+            try:
+                r = lab.retry_infra(config.RUNS_ROOT, str(payload.get("id") or ""), resolve_task,
+                                    make_cfg=lambda tier, model: _make_cfg("lab", ablate=tier, model=model))
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
+            return self._json(200, r)
         if path == "/api/lab/stop":
             m = lab.exp_dir(config.RUNS_ROOT, str(payload.get("id") or ""))
             return self._json(200, {"ok": bool(m) and lab.stop(m.name)})

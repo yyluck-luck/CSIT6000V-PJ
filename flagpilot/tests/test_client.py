@@ -333,3 +333,80 @@ class TestContextOverflow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+QUOTA = {"left": 0, "kind": "Minute"}
+
+
+class QuotaStub(Stub):
+    """Gemini 式 429：正文很长，quotaId / retryDelay 在 details 里、500 字以后。前 left 次限流，之后正常。"""
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        REQUESTS.append(json.loads(self.rfile.read(n) or b"{}"))
+        if QUOTA["left"] > 0:
+            QUOTA["left"] -= 1
+            msg = json.dumps([{"error": {"code": 429, "message": "You exceeded your current quota. " + "x" * 600,
+                                         "status": "RESOURCE_EXHAUSTED",
+                                         "details": [{"violations": [{"quotaId": f"GenerateRequestsPer{QUOTA['kind']}PerProjectPerModel-FreeTier"}]},
+                                                     {"retryDelay": "43s"}]}}]).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(msg)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(msg)
+            self.close_connection = True
+            return
+        self.send_response(200)                  # 不能调 super().do_POST()：请求体已经读过了，再读会一直等
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for chunk in ({"choices": [{"delta": {"content": '{"action":"shell","cmd":"ls"}'}, "finish_reason": "stop"}]},
+                      {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 7}}):
+            self.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+        self.close_connection = True
+
+
+class TestQuota(unittest.TestCase):
+    """按分钟的配额照服务端说的等、多给几次；按天的配额用完了立刻失败（Lab 实测 40 次里 5 次被旧逻辑记成 error）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), QuotaStub)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        REQUESTS.clear()
+        self.waits = []
+        p = mock.patch("flagpilot.client.time.sleep", side_effect=self.waits.append)
+        p.start()
+        self.addCleanup(p.stop)
+        self.client = ChatClient(ModelSpec(name="stub", base_url=f"http://127.0.0.1:{self.port}/v1", enable_thinking=False))
+
+    def test_per_minute_quota_waits_as_told_and_retries(self):
+        QUOTA.update(left=3, kind="Minute")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(comp.error, "")
+        self.assertEqual(self.waits, [43.0, 43.0, 43.0])
+        self.assertEqual((len(REQUESTS), comp.retries), (4, 3))
+
+    def test_per_minute_quota_gives_up_after_four_retries(self):
+        QUOTA.update(left=9, kind="Minute")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertTrue(comp.error.startswith("HTTP 429"))
+        self.assertEqual(len(REQUESTS), 5)
+
+    def test_daily_quota_fails_at_once_and_says_why(self):
+        QUOTA.update(left=1, kind="Day")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertIn("daily free quota", comp.error)
+        self.assertEqual((len(REQUESTS), self.waits), (1, []))
