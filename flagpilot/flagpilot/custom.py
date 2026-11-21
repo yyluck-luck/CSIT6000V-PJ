@@ -21,13 +21,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from .tasks import Task
+from .tasks import Task, web_url
+
+SERVICE_NOTE = ("Note: in the original CTF this challenge ran as a network service. The sandbox here has no network, so the "
+                "service cannot be reached; study the files, and do not try to install packages or connect anywhere.")
+_SERVICE_PHRASE = "ran as a network service"
 
 MAX_FILES = 20
 MAX_FILE_BYTES = 32 * 1024 * 1024          # 单文件 32MB
@@ -83,6 +88,7 @@ def create(
     category: str = "custom",
     gold: str = "",
     root: Path | None = None,
+    source: str = "",
 ) -> Task:
     """落盘一道自建题并返回 Task。
 
@@ -92,7 +98,7 @@ def create(
     """
     root = root or store_root()
     files = list(files or [])
-    title = (title or "").strip()[:200] or "未命名题目"
+    title = (title or "").strip()[:200] or "Untitled challenge"
     query = (query or "").strip()
     if not files and not query:
         raise ValueError("至少要给题面或附件之一")
@@ -147,6 +153,7 @@ def create(
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "files": written,     # 用户上传的原始文件名
         "assets": assets,     # challenge/ 下的实际文件（含 zip 解出来的）
+        "source": web_url(source),   # 原题网页（从网上导入时有）
     }
     (base / "task.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return _to_task(meta, chal)
@@ -201,15 +208,93 @@ def _extract_zip(zip_path: Path, dest: Path) -> int:
     return n
 
 
+def _meta_file(name: str, root: Path | None) -> Path:
+    base = (root or store_root()) / name
+    f = base / "task.json"
+    if not f.is_file() or not base.resolve().is_relative_to((root or store_root()).resolve()):
+        raise ValueError(f"No uploaded challenge called {name}")
+    return f
+
+
+def _write_meta(f: Path, meta: dict) -> Task:
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, f)
+    return _to_task(meta, f.parent / "challenge")
+
+
+def set_gold(name: str, gold: str, root: Path | None = None, source: str = "you") -> Task:
+    """给自建 / 导入的题补上标准答案（只存哈希）。之后的运行就能判 verified / wrong，而不只是"能不能复现"。
+
+    source 记下答案从哪来（you = 事后在网页上补的）：界面据此说"与保存的答案一致"，而不是"flag 正确"。
+    """
+    gold = (gold or "").strip()
+    if not gold or len(gold) > 300 or "\n" in gold:
+        raise ValueError("The answer must be one line of at most 300 characters")
+    f = _meta_file(name, root)
+    meta = json.loads(f.read_text(encoding="utf-8"))
+    meta["gold_sha256"] = hashlib.sha256(gold.encode()).hexdigest()
+    meta["gold_provided"] = True
+    meta["gold_source"] = source
+    return _write_meta(f, meta)
+
+
+def update(name: str, title: str | None = None, query: str | None = None, category: str | None = None,
+           root: Path | None = None) -> Task:
+    """改导入 / 上传题的标题、题面、类别（网页上"Customise"，可以先让 AI 起草）。
+
+    原来是网络服务的题，改题面时把这一点记在 meta 里：题面里那句说明被删掉，界面的提示和给模型的说明也还在。
+    """
+    f = _meta_file(name, root)
+    meta = json.loads(f.read_text(encoding="utf-8"))
+    if title is not None:
+        t = " ".join(str(title).split())[:200]
+        if not t:
+            raise ValueError("The title cannot be empty")
+        meta["title"] = t
+    if query is not None:
+        if _SERVICE_PHRASE in (meta.get("query") or ""):
+            meta["service"] = True
+        meta["query"] = str(query).strip()[:6000]
+    if category is not None:
+        meta["category"] = " ".join(str(category).split())[:40] or "custom"
+    return _write_meta(f, meta)
+
+
+def clear_gold(name: str, root: Path | None = None) -> Task:
+    """删掉保存的答案（存错了，比如存成了模型自己编的 flag）。之后的运行回到"无答案可比"。"""
+    f = _meta_file(name, root)
+    meta = json.loads(f.read_text(encoding="utf-8"))
+    meta["gold_sha256"], meta["gold_provided"] = "", False
+    meta.pop("gold_source", None)
+    return _write_meta(f, meta)
+
+
+def _source_from_query(query: str) -> str:
+    """加来源字段之前导入的题：题面末尾有 "(Imported from …)"，从这里还原原题网页。"""
+    import urllib.parse
+    m = re.search(r"\(Imported from (?:sajjadium/ctf-archives: (ctfs/[^)\n]+)|(https?://[^)\s]+))\)", query)
+    if not m:
+        return ""
+    if m.group(1):
+        return web_url("https://github.com/sajjadium/ctf-archives/tree/main/" + urllib.parse.quote(m.group(1).strip(), safe="/"))
+    return web_url(m.group(2))
+
+
 def _to_task(meta: dict, chal: Path) -> Task:
     # 老记录只有 files，新记录有 assets；两者取并，缺哪个都不会漏附件
     files = list(meta.get("assets") or meta.get("files") or [])
     title = meta.get("title") or ""
     query = meta.get("query") or ""
+    service = bool(meta.get("service")) or _SERVICE_PHRASE in query
     brief = title
     if query and query.strip() != title.strip():
         brief = f"{title}\n\n{query}"
+    if service and _SERVICE_PHRASE not in query:
+        brief += "\n\n" + SERVICE_NOTE            # 题面被改写过：模型仍要知道服务连不上
     return Task(
+        service=service,
+        source=web_url(meta.get("source")) or _source_from_query(meta.get("query") or ""),
         # 负数 id：与内置题库（正整数）不可能撞
         task_id=-abs(hash(meta["slug"])) % 900000 - 1000,
         name=meta["slug"],

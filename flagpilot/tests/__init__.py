@@ -26,5 +26,7 @@ os.environ.setdefault("FLAGPILOT_MEMORY", str(_TMP_ROOT / "memory"))
 # a developer's live model configuration or production storage key.
 for _name in ("FLAGPILOT_ENCRYPTION_KEY_FILE", "FLAGPILOT_MODEL",
               "FLAGPILOT_API_KEY", "DEEPSEEK_API_KEY", "DSV41_API_KEY",
+              "GEMINI_API_KEY", "GOOGLE_API_KEY",
               "FLAGPILOT_BASE_URL", "FLAGPILOT_H_BASE_URL"):
     os.environ.pop(_name, None)
+os.environ["FLAGPILOT_NO_DOTENV"] = "1"     # 也别从仓库根目录的 .env 里读出真实的 Gemini 密钥

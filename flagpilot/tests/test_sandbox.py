@@ -58,6 +58,24 @@ class TestSandbox(unittest.TestCase):
         r = self.sb.run_python("print(6*7)")
         self.assertIn("42", r.stdout)
 
+    def test_vendored_pythonpath_reaches_actions_only_when_declared(self):
+        """TACC 把 pycryptodome / gmpy2 解进作业目录，经 FLAGPILOT_SANDBOX_PYTHONPATH 交给沙箱；
+        宿主自己的 PYTHONPATH 仍然不透传（环境是白名单）。"""
+        import os
+        from unittest import mock
+        self.sb.stage(self.task)
+        vend = self.root / "vendor"
+        vend.mkdir()
+        (vend / "fp_vendored_probe.py").write_text("VALUE = 'vendored-ok'\n")
+        code = "import fp_vendored_probe as m; print(m.VALUE)"
+        with mock.patch.dict(os.environ, {"FLAGPILOT_SANDBOX_PYTHONPATH": str(vend)}):
+            self.assertIn("vendored-ok", self.sb.run_python(code).stdout)
+        with mock.patch.dict(os.environ, {"PYTHONPATH": str(vend)}):
+            os.environ.pop("FLAGPILOT_SANDBOX_PYTHONPATH", None)
+            r = self.sb.run_python(code)
+            self.assertNotIn("vendored-ok", r.stdout)
+            self.assertIn("ModuleNotFoundError", r.stdout + r.stderr)
+
     def test_file_size_limit_actually_applies(self):
         """回归：曾因 RLIMIT_AS 在 macOS 抛错，把后面的 FSIZE 一起吞掉。
 
@@ -153,6 +171,22 @@ class TestTruncate(unittest.TestCase):
         out, cut = truncate(text, Policy(truncate_head_chars=None, hard_cap_chars=5000))
         self.assertTrue(cut)
         self.assertEqual(len(out), 5000)
+
+    def test_flag_in_the_cut_middle_is_kept(self):
+        """长输出中间的 flag 不再被头尾截断静默丢掉。"""
+        text = "a line of strings output\n" * 400 + "picoCTF{hidden_in_the_middle}\n" + "more noise here\n" * 400
+        out, cut = truncate(text, Policy(truncate_head_chars=1000, truncate_tail_chars=1000))
+        self.assertTrue(cut)
+        self.assertIn("picoCTF{hidden_in_the_middle}", out)
+        self.assertIn("kept 1 line(s)", out)
+        out2, _ = truncate(text, Policy(truncate_head_chars=1000, truncate_tail_chars=1000, keep_salient=False))
+        self.assertNotIn("hidden_in_the_middle", out2)
+
+    def test_kept_lines_are_capped(self):
+        text = "x" * 3000 + "".join(f"\nflag{{candidate_{i:03d}}}" for i in range(200)) + "\n" + "y" * 3000
+        out, _ = truncate(text, Policy(truncate_head_chars=1000, truncate_tail_chars=1000))
+        self.assertEqual(sum(1 for ln in out.splitlines() if ln.startswith("flag{candidate_")), 12)
+        self.assertLess(len(out), 1000 + 1000 + 1200 + 400)
 
     def test_deterministic(self):
         text = "H" * 3000 + "T" * 3000

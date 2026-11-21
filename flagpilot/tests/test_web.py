@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import tempfile
 import threading
@@ -42,6 +43,7 @@ class TestWebAPI(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
         config.RUNS_ROOT = cls._runs
         config.TASKS_ROOT = cls._tasks
         shutil.rmtree(cls.tmp, ignore_errors=True)
@@ -69,10 +71,10 @@ class TestWebAPI(unittest.TestCase):
                         raise AssertionError("chat 出错：" + str(ev.get("message")))
         return None
 
-    def upload(self, title, content=b"flag: picoCTF{upload_web_1234}\n", gold=""):
+    def upload(self, title, content=b"flag: picoCTF{upload_web_1234}\n", gold="", query="附件里直接写着答案"):
         return self.post("/api/upload", {
             "title": title,
-            "query": "附件里直接写着答案",
+            "query": query,
             "category": "misc",
             "gold": gold,
             "files": [{"name": "note.txt", "data_b64": base64.b64encode(content).decode()}],
@@ -107,15 +109,34 @@ class TestWebAPI(unittest.TestCase):
 
     def test_index_has_controls(self):
         html = self.get("/")
-        for marker in ("四档连跑", "能力对照", "Agent 流程", "solve.py",
-                       "上传题目", "答疑讲解", "允许跑命令",
+        # 界面全英文（2026-11-19 起）：标记跟着换成英文，检查的仍是同一批功能
+        for marker in ("Run comparison", "Run batch", "Compare step by step", "Ask without tools", "Agent flow", "solve.py",
+                       "Upload challenge", "Ask the tutor", "Allow commands",
                        # 可展开的步骤链路：工具调用与思维链都要看得见
-                       "调用链路", "思考（模型自述）", "工具返回", "展开全部", "data-step",
+                       "Call chain", "Thought", "Tool output", "Expand all", "data-step",
                        # 每步的自动解读 + 工具/文件的"说人话"词表
-                       "这一步在做什么", "自动解读", "TOOL_DOC", "chipWhat",
+                       "What this step does", "auto-explained", "TOOL_DOC", "chipWhat",
                        # 按 run_id 回放一次已有运行
                        "?run=", "recoverRun"):
             self.assertIn(marker, html)
+
+    def test_chat_sessions_listed_newest_first(self):
+        """答疑页左侧的会话列表：标题取第一句提问，不带回答正文。"""
+        root = config.RUNS_ROOT / "chat"
+        for sid, q, ts in (("aaaa1111bbbb", "first question", 1000), ("cccc2222dddd", "second question", 2000)):
+            (root / sid).mkdir(parents=True, exist_ok=True)
+            f = root / sid / "chat.jsonl"
+            f.write_text(json.dumps({"type": "meta", "task": "demo-001"}) + "\n"
+                         + json.dumps({"type": "user", "turn": 1, "text": q}) + "\n"
+                         + json.dumps({"type": "reply", "turn": 1, "answer": "secret answer body"}) + "\n",
+                         encoding="utf-8")
+            os.utime(f, (ts, ts))
+        d = json.loads(self.get("/api/chat/sessions"))
+        ids = [x["id"] for x in d["sessions"]]
+        self.assertLess(ids.index("cccc2222dddd"), ids.index("aaaa1111bbbb"))
+        one = next(x for x in d["sessions"] if x["id"] == "cccc2222dddd")
+        self.assertEqual((one["title"], one["turns"], one["task"]), ("second question", 1, "demo-001"))
+        self.assertNotIn("secret answer body", json.dumps(d))
 
     def test_tasks_expose_ablations(self):
         d = json.loads(self.get("/api/tasks"))
@@ -183,6 +204,26 @@ class TestWebAPI(unittest.TestCase):
         self.assertIn("model", [e.get("type") for e in d["events"]])
         self.assertIn(f"{self.task_name()}-s0", d["summary"].get("run_dir", ""))
 
+    def test_replay_stream_ends_with_done(self):
+        """挂载的回放经 SSE 读：最后一条必须是 done。以前兜底那条写成 {"type": "done", **summary}，
+        被 summary 自带的 type 覆盖成了 summary，按 done 收尾的读端会一直等到超时。"""
+        d = self.tmp / "replay-src" / "x-001-s0"
+        d.mkdir(parents=True)
+        rows = [{"type": "meta", "task": "x-001"}, {"type": "model", "turn": 1, "prompt_tokens": 1, "completion_tokens": 1},
+                {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1}]
+        (d / "trace.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+        (rid, _, _), = S._mount_replay(str(d.parent))
+        got = []
+        with urllib.request.urlopen(self.base + f"/api/stream?id={rid}", timeout=10) as s:
+            for raw in s:
+                line = raw.decode()
+                if line.startswith("data:"):
+                    got.append(json.loads(line[5:]))
+                    if got[-1].get("type") == "done" or len(got) > len(rows):
+                        break
+        self.assertEqual([e["type"] for e in got], ["meta", "model", "summary", "done"])
+        self.assertEqual((got[-1]["verdict"], got[-1]["reason"]), ("verified", "match"))
+
     def test_models_endpoint(self):
         d = json.loads(self.get("/api/models"))
         self.assertTrue(d["models"])
@@ -197,6 +238,7 @@ class TestWebAPI(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 self.post("/api/settings", {"model": "  "})
             self.assertEqual(ctx.exception.code, 400)
+            ctx.exception.close()
         finally:
             S.SETTINGS["model"] = old
 
@@ -204,6 +246,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/run", {"task": self.task_name(), "ablate": "B9"})
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     def test_probe_endpoint(self):
         d = self.post("/api/probe", {"task": self.task_name(), "mode": "brief"})
@@ -218,6 +261,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.get("/api/chat/history?id=../../../../etc")
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     def test_post_requires_json_content_type(self):
         """跨站表单/sendBeacon 发不了 application/json，这条挡掉大半 CSRF。"""
@@ -228,6 +272,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(ctx.exception.code, 415)
+        ctx.exception.close()
 
     def test_post_rejects_cross_origin(self):
         req = urllib.request.Request(
@@ -238,6 +283,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(ctx.exception.code, 403)
+        ctx.exception.close()
 
     # ---------- 自建题目 ----------
 
@@ -271,6 +317,7 @@ class TestWebAPI(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/custom/delete", {"task": self.task_name()})
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     # ---------- 答疑 ----------
 
@@ -300,10 +347,255 @@ class TestWebAPI(unittest.TestCase):
         finally:
             self.post("/api/custom/delete", {"task": name})
 
+    def test_failed_chat_turn_is_recorded(self):
+        """这一轮没答成：线程里留一条 error，重开时看得到原因（以前只有一条没有回复的提问）。"""
+        from unittest import mock
+        from flagpilot import chat as chat_mod
+        with mock.patch.object(chat_mod.ChatSession, "ask", side_effect=RuntimeError("boom")):
+            sid = self.post("/api/chat", {"message": "will fail", "tools": False})["session_id"]
+            with self.assertRaises(AssertionError) as ctx:
+                self.stream_chat(sid, timeout=20)
+        self.assertIn("RuntimeError: boom", str(ctx.exception))
+        hist = json.loads(self.get(f"/api/chat/history?id={sid}"))
+        self.assertEqual(hist["messages"][-1]["type"], "error")
+        self.assertIn("RuntimeError: boom", hist["messages"][-1]["error"])
+
+    def test_recall_drops_a_turn_everywhere(self):
+        """撤回：那一轮（提问 + 回答）从历史、线程列表、之后的模型上下文里消失；轮次号不重用；全撤回的线程不再列出。"""
+        from unittest import mock
+        from flagpilot import chat as chat_mod
+        from flagpilot.client import Completion, ServerMetrics
+        seen = []
+
+        class Echo:
+            def __init__(self, spec):
+                pass
+
+            def scrape_metrics(self):
+                return ServerMetrics(error="not configured")
+
+            def complete(self, messages, max_tokens=None, on_delta=None):
+                seen.append([m["content"] for m in messages if m["role"] in ("user", "assistant")])
+                return Completion(text=f"reply {len(seen)}", prompt_tokens=1, completion_tokens=1,
+                                  ttft_ms=1, latency_ms=1, finish_reason="stop", usage_source="estimated")
+
+        with mock.patch.object(chat_mod, "build_client", side_effect=lambda spec: Echo(spec)):
+            r1 = self.post("/api/chat", {"message": "first question", "tools": False, "model": "mock"})
+            sid = r1["session_id"]
+            self.assertEqual(r1["turn"], 1)
+            self.stream_chat(sid)
+            r2 = self.post("/api/chat", {"message": "second question", "tools": False, "session_id": sid, "model": "mock"})
+            self.assertEqual(r2["turn"], 2)
+            self.stream_chat(sid)
+            self.assertTrue(self.post("/api/chat/recall", {"session_id": sid, "turn": 1})["ok"])
+            r3 = self.post("/api/chat", {"message": "third question", "tools": False, "session_id": sid, "model": "mock"})
+            self.assertEqual(r3["turn"], 3, "turn numbers are never reused")
+            self.stream_chat(sid)
+        hist = json.loads(self.get(f"/api/chat/history?id={sid}"))
+        self.assertEqual([(m["type"], m["turn"]) for m in hist["messages"]],
+                         [("user", 2), ("reply", 2), ("user", 3), ("reply", 3)])
+        self.assertEqual(seen[-1], ["second question", "reply 2", "third question"], "the model no longer sees the recalled turn")
+        row = {t["id"]: t for t in json.loads(self.get("/api/chat/sessions"))["sessions"]}[sid]
+        self.assertEqual((row["title"], row["turns"]), ("second question", 2))
+        for t in (2, 3):
+            self.post("/api/chat/recall", {"session_id": sid, "turn": t})
+        self.assertNotIn(sid, {t["id"] for t in json.loads(self.get("/api/chat/sessions"))["sessions"]})
+        for bad in ({"session_id": sid}, {"session_id": "../x", "turn": 1}, {"session_id": sid, "turn": "1"}, {"session_id": sid, "turn": 0}):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post("/api/chat/recall", bad)
+            self.assertEqual(ctx.exception.code, 400)
+            ctx.exception.close()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.post("/api/chat/recall", {"session_id": "abcdefabcdef", "turn": 1})
+        self.assertEqual(ctx.exception.code, 404)
+        ctx.exception.close()
+
+    def test_each_thread_keeps_its_own_model(self):
+        """Ask：每个线程用自己的模型，线程中途也能换；回答、历史、线程列表都标出是哪个模型答的。"""
+        from unittest import mock
+        from flagpilot import chat as chat_mod
+        from flagpilot.client import Completion, ServerMetrics
+
+        class Echo:
+            def __init__(self, spec):
+                self.spec = spec
+
+            def scrape_metrics(self):
+                return ServerMetrics(error="not configured")
+
+            def complete(self, messages, max_tokens=None, on_delta=None):
+                return Completion(text=f"answered by {self.spec.name}", prompt_tokens=1, completion_tokens=1,
+                                  ttft_ms=1, latency_ms=1, finish_reason="stop", usage_source="estimated")
+
+        with mock.patch.object(chat_mod, "build_client", side_effect=lambda spec: Echo(spec)):
+            a = self.post("/api/chat", {"message": "hi", "tools": False, "model": "gemini-flash-lite-latest"})["session_id"]
+            da = self.stream_chat(a)
+            b = self.post("/api/chat", {"message": "hi", "tools": False, "model": "mock"})["session_id"]
+            db = self.stream_chat(b)
+            self.assertEqual((da["model"], db["model"]), ("gemini-flash-lite-latest", "mock"))
+            self.assertIn("answered by gemini-flash-lite-latest", da["answer"])
+            self.post("/api/chat", {"message": "again", "tools": False, "session_id": a, "model": "mock"})
+            da2 = self.stream_chat(a)
+            self.assertEqual(da2["model"], "mock")
+            self.assertIn("answered by mock", da2["answer"])
+        hist = json.loads(self.get(f"/api/chat/history?id={a}"))
+        self.assertEqual(hist["model"], "mock")
+        self.assertEqual([m.get("model") for m in hist["messages"] if m["type"] == "reply"],
+                         ["gemini-flash-lite-latest", "mock"])
+        rows = {t["id"]: t for t in json.loads(self.get("/api/chat/sessions"))["sessions"]}
+        self.assertEqual((rows[a]["model"], rows[b]["model"]), ("mock", "mock"))
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.post("/api/chat", {"message": "x", "model": "bad model; rm -rf /"})
+        self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
+
+    def test_lab_experiment_runs_exports_and_replays(self):
+        """Lab：本地实验在后台跑完，结果带统计；可导出 CSV；格子里的每次 attempt 都能当回放打开。"""
+        import time
+        import urllib.parse
+        task = json.loads(self.get("/api/tasks"))["tasks"][0]["name"]
+        r = self.post("/api/lab/start", {"tasks": [task], "arms": [{"tier": "B0"}, {"tier": "B3", "model": "mock"}],
+                                         "seeds": 1, "workers": 2, "label": "web test"})
+        eid = r["id"]
+        exp = {}
+        for _ in range(600):
+            exp = json.loads(self.get("/api/lab/experiment?id=" + urllib.parse.quote(eid)))
+            if not exp["running"] and exp["attempts"] == 2:
+                break
+            time.sleep(0.1)
+        self.assertEqual([a["key"] for a in exp["arms"]], ["B0", "mock~B3"])
+        self.assertEqual(exp["name"], "web test")
+        rid = exp["tasks"][0]["cells"]["B0"][0]["run"]
+        self.assertTrue(json.loads(self.get("/api/result?id=" + rid))["done"])
+        self.assertTrue(self.get("/api/lab/export?id=" + urllib.parse.quote(eid)).startswith("experiment,arm,model,tier"))
+        self.assertIn(eid, [e["id"] for e in json.loads(self.get("/api/lab/experiments"))["experiments"]])
+        for bad in ({"tasks": [], "arms": [{"tier": "B3"}]}, {"tasks": [task], "arms": [{"tier": "B9"}]},
+                    {"tasks": [task], "arms": [{"tier": "B3", "model": "x y"}]}, {"tasks": ["nope-404"], "arms": [{"tier": "B3"}]},
+                    {"tasks": [task], "arms": [{"tier": "B3"}], "seeds": "many"}):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post("/api/lab/start", bad)
+            self.assertEqual(ctx.exception.code, 400, bad)
+            ctx.exception.close()
+
+    def test_an_uploaded_challenge_gets_its_answer_later(self):
+        """没有标准答案的上传 / 导入题：补上答案（只存哈希）后当场判刚才的 flag 对错，之后的运行就能判 verified / wrong。"""
+        name = self.upload("needs an answer")["task"]["name"]
+        try:
+            r = self.post("/api/custom/gold", {"task": name, "gold": "picoCTF{real_one}", "flag": "picoCTF{made_up}"})
+            self.assertEqual((r["has_gold"], r["match"]), (True, False))
+            r2 = self.post("/api/custom/gold", {"task": name, "gold": "picoCTF{real_one}", "flag": "picoCTF{real_one}"})
+            self.assertTrue(r2["match"])
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertTrue(mine[name]["has_gold"])
+            for bad in ({"task": name, "gold": ""}, {"task": "../../etc", "gold": "x"}, {"task": name, "gold": "two\nlines"}):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    self.post("/api/custom/gold", bad)
+                self.assertEqual(ctx.exception.code, 400, bad)
+                ctx.exception.close()
+        finally:
+            self.post("/api/custom/delete", {"task": name})
+
+    def test_a_made_up_flag_is_not_saved_as_the_answer_by_accident(self):
+        """babyheap（2026-11-20）：模型编了一个 flag，又被当成答案存了进去，下一次编同一个 flag 就显示"Right flag"。
+        存的正是这次没能证明的 flag 时要先确认；存错了能删掉。"""
+        name = self.upload("a service challenge")["task"]["name"]
+        made_up = "flag{babyheap_0ctf_2017_solved}"
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post("/api/custom/gold", {"task": name, "gold": made_up, "flag": made_up, "unverified": True})
+            self.assertEqual(ctx.exception.code, 409)
+            body = json.loads(ctx.exception.read())
+            ctx.exception.close()
+            self.assertTrue(body["needs_confirm"])
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertFalse(mine[name]["has_gold"], "nothing is saved without the second click")
+            r = self.post("/api/custom/gold", {"task": name, "gold": made_up, "flag": made_up, "unverified": True, "confirm": True})
+            self.assertEqual((r["has_gold"], r["match"]), (True, True))
+            r = self.post("/api/custom/gold", {"task": name, "clear": True})
+            self.assertFalse(r["has_gold"])
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertFalse(mine[name]["has_gold"])
+            # a verified run's flag (or a different flag) needs no confirmation
+            r = self.post("/api/custom/gold", {"task": name, "gold": "flag{real}", "flag": made_up, "unverified": True})
+            self.assertEqual((r["has_gold"], r["match"]), (True, False))
+        finally:
+            self.post("/api/custom/delete", {"task": name})
+
+    def test_preview_edit_and_draft_an_imported_challenge(self):
+        """导入题：站内预览（不含答案）、改标题 / 题面 / 类别、让 AI 起草（mock 下是规则草稿）。"""
+        d = self.upload("to customise", gold="picoCTF{secret_answer_77}")
+        name = d["task"]["name"]
+        try:
+            pv = json.loads(self.get(f"/api/task?name={name}"))
+            self.assertEqual((pv["title"], pv["has_gold"], pv["custom"]), ("to customise", True, True))
+            self.assertEqual([f["name"] for f in pv["files"]], ["note.txt"])
+            self.assertNotIn("secret_answer_77", json.dumps(pv))
+            self.assertNotIn("gold_sha256", pv)
+            r = self.post("/api/custom/edit", {"task": name, "title": "Customised", "query": "New statement", "category": "crypto"})
+            self.assertEqual((r["task"]["title"], r["task"]["category"]), ("Customised", "crypto"))
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertEqual(mine[name]["title"], "Customised")
+            dr = self.post("/api/custom/draft", {"task": name})
+            self.assertEqual(dr["by"], "rules")
+            self.assertIn("note.txt", dr["statement"])
+            self.assertNotIn("secret_answer_77", json.dumps(dr))
+            for bad, code in (({"task": name, "title": "  "}, 400), ({"task": "../x", "title": "t"}, 400)):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    self.post("/api/custom/edit", bad)
+                self.assertEqual(ctx.exception.code, code)
+                ctx.exception.close()
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.get("/api/task?name=nope-nope")
+            self.assertEqual(ctx.exception.code, 404)
+            ctx.exception.close()
+        finally:
+            self.post("/api/custom/delete", {"task": name})
+
+    def test_no_task_set_yet_still_serves_the_page(self):
+        """全新克隆、题库还没取下来：页面和接口照常可用（上传 / 导入 / 答疑 / 回放），不是 500。"""
+        keep = config.TASKS_ROOT
+        empty = self.tmp / "no-task-set"
+        empty.mkdir(exist_ok=True)
+        config.TASKS_ROOT = empty
+        try:
+            d = json.loads(self.get("/api/tasks"))
+            self.assertEqual(d["tasks"], [])
+            self.assertIn("custom_tasks", d)
+            self.assertIsNone(S.resolve_task("crypto-005"))
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.get("/api/task?name=crypto-005")
+            self.assertEqual(ctx.exception.code, 404)
+            ctx.exception.close()
+        finally:
+            config.TASKS_ROOT = keep
+
+    def test_tasks_say_when_the_server_code_is_newer_than_the_process(self):
+        from app import server
+        self.assertFalse(json.loads(self.get("/api/tasks"))["stale"])
+        keep = server.BOOT_SIG
+        server.BOOT_SIG = "000000000000"
+        try:
+            self.assertTrue(json.loads(self.get("/api/tasks"))["stale"])
+        finally:
+            server.BOOT_SIG = keep
+
+    def test_service_challenges_are_marked(self):
+        from app import catalog
+        d = self.upload("service one", query="Challenge x\n\n" + catalog.SERVICE_NOTE)
+        plain = self.upload("plain one")
+        try:
+            mine = {t["name"]: t for t in json.loads(self.get("/api/tasks"))["custom_tasks"]}
+            self.assertTrue(mine[d["task"]["name"]]["service"])
+            self.assertFalse(mine[plain["task"]["name"]]["service"])
+        finally:
+            self.post("/api/custom/delete", {"task": d["task"]["name"]})
+            self.post("/api/custom/delete", {"task": plain["task"]["name"]})
+
     def test_chat_requires_message(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.post("/api/chat", {"message": "  "})
         self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     def test_qwen3_disables_thinking_in_web_path(self):
         """web 与 CLI 必须用同一个构造函数，否则思维链会把每轮预算吃光。"""

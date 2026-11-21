@@ -401,6 +401,12 @@ class Sandbox:
             "PYTHONIOENCODING": "utf-8",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
+        # 部署方额外提供的纯 Python 库（TACC 课程运行时没有 pycryptodome / gmpy2，
+        # deploy/tcloud 在提交时把 wheel 解进作业目录）。环境是白名单，不透传宿主的 PYTHONPATH；
+        # 只认这一个显式变量，agent 动作与重放用的是同一个 _exec，两边看到的库一致。
+        extra_py = os.environ.get("FLAGPILOT_SANDBOX_PYTHONPATH", "").strip()
+        if extra_py:
+            env["PYTHONPATH"] = extra_py
         if self.caps.net_isolation != "netns":
             # 软屏蔽：让出网请求直接失败，而不是挂住等超时
             for k in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):

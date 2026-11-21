@@ -32,7 +32,7 @@ from pathlib import Path
 from . import verify
 from .client import build_client
 from .config import RunConfig
-from .tasks import Task, stage_assets
+from .tasks import Task
 
 # 宽松一点：不假设前缀一定是 picoCTF，任何 xxx{...} 都先当候选，再交给哈希判
 _FLAG_RE = re.compile(r"[A-Za-z0-9_]{2,24}\{[^}\n]{1,160}\}")
@@ -72,7 +72,7 @@ class ProbeResult:
 def _body(task: Task, mode: str, tasks_root: Path) -> str:
     if mode == "name":
         return "No further information is provided."
-    body = (task.title.strip() or task.query.strip())
+    body = (task.query.strip() or task.title.strip())       # 完整题面；title 只是截到 90 字的显示标签
     if mode == "brief":
         return body
     # files：把附件正文也塞进去（只用于"开卷记忆"这一档，上限 32KB）。

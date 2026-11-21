@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, config, gpu, metrics, splits, storage, writeup
-from .config import (ABLATIONS, TRACK_H, Budget, Hybrid, Policy, RunConfig, SandboxLimits,
+from .config import (ABLATIONS, GEMINI, TRACK_H, Budget, Hybrid, ModelSpec, Policy, RunConfig, SandboxLimits,
                      get_ablation, make_model_spec, track_h_api_key)
 from .runner import BatchRunner
 from .tasks import load_index, select
@@ -411,7 +411,13 @@ def cmd_batch(args) -> int:
     _p(f"[batch] {cfg.batch}: {len(tasks)} 题 × {cfg.seeds} seeds, "
        f"model={cfg.model.name}, ablation={cfg.ablation.name}（{cfg.ablation.desc}）")
     runner = BatchRunner(cfg, config.RUNS_ROOT / cfg.batch, workers=args.workers)
-    runner.run(tasks, resume=not args.no_resume)
+    hook, on_delta = None, None
+    if getattr(args, "events_stdout", False):        # 网页经 TACC 跑题时，按行把事件打进 Slurm 日志
+        from .remote import DeltaPrinter, events_printer
+        hook = events_printer
+        if len(tasks) * cfg.seeds == 1:              # 单题单种子：模型的逐字输出也打进去，网页不用干等一整轮
+            on_delta = DeltaPrinter()
+    runner.run(tasks, resume=not args.no_resume, order=args.order, hook=hook, on_delta=on_delta)
     results = runner.load_results()
     _p("")
     _p(metrics.render(metrics.summarize(results)))
@@ -420,12 +426,23 @@ def cmd_batch(args) -> int:
 
 # ---------------------------------------------------------------- report
 
+def _load_batch(path: Path) -> list[dict]:
+    """读 runs.jsonl。run_dir 指向别处的绝对路径（例如从 TACC 下载回来）时，改指批次目录下的
+    同名子目录——否则本机出报告时失败归因与整批缓存命中率都读不到 trace。"""
+    rows = storage.read_records(path)
+    for r in rows:
+        d = r.get("run_dir")
+        if d and not Path(d).exists() and (path.parent / Path(d).name).exists():
+            r["run_dir"] = str(path.parent / Path(d).name)
+    return rows
+
+
 def cmd_report(args) -> int:
     path = config.RUNS_ROOT / args.batch / "runs.jsonl"
     if not path.exists():
         _p(f"找不到 {path}")
         return 1
-    results = storage.read_records(path)
+    results = _load_batch(path)
     s = metrics.summarize(results, gpu=gpu.load_ledger(path.parent))
     if args.json:
         _p(json.dumps(s, ensure_ascii=False, indent=2))
@@ -451,7 +468,7 @@ def cmd_compare(args) -> int:
         if not p.exists():
             _p(f"[warn] 跳过 {n}：找不到 {p}")
             continue
-        rs = storage.read_records(p)
+        rs = _load_batch(p)
         batches[n] = metrics.summarize(rs, with_tags=False, gpu=gpu.load_ledger(p.parent))
     if not batches:
         return 1
@@ -476,7 +493,7 @@ def cmd_pair(args) -> int:
         if not p.exists():
             _p(f"找不到 {p}")
             return 1
-        loaded[name] = storage.read_records(p)
+        loaded[name] = _load_batch(p)
     res = metrics.paired(loaded[args.a], loaded[args.b], key=args.key)
     text = metrics.render_paired(res, args.a, args.b)
     _p(text)
@@ -538,6 +555,22 @@ def cmd_probe(args) -> int:
 
 # ---------------------------------------------------------------- web
 
+def cmd_chat_once(args) -> int:
+    from .remote import chat_once
+    cfg = _build_cfg(args)
+    message = Path(args.message_file).read_text(encoding="utf-8")
+    history = json.loads(Path(args.history_file).read_text(encoding="utf-8")) if args.history_file else []
+    task = None
+    if args.task:
+        task = next((t for t in load_index() if t.name == args.task), None)
+        if task is None:      # 以前静默当成"没挂题"来答，上传题交不上去时就是这样被掩盖的
+            print(f"[fp] warn: challenge {args.task} is not in the staged task set; answering without it",
+                  file=sys.stderr, flush=True)
+    workdir = Path(args.workdir) if args.workdir else Path.cwd() / "chat-work"
+    reply = chat_once(cfg, message, history, task=task, use_tools=not args.no_tools, workdir=workdir)
+    return 0 if not reply.get("error") else 1
+
+
 def cmd_web(args) -> int:
     from app.server import serve
 
@@ -566,8 +599,10 @@ def _resolve_endpoint(args) -> tuple[str, str, str]:
                 + " 或 ".join(TRACK_H["key_env"]) + "，或用 --api-key 传入")
         return model, base, key or "EMPTY"
     model = args.model or os.environ.get("FLAGPILOT_MODEL") or "mock"
+    # gemini-* 没指定端点时走 Google 的 OpenAI 兼容端点，密钥在 make_model_spec 里从 GEMINI_API_KEY / .env 补上
+    default = GEMINI["base_url"] if str(model).lower().startswith("gemini") else "http://127.0.0.1:8000/v1"
     base = args.base_url or os.environ.get("FLAGPILOT_BASE_URL") \
-        or os.environ.get("SERVICE_BASE_URL") or "http://127.0.0.1:8000/v1"
+        or os.environ.get("SERVICE_BASE_URL") or default
     return model, base, args.api_key or os.environ.get("FLAGPILOT_API_KEY", "EMPTY")
 
 
@@ -708,7 +743,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--api-key")
         p.add_argument("--metrics-url", default="")
         p.add_argument("--temperature", type=float, default=0.2)
-        p.add_argument("--max-tokens", type=int, default=2048)
+        p.add_argument("--max-tokens", type=int, default=ModelSpec.max_tokens)   # 4096，依据见 config.ModelSpec
         p.add_argument("--turns", type=int, default=20)
         p.add_argument("--wall", type=int, default=1500)
         p.add_argument("--head", type=int, default=1500)
@@ -760,6 +795,10 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--workers", type=int, default=4)
     b.add_argument("--seeds", type=int, default=1)
     b.add_argument("--no-resume", action="store_true")
+    b.add_argument("--events-stdout", action="store_true",
+                   help="把 trace 事件按行（@@ev）打印到标准输出：网页经 TACC 跑题时用来跟进度")
+    b.add_argument("--order", default="lpt", choices=["lpt", "fifo"],
+                   help="开跑顺序：lpt=预计最慢的先跑（默认，缩短整批墙钟）；fifo=题号顺序")
     b.add_argument("--split", default="all", choices=["all", "dev", "test"],
                    help="题池划分（默认 all 不变）；test 需要 --confirm-test")
     b.add_argument("--split-file", help="划分文件（默认 FLAGPILOT_SPLITS 或 <题库>/index/splits.json）")
@@ -800,10 +839,20 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--workers", type=int, default=4)
     pb.set_defaults(func=cmd_probe)
 
+    co = sub.add_parser("chat-once", help="答疑一轮（网页经 TACC 提问时由作业调用）：打印 @@reply")
+    add_common(co)
+    co.add_argument("--message-file", required=True)
+    co.add_argument("--history-file", default="")
+    co.add_argument("--task", default="")
+    co.add_argument("--no-tools", action="store_true")
+    co.add_argument("--workdir", default="")
+    co.set_defaults(func=cmd_chat_once)
+
     w = sub.add_parser("web", help="演示页面")
     w.add_argument("--host", default="127.0.0.1")
     w.add_argument("--port", type=int, default=8080)
-    w.add_argument("--model", default=os.environ.get("FLAGPILOT_MODEL") or "mock")
+    w.add_argument("--model", default=os.environ.get("FLAGPILOT_MODEL") or "mock",
+                   help="模型或提供商（provider:gemini 等）；auto = 有 Gemini 密钥用 Gemini，否则 .env 里第一个可用的提供商，都没有用离线演示模型 mock")
     w.add_argument("--base-url")
     w.add_argument("--metrics-url", default="",
                    help="vLLM 的 /metrics；给了界面才能显示 prefix cache 命中率")

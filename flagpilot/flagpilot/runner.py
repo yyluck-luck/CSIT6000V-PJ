@@ -14,7 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import gpu, storage
+from . import gpu, schedule, storage
 from .agent import run_attempt
 from .config import RunConfig
 from .tasks import Task
@@ -42,7 +42,8 @@ class BatchRunner:
         with self._lock:
             storage.append_record(self.results_path, rec)
 
-    def run(self, tasks: list[Task], resume: bool = True, hook=None) -> list[dict]:
+    def run(self, tasks: list[Task], resume: bool = True, hook=None, order: str = "lpt", on_delta=None) -> list[dict]:
+        """on_delta(turn, chunk)：只在一道题、一个种子时有意义（网页经 TACC 跑单题，边生成边看）。"""
         jobs = [(t, s) for s in range(self.cfg.seeds) for t in tasks]
         if resume:
             jobs = [(t, s) for (t, s) in jobs if f"{t.name}-s{s}" not in self._done]
@@ -51,14 +52,21 @@ class BatchRunner:
             print("[runner] 没有待跑的 attempt（已全部完成）")
             return []
 
-        print(f"[runner] 待跑 {len(jobs)} 个 attempt，并发 {self.workers}")
+        sched = "提交顺序"
+        if order == "lpt" and len(jobs) > self.workers:
+            # 历史来自同级批次目录（runs/<batch>/runs.jsonl）：同一台机器、同一套题，量级最可信
+            est = schedule.Estimator(schedule.load_history([self.dir.parent]))
+            jobs = schedule.lpt_order(jobs, est)
+            sched = f"最长预计优先（LPT，参考 {est.n} 条历史）"
+        print(f"[runner] 待跑 {len(jobs)} 个 attempt，并发 {self.workers}，调度：{sched}")
         out: list[dict] = []
         t0 = time.monotonic()
         t_start = time.time()           # GPU 账本按墙上时钟对齐 nvidia-smi 采样
 
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             futs = {
-                pool.submit(run_attempt, task, self.cfg, self.dir, seed, hook): (task, seed)
+                pool.submit(run_attempt, task, self.cfg, self.dir, seed, hook,
+                            **({"on_delta": on_delta} if on_delta else {})): (task, seed)
                 for task, seed in jobs
             }
             for i, fut in enumerate(as_completed(futs), 1):

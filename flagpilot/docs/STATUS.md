@@ -16,7 +16,7 @@ Legend: ✅ implemented and exercised | 🟡 partially complete | ❌ pending
 | Frontend: input, progress, and result review | ✅ | Task selection/upload, SSE events, tool observations, flag/script/replay review, saved-run recovery, and Writeup download. |
 | 后端：agent 工作流、模型 API、工具与数据 | ✅ | `agent.py` + `client.py` + `tools.py` + `sandbox.py` + `context.py` + `memory.py` |
 | Evaluation and failure analysis | 🟡 | DeepSeek Flash B3 attempted 43 of 53 frozen tasks. It returned 25 correct flags (58.1%) and verified 22 solves by replay (51.2%). Formal E1/E2/E3 comparisons and the evaluation report remain pending. |
-| Demo & Final Presentation | 🟡 | 实时 demo 可跑（`scripts/start.sh`）；**slides / 录屏 / 报告未做** |
+| Demo & Final Presentation | 🟡 | 实时 demo 可跑（`scripts/start-ollama.sh`）；**slides / 录屏 / 报告未做** |
 | Execution on TACC | 🟡 | The teammate report dated 2026-11-17 records `crypto-005` as `verified` in job 29430 and through a local Web/SSH-tunnel run. Course-platform launch alignment and persistent result/GPU ledgers remain pending. |
 | 交付物：repo / report / demo / slides | 🟡 | repo ✅、demo ✅、report ❌、slides ❌ |
 

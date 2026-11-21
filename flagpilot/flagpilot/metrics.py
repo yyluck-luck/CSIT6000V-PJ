@@ -19,6 +19,8 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict
 
+from .cachestats import batch_cache
+
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     if n <= 0:
@@ -136,6 +138,8 @@ def summarize(results: list[dict], with_tags: bool = True, gpu: dict | None = No
         "cache_hit_rate": None if concurrent else (round(hits / queries, 4) if queries else None),
         "server_counters_note": "并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比"
         if (concurrent and (queries or prefill)) else None,
+        # 并发时单 attempt 口径不报；整批首尾差仍然成立（前提：服务只被本批使用）
+        "cache_batch": batch_cache(results) if concurrent else None,
         "api_cache_hit_rate": round(a_hit / (a_hit + a_miss), 4) if (a_hit + a_miss) else None,
         "prefill_share": None if concurrent else (
             round(prefill / (prefill + decode), 4) if (prefill + decode) else None),
@@ -205,6 +209,9 @@ def render(summary: dict) -> str:
         lines.append(f"prefix cache    命中率 {summary['cache_hit_rate']:.1%}")
     if summary.get("server_counters_note"):
         lines.append(f"prefix cache    — （{summary['server_counters_note']}）")
+    cb = summary.get("cache_batch")
+    if cb:
+        lines.append(f"prefix cache    整批 {cb['hit_rate']:.1%}（{cb['hits']}/{cb['queries']} token；服务只被本批使用时成立）")
     if summary.get("api_cache_hit_rate") is not None:
         lines.append(f"API cache       命中率 {summary['api_cache_hit_rate']:.1%}（Track H usage，按 token）")
     if summary.get("gpu_seconds"):
@@ -281,6 +288,9 @@ def to_markdown(summary: dict, title: str = "") -> str:
         lines.append(f"| prefix cache 命中率 | {summary['cache_hit_rate']:.1%} |")
     if summary.get("server_counters_note"):
         lines.append(f"| prefix cache 命中率 | —（{summary['server_counters_note']}） |")
+    cb = summary.get("cache_batch")
+    if cb:
+        lines.append(f"| prefix cache 命中率（整批） | {cb['hit_rate']:.1%}（{cb['hits']}/{cb['queries']} token；独占服务时成立） |")
     if summary.get("prefill_share") is not None:
         lines.append(f"| prefill 占比 | {summary['prefill_share']:.1%} |")
     if summary["total_cost_usd"]:
@@ -296,13 +306,14 @@ def to_markdown(summary: dict, title: str = "") -> str:
     if summary.get("failure_tags"):
         from . import tagger
 
-        fails = {k: v for k, v in summary["failure_tags"].items()
-                 if k not in ("ok", "reproduced")}
-        total = sum(fails.values()) or 1
+        # 与 tagger.render 同一口径：只数失败的 attempt，分母是失败条数（不是标签数）。
+        n_fail, fails = tagger.failure_counts(summary["failure_tags"],
+                                              summary.get("tag_rows") or [])
         if fails:
             lines += ["", "| 失败标签 | 计数 | 占失败比 |", "|---|---|---|"]
             for k, v in sorted(fails.items(), key=lambda kv: -kv[1]):
-                lines.append(f"| {tagger.LABELS.get(k, k)} | {v} | {v / total:.0%} |")
+                lines.append(f"| {tagger.LABELS.get(k, k)} | {v} | {v / n_fail:.0%} |")
+            lines += ["", f"共 {n_fail} 条失败；同一条可命中多个标签，占比之和可超过 100%。"]
     return "\n".join(lines) + "\n"
 
 

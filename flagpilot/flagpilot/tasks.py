@@ -7,6 +7,8 @@ _private/gold_private.json 只在本地自测时使用，**不得上传到集群
 
 from __future__ import annotations
 
+import re
+
 import json
 import shutil
 from dataclasses import dataclass
@@ -30,6 +32,11 @@ class Task:
     # 自建题目用：题面比 title 长，两者都要给模型看。
     # 内置题留空，行为与之前完全一致。
     brief_override: str = ""
+    # flag 的外层格式（如 picoCTF{...}）。属于题面信息：真实比赛都会公布；不说，模型就会在格式上蒙。
+    flag_format: str = ""
+    # 原题网页（picoGym 题目页、赛题归档里那道题的页面、导入时贴的链接）；只给界面做跳转，不进题面
+    source: str = ""
+    service: bool = False     # 原比赛里是网络服务：真 flag 从来不在附件里（导入时判定，改题面也不丢）
 
     @property
     def has_gold(self) -> bool:
@@ -37,15 +44,21 @@ class Task:
         return bool((self.gold_sha256 or "").strip())
 
     @property
+    def real_assets(self) -> list[str]:
+        """真正的附件。题库给"没有文件"的题放了一个空的 .placeholder，它不算材料。"""
+        return [a for a in self.assets if a != ".placeholder"]
+
+    @property
     def brief(self) -> str:
         """给模型看的题面。注意：这里绝对不能拼接任何 gold 信息。"""
-        head = self.brief_override.strip() or self.title.strip() or self.query.strip()
+        # 完整题面（query）优先。title 只是列表里显示用的标签：题库构建时取 query 的前 90 个字符
+        # （scripts/build_taskset.py）。以前这里先用 title，53 道题里有 22 道的题面被截断——crypto-086 的密文、
+        # crypto-072 的密文、general-040 的十六进制数据都在后半截，模型根本看不到（2026-11-20 发现）。
+        head = self.brief_override.strip() or self.query.strip() or self.title.strip()
         lines = [head, ""]
-        if self.assets:
+        if self.real_assets:      # 只有占位文件时原来会写一行 "Files provided:" 而下面一个文件都没有
             lines.append("Files provided (in ./challenge/):")
-            for a in self.assets:
-                if a == ".placeholder":
-                    continue
+            for a in self.real_assets:
                 lines.append(f"  - {a}")
         else:
             lines.append("No files are provided for this challenge.")
@@ -62,6 +75,12 @@ class Task:
                 out.append(p)
         return out
 
+
+
+def web_url(v) -> str:
+    """只认 http(s) 链接，别的（相对路径、javascript: 之类）一律当没有。"""
+    v = str(v or "").strip()
+    return v if re.match(r"^https?://[^\s\"'<>]{3,500}$", v) else ""
 
 def load_index(root: Path | None = None) -> list[Task]:
     root = root or config.TASKS_ROOT
@@ -89,9 +108,20 @@ def load_index(root: Path | None = None) -> list[Task]:
                 assets_dir=r["assets_dir"],
                 suggested_tools=list(r.get("suggested_tools") or []),
                 scope=r.get("scope", "core"),
+                flag_format=_flag_format(r),
+                source=web_url(r.get("source")),
             )
         )
     return tasks
+
+
+def _flag_format(r: dict) -> str:
+    """索引里写了就用；picoCTF 派生题（有 pico_challenge_id 或来源是 picoctf）一律是 picoCTF{...}。"""
+    if r.get("flag_format"):
+        return str(r["flag_format"])
+    if r.get("pico_challenge_id") is not None or "picoctf" in str(r.get("source", "")).lower():
+        return "picoCTF{...}"
+    return ""
 
 
 def select(

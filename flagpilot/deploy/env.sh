@@ -4,7 +4,7 @@
 # ---- Slurm ----
 export FP_ALLOCATION="${FP_ALLOCATION:-<你的 allocation>}"
 export FP_PARTITION="${FP_PARTITION:-<GPU 分区名>}"
-export FP_TIME="${FP_TIME:-02:00:00}"
+export FP_TIME="${FP_TIME:-01:00:00}"   # tacc 分区上限 1 小时
 
 # ---- 路径 ----
 export FP_ROOT="${FP_ROOT:-$HOME/flagpilot}"

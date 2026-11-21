@@ -112,7 +112,7 @@ team-work/
 export FLAGPILOT_TASKS=/path/to/ctf-tasks/no-solutions
 ```
 
-`scripts/start.sh` 支持 `FP_TASKS`，`deploy/env.sh` 也认这个变量。
+`scripts/start-ollama.sh` 支持 `FP_TASKS`，`deploy/env.sh` 也认这个变量。
 
 **B 的落地形态（GitHub，如果题库也要托管）**
 

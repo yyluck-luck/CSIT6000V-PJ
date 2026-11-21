@@ -68,18 +68,20 @@ verdict=unverified  reason=script_error  turns=12  wall=155.3s
 
 ## 三、方式 B：在集群里跑完，把 `runs/` 拉回来
 
-课程发布包已经带了服务作业与客户端作业（`qwen-public-serve` /
-`qwen-public-client`）。仓库这边只补一个关键动作：**把 `runs/` 从作业临时目录
-拷到持久目录**，否则作业一结束 trace 就没了（29430 那次就是这么丢的）。
+服务作业沿用课程的 `qwen-public-serve`；客户端换成仓库里的 `deploy/tcloud/`（跑 FlagPilot，
+结果写到持久的 `USERDIR/flagpilot-runs/<batch>/`——作业临时目录一结束就删，29430 那次就是这么丢的）。
+`tcloud submit` 不带参数、在本机作业目录里执行，`submit.sh` 负责暂存代码与题库（答案表一律不进包）。
 
 ```bash
-# 集群侧
-tcloud submit qwen-public-serve        # 起 vLLM，日志里有 SERVICE_BASE_URL
-tcloud submit qwen-public-client       # 跑 FlagPilot；job.sh 会把 runs/ 拷到
-                                       # $TACC_USERDIR/flagpilot-runs/$SLURM_JOB_ID/
-# 本机
-scp -P <port> -r <user>@<gateway>:<userdir>/flagpilot-runs/<jobid> ./runs-tacc
-python3 -m flagpilot web --replay ./runs-tacc
+# 全程只用课程 SDK（tcloud v0.4.1），在本机执行：不登录服务器、不 scp、不建 SSH 转发
+deploy/tcloud/submit.sh doctor                         # CPU 自检：SDK 引导、课程 Python、泄漏检查
+deploy/tcloud/submit.sh serve                          # qwen3.8-27b，2×3090，分区上限 1 小时
+tcloud cat slurm_log/qwen-public-serve-<job>.log       # 等 "Application startup complete"，抄 SERVICE_BASE_URL
+FP_LIMIT=5 deploy/tcloud/submit.sh batch http://<node>:8000/v1
+tcloud download flagpilot-runs/tacc-smoke.md ./        # 报告
+tcloud download -r flagpilot-runs/tacc-smoke ./        # 轨迹 → python3 -m flagpilot web --replay ./tacc-smoke
+tcloud cancel -j <serve job>                            # 释放 GPU
+# 或一条命令：deploy/tcloud/pipeline.sh <本地输出目录>（显存 / 8000 端口被占的节点自动排除重交，结束必取消服务）
 ```
 
 模型端点用作业日志里打印的 `SERVICE_BASE_URL` 填进 `server-url.txt`（客户端

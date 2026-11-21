@@ -5,7 +5,7 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 4
-#SBATCH -t 02:00:00
+#SBATCH -t 01:00:00
 #SBATCH -o logs/client-%j.out
 #SBATCH -e logs/client-%j.err
 #
@@ -15,7 +15,7 @@
 #          deploy/client.slurm
 #
 # 关键点：
-#   * 单作业 2h，跑不完靠 runs.jsonl 续跑：同一个 FP_BATCH 再交一次会自动跳过已完成的
+#   * 单作业 1h（tacc 分区上限），跑不完靠 runs.jsonl 续跑：同一个 FP_BATCH 再交一次会自动跳过已完成的
 #   * 分片 FP_SHARD=i/n，多份作业并行不重叠
 #   * 先 ping 服务，连不上立刻失败，别白占 GPU 队列
 

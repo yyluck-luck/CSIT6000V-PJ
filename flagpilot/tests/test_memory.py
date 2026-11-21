@@ -14,7 +14,6 @@ import unittest
 from pathlib import Path
 
 from flagpilot import chat, config, context
-from flagpilot.agent import run_attempt
 from flagpilot.client import Completion, ServerMetrics
 from flagpilot.config import (Budget, RunConfig, SandboxLimits,
                               make_model_spec)

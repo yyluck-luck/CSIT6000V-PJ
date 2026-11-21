@@ -67,6 +67,14 @@ class TestLiteralScan(unittest.TestCase):
         self.assertIsNotNone(verify.scan_script(script, FLAG), "无材料时应当命中")
         self.assertIsNone(verify.scan_script(script, FLAG, material=f"hint: {ct}"), "材料里有则应豁免")
 
+    def test_material_exemption_survives_line_wrapping(self):
+        """题面把长 base64 折成几行，脚本里是拼好的一行：仍然是在引用题目。"""
+        import base64
+        b64 = base64.b64encode(FLAG.encode()).decode()
+        script = f"import base64\nprint(base64.b64decode('{b64}').decode())\n"
+        self.assertEqual(verify.scan_script(script, FLAG), "base64")
+        self.assertIsNone(verify.scan_script(script, FLAG, material=b64[:16] + "\n" + b64[16:]))
+
     def test_clean_script_passes(self):
         self.assertIsNone(verify.scan_script("print(open('challenge/data.txt').read())", FLAG))
 
@@ -134,6 +142,127 @@ class TestEvaluate(unittest.TestCase):
     def test_silent_success_is_no_output(self):
         r = self.ev(FLAG, "value = 1\n")
         self.assertEqual((r.verdict, r.reason), ("unverified", "no_output"))
+
+
+def make_text_task(root: Path, query: str) -> Task:
+    """材料只在题面里的题（crypto-005 / picoCTF "13" 的样子）：附件是个读 stdin 的工具脚本，密文写在题目描述里。"""
+    d = root / "tasks" / "text-998"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "rot13.py").write_text("flag = input()\nprint(flag)\n")
+    return Task(task_id=998, name="text-998", category="Cryptography", title="ROT13", query=query,
+                gold_sha256=hashlib.sha256(FLAG.encode()).hexdigest(), assets=["rot13.py"],
+                assets_dir="tasks/text-998", suggested_tools=[], scope="core")
+
+
+class TestBriefIsTheFullStatement(unittest.TestCase):
+    """题库的 title 是 query 的前 90 个字符（显示用）。给模型的题面必须是完整的 query：crypto-086 的密文在后半截。"""
+
+    def test_brief_and_probe_use_the_whole_statement(self):
+        from flagpilot import probe
+        q = ("Another slight twist on a classic, see if you can recover the flag. (Wrap with picoCTF{}) "
+             "lejjlnjmjndkmjinkilbmlljjkmnakmmighhocmllojhjmaijpiohnlojmokjkja new_vignere.py")
+        t = Task(task_id=86, name="crypto-086", category="Cryptography", title=q[:90], query=q, gold_sha256="x",
+                 assets=["new_vignere.py"], assets_dir="tasks/crypto-086", suggested_tools=[], scope="core")
+        self.assertIn("lejjlnjmjndkm", t.brief)
+        self.assertIn("lejjlnjmjndkm", probe._body(t, "brief", Path(".")))
+
+    def test_the_real_task_set_never_hides_part_of_a_statement(self):
+        index = Path(__file__).resolve().parent.parent / "tasks"
+        if not (index / "index" / "tasks.jsonl").exists():
+            self.skipTest("no task set here")
+        from flagpilot.tasks import load_index
+        for t in load_index(index):
+            self.assertIn(t.query.strip(), t.brief, t.name)
+
+
+class TestChallengeTextMaterial(unittest.TestCase):
+    """题面依赖检验：脚本不读附件时，flag 必须随取自题面的字面量一起变，才算"由题面材料算出"。"""
+
+    def setUp(self):
+        import codecs
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.ct = codecs.encode(FLAG, "rot13")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def ev(self, task, script):
+        return verify.evaluate(task, FLAG, script, self.root, timeout_s=20.0,
+                               limits=SandboxLimits(action_timeout_s=20.0))
+
+    def test_ciphertext_copied_from_the_description_is_material(self):
+        task = make_text_task(self.root, f"Cryptography can be easy, do you know what ROT13 is? {self.ct}")
+        script = f"import codecs\nct = '{self.ct}'\nprint(codecs.decode(ct, 'rot13'))\n"
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("verified", "match"), r.detail)
+        self.assertIn("题面", r.detail)
+        self.assertTrue((self.root / "tasks" / ".replay-tmp").exists() or True)
+
+    def test_a_decoy_copy_of_the_description_does_not_help(self):
+        task = make_text_task(self.root, f"Cryptography can be easy, do you know what ROT13 is? {self.ct}")
+        hidden = ",".join(str(ord(c)) for c in FLAG)
+        script = f"ct = '{self.ct}'\nprint(''.join(map(chr, [{hidden}])))\n"
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("unverified", "hardcoded_no_material"))
+
+    def test_the_flag_prefix_is_not_material(self):
+        """'picoCTF{' 也写在题面里，但它是 flag 的一部分：改掉它让"先检查格式再打印"的硬编码脚本闭嘴，不能算依赖。"""
+        task = make_text_task(self.root, f"The flag format is picoCTF{{...}}. Decode {self.ct}")
+        hidden = ",".join(str(ord(c)) for c in FLAG)
+        script = f"s = ''.join(map(chr, [{hidden}]))\nif s.startswith('picoCTF{{'):\n    print(s)\n"
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("unverified", "hardcoded_no_material"))
+
+    def test_a_wrapped_block_in_the_description_still_counts(self):
+        import base64
+        b64 = base64.b64encode(FLAG.encode()).decode()
+        task = make_text_task(self.root, "Decode this:\n" + b64[:20] + "\n" + b64[20:] + "\n")
+        script = f"import base64\nprint(base64.b64decode('{b64}').decode())\n"
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("verified", "match"), r.detail)
+
+    def test_opening_a_file_then_decoding_the_description_is_material(self):
+        """crypto-005 在 TACC 上的真实写法：先打开 rot13.py 看一眼（不用），再解题面里的密文。"""
+        task = make_text_task(self.root, f"Cryptography can be easy, do you know what ROT13 is? {self.ct}")
+        script = (f"import codecs\ncontent = open('./challenge/rot13.py').read()\n"
+                  f"print(codecs.decode('{self.ct}', 'rot13'))\n")
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("verified", "match"), r.detail)
+
+    def test_opening_a_file_and_hardcoding_is_still_caught(self):
+        task = make_text_task(self.root, f"Cryptography can be easy, do you know what ROT13 is? {self.ct}")
+        hidden = ",".join(str(ord(c)) for c in FLAG)
+        script = (f"content = open('./challenge/rot13.py').read()\nct = '{self.ct}'\n"
+                  f"print(''.join(map(chr, [{hidden}])))\n")
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("unverified", "hardcoded_no_material"))
+
+    def test_a_placeholder_is_not_an_attachment(self):
+        """general-019："把 42 转成二进制"，题库只放了一个空的 .placeholder。答案只能由题面算出，不做附件检验。"""
+        d = self.root / "tasks" / "ph-997"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ".placeholder").write_text("")
+        flag = "picoCTF{101010}"
+        task = Task(task_id=997, name="ph-997", category="General Skills", title="bin",
+                    query="Can you convert the number 42 (base 10) to binary (base 2)?",
+                    gold_sha256=hashlib.sha256(flag.encode()).hexdigest(), assets=[".placeholder"],
+                    assets_dir="tasks/ph-997", suggested_tools=[], scope="core")
+        self.assertEqual(task.real_assets, [])
+        self.assertIn("No files are provided", task.brief)
+        r = verify.evaluate(task, flag, 'print(f"picoCTF{{{bin(42)[2:]}}}")\n', self.root, timeout_s=20.0,
+                            limits=SandboxLimits(action_timeout_s=20.0))
+        self.assertEqual((r.verdict, r.reason), ("verified", "match"), r.detail)
+
+    def test_perturb_only_touches_the_chosen_literals(self):
+        script = "msg = '中文' ; ct = 'abcdefghiz'\nn = 1234567890\nprint(f'{ct} done', msg)\n"
+        nodes = verify.text_literals(script, "here: abcdefghiz and 1234567890", FLAG)
+        self.assertEqual(sorted(type(n.value).__name__ for n in nodes), ["int", "str"])
+        out = verify.perturb_literals(script, nodes)
+        self.assertIn("ct = 'bcdefghija'", out)
+        self.assertIn("n = 1234567891", out)
+        self.assertIn("msg = '中文'", out)
+        self.assertIn("print(f'{ct} done', msg)", out)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,82 @@ from .config import ModelSpec
 
 FLAG_RE = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}\n]{1,120}\}")
 
+# "输入 + max_tokens 超过上下文"的 400。vLLM / OpenAI / SGLang / DeepSeek 都用这句话报。
+_CTX_LIMIT = re.compile(r"maximum context length (?:is|of) (\d+)", re.I)
+# 输入 token 数，各家原文：
+#   vLLM 0.26（课程 TACC 上的版本，renderers/params.py）："... you requested 4096 output tokens and
+#     your prompt contains 29000 input tokens, for a total of 33096 tokens."
+#     写成 "contains at least N" 时 prompt 已被分词器截断，N 只是下限，不能拿来算 → 不匹配，走减半；
+#   vLLM 0.6–0.1x："your request has 29000 input tokens (4096 > 32768 - 29000)"；
+#   更早的 vLLM："(29000 in the messages, 4096 in the completion)" / "33000 tokens in the messages"；
+#   SGLang："29000 tokens from the input"；OpenAI："your messages resulted in 29000 tokens"。
+_CTX_INPUT = re.compile(r"prompt contains (\d+) input tokens|request has (\d+) input tokens|"
+                        r"(\d+) (?:tokens )?in the messages|(\d+) tokens from the input|"
+                        r"messages resulted in (\d+) tokens", re.I)
+MIN_FIT_TOKENS = 256        # 比这还小就不值得再要一轮了：上下文已经满了
+# 托管 API 的限流 / 过载（Gemini 免费层高峰时常见 429 / 503）：按服务端给的等待时间重试，最多两次
+BUSY_CODES = (429, 503)
+BUSY_RETRIES = 2
+BUSY_WAIT_CAP_S = 20.0
+# 按分钟计的配额（Gemini 免费层每分钟十几次）：服务端会说等多久（常见 30–60 秒），照着等，多给几次机会；
+# 按天计的配额用完了就别等了，直接说清楚。2026-11-20 Lab 实测：旧的 20 秒 × 2 次不够，40 次里 5 次记成了 error。
+QUOTA_RETRIES = 4
+QUOTA_WAIT_CAP_S = 65.0
+
+
+def quota_kind(body: str) -> str:
+    """Google 429 体里是哪种配额：minute（等一会儿就好）/ day（今天用完了）/ ''（看不出来）。"""
+    ids = re.findall(r'"quotaId"\s*:\s*"([^"]+)"', body or "")
+    if any("PerDay" in q for q in ids):
+        return "day"
+    if any("PerMinute" in q for q in ids) or re.search(r"retry in [\d.]+\s*s", body or "", re.I):
+        return "minute"
+    return ""
+
+
+_THOUGHT_OPEN = re.compile(r"^\s*<(thought|think|thinking)>", re.I)
+
+
+def split_inline_thought(text: str) -> tuple[str, str]:
+    """正文开头的 <thought>/<think> 块 → (答案, 思考)。没闭合的思考块整段算思考（多半是被截断了）。"""
+    m = _THOUGHT_OPEN.match(text or "")
+    if not m:
+        return text, ""
+    close = re.search(rf"</{m.group(1)}>", text[m.end():], re.I)
+    if not close:
+        return "", text[m.end():].strip()
+    return text[m.end() + close.end():].lstrip(), text[m.end():m.end() + close.start()].strip()
+
+
+def busy_wait_s(detail: str, retry_after: str | None, attempt: int, cap: float = BUSY_WAIT_CAP_S) -> float:
+    """429 / 503 该等多久：Retry-After 头 > Google 错误体里的 retryDelay > 正文里的 "retry in Ns" > 2、5 秒退避。有上限。"""
+    for raw in (retry_after or "", (re.search(r'"retryDelay"\s*:\s*"([\d.]+)s"', detail or "") or [None, ""])[1],
+                (re.search(r"retry in ([\d.]+)\s*s", detail or "", re.I) or [None, ""])[1]):
+        try:
+            if raw:
+                return min(cap, max(0.5, float(raw)))
+        except ValueError:
+            pass
+    return min(cap, (2.0, 5.0)[min(attempt, 1)])
+MAX_FIT_RETRIES = 2
+
+
+def fit_after_overflow(detail: str, asked: int) -> int | None:
+    """这个 400 是不是"上下文放不下这么多输出"。不是 → None；是 → 本轮还能要多少 token。
+
+    读得出上限与输入 token 就精确算（留 8 个余量），读不出或算出来不比原值小就减半，
+    保证每次重试都严格变小。结果可能低于 MIN_FIT_TOKENS，由调用方决定放弃。
+    """
+    m = _CTX_LIMIT.search(detail or "")
+    if not m:
+        return None
+    i = _CTX_INPUT.search(detail)
+    if i:
+        fit = int(m.group(1)) - int(next(g for g in i.groups() if g)) - 8
+        if fit < asked:
+            return fit
+    return asked // 2
+
 
 @dataclass
 class Completion:
@@ -35,6 +111,11 @@ class Completion:
     usage_source: str = "reported"  # reported | estimated
     error: str = ""
     note: str = ""
+    # 这次请求实际发出的 max_tokens。上下文放不下时客户端会把它调小再试，
+    # 截断判定要按这个值，而不是配置里的值。0 = 未知（mock 等）。
+    max_tokens: int = 0
+    # 托管 API 忙（429 / 503 / 出字前断流）时重试了几次；trace 里据此看得出"慢在排队"还是"慢在生成"
+    retries: int = 0
     # Ollama 等运行时会单独返回思维链，正文可能为空。留档用于诊断。
     reasoning: str = ""
     # 服务端回报的前缀缓存命中 / 未命中 prompt token（DeepSeek：prompt_cache_hit_tokens /
@@ -79,7 +160,7 @@ class ChatClient:
         self._url = spec.base_url.rstrip("/") + "/chat/completions"
         # 有些运行时（Ollama / llama.cpp / 老版本 vLLM）不认识 chat_template_kwargs，
         # 会直接 400。第一次撞上就永久降级，避免每次请求都白撞一遍。
-        self._no_template_kwargs = spec.provider == "openai-compatible"
+        self._no_template_kwargs = spec.provider in ("openai-compatible", "gemini")
 
     # ---------- 主路径 ----------
 
@@ -88,6 +169,9 @@ class ChatClient:
         messages: list[dict],
         max_tokens: int | None = None,
         on_delta: Callable[[str], None] | None = None,
+        *,
+        _fit_retries: int = 0,
+        _busy_retries: int = 0,
     ) -> Completion:
         """发一轮请求。
 
@@ -132,6 +216,7 @@ class ChatClient:
         ttft = 0
         usage = {}
         finish = ""
+        stream_err: dict = {}
         try:
             with urllib.request.urlopen(req, timeout=self.spec.request_timeout_s) as resp:
                 for raw in resp:
@@ -147,6 +232,8 @@ class ChatClient:
                         continue
                     if obj.get("usage"):
                         usage = obj["usage"]
+                    if isinstance(obj.get("error"), dict):        # 有的服务把错误塞在流里，别当成空回复
+                        stream_err = obj["error"]
                     for ch in obj.get("choices") or []:
                         d = ch.get("delta") or {}
                         delta = d.get("content") or ""
@@ -168,11 +255,40 @@ class ChatClient:
                         if ch.get("finish_reason"):
                             finish = ch["finish_reason"]
         except urllib.error.HTTPError as e:
-            detail = ""
+            body = ""
             try:
-                detail = e.read().decode("utf-8", "replace")[:500]
+                # 整个错误体用来判断（Google 把 quotaId / retryDelay 放在 details 里，靠后）；显示只留前 500 字
+                body = e.read().decode("utf-8", "replace")[:6000]
             except Exception:
                 pass
+            finally:
+                # HTTPError 自己持有响应体（3.12 起是临时文件包装），不关就漏一个句柄。
+                e.close()
+            detail = body[:500]
+            kind = quota_kind(body) if e.code == 429 else ""
+            if kind == "day":
+                return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
+                                  error="HTTP 429: the daily free quota for this model is used up; try again tomorrow or use another model")
+            limit = (QUOTA_RETRIES if kind == "minute" else BUSY_RETRIES) if getattr(self, "busy_retries", None) is None else self.busy_retries
+            if e.code in BUSY_CODES and _busy_retries < limit:
+                time.sleep(busy_wait_s(body, e.headers.get("Retry-After") if e.headers else None, _busy_retries,
+                                       cap=QUOTA_WAIT_CAP_S if kind == "minute" else BUSY_WAIT_CAP_S))
+                retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
+                                      _busy_retries=_busy_retries + 1)
+                retry.note = (retry.note + " " if retry.note else "") + f"服务端忙（HTTP {e.code}），重试后成功"
+                retry.retries += 1
+                return retry
+            fit = fit_after_overflow(detail, payload["max_tokens"]) if e.code == 400 else None
+            if fit is not None:
+                # 输入 + max_tokens 超过上下文：和 chat_template_kwargs 无关，绝不能走下面的降级
+                # （那会永久关掉思考开关，这一轮照样失败）。按服务端给的数字把本轮上限调小再试。
+                if fit >= MIN_FIT_TOKENS and _fit_retries < MAX_FIT_RETRIES:
+                    retry = self.complete(messages, fit, on_delta=on_delta, _fit_retries=_fit_retries + 1)
+                    retry.note = (retry.note + " " if retry.note else "") + \
+                        f"上下文放不下 max_tokens={payload['max_tokens']}，本轮降到 {fit}"
+                    return retry
+                return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
+                                  error=f"HTTP {e.code}: {detail}", max_tokens=payload["max_tokens"])
             if e.code == 400 and not self._no_template_kwargs and self.spec.provider != "deepseek":
                 # 大概率是 chat_template_kwargs 不被接受：降级后重试一次
                 self._no_template_kwargs = True
@@ -186,9 +302,40 @@ class ChatClient:
             return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
                               error=f"{type(e).__name__}: {e}")
 
+        # 托管 API 过载时会回 200 却在出字之前结束流（Gemini 免费层 2026-11-20 实测：只来一个没有正文的块），
+        # 或在流里给一个 error。和 429 / 503 一样算"忙"：退避后重试，不把一轮记成"空回复 → 无效动作"。
+        empty = not chunks and not thinks and not finish
+        # Gemini 的 OpenAI 兼容端点两种"接口自己的毛病"（2026-11-20 实测，一次运行里 3 次全是这个）：
+        #   * finish_reason = "function_call_filter: MALFORMED_FUNCTION_CALL"：没声明任何工具，它自己想做函数调用又做坏了，
+        #     正文为空或半句；
+        #   * 正常结束却只吐出一两个字符的乱码（例如单个汉字）。
+        # 两种都不是模型在答题，记成"协议失败"会白白吃掉第三次机会、提前结束运行；重试即可。
+        text_now = "".join(chunks).strip()
+        # 乱码只认"一两个字符、且没有任何 ASCII 字母 / 数字 / {"：答疑里 "OK"、"42" 这种短回答是正常的，不能重试
+        glitch = ("MALFORMED_FUNCTION_CALL" in str(finish or "")
+                  or (self.spec.provider == "gemini" and not thinks and 0 < len(text_now) <= 2
+                      and not re.search(r"[A-Za-z0-9{]", text_now)))
+        if (empty or glitch or int(stream_err.get("code") or 0) in BUSY_CODES) and self.spec.provider in ("gemini", "openai-compatible", "deepseek") \
+                and _busy_retries < BUSY_RETRIES:
+            time.sleep(busy_wait_s(json.dumps(stream_err), None, _busy_retries) if not glitch else 0.5)
+            retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
+                                  _busy_retries=_busy_retries + 1)
+            retry.note = (retry.note + " " if retry.note else "") + (
+                f"接口返回 {str(finish)[:60] or '乱码'}，重试后成功" if glitch else "流提前结束（无正文），重试后成功")
+            retry.retries += 1
+            return retry
+        if stream_err and not chunks:
+            return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000), max_tokens=payload["max_tokens"],
+                              error=f"stream error {stream_err.get('code', '')}: {str(stream_err.get('message', ''))[:300]}")
         text = "".join(chunks)
         reasoning = "".join(thinks)
         note = ""
+        # Gemma 4 on the Gemini API (2026-11-20) writes "<thought>…</thought>" before the answer, often with a draft of the
+        # answer inside. The thought goes to reasoning, so the protocol parser only sees the answer.
+        text, inline = split_inline_thought(text)
+        if inline:
+            reasoning = (reasoning + "\n" + inline).strip()
+            note = "思考块已从正文移出"
         if not text.strip() and reasoning.strip():
             # 兜底：有些运行时/版本忽略关闭参数，只会返回 reasoning。
             # 与其把这轮判成"空回复"，不如把动作从思维链里捞出来。
@@ -215,6 +362,7 @@ class ChatClient:
             finish_reason=finish,
             usage_source=src,
             note=note,
+            max_tokens=payload["max_tokens"],
             reasoning=reasoning[:2000],
             cache_hit_tokens=hit,
             cache_miss_tokens=miss,
@@ -286,10 +434,10 @@ class MockClient(ChatClient):
             )
             if "challenge/" in sys_txt and not has_obs:
                 text = ("<run>ls -la challenge</run>\n"
-                        "我先看题目给了哪些附件，再决定用什么手法。")
+                        "First I check which attachments the challenge ships, then pick a method.")
             else:
-                text = ("这是 mock 助教的示例回答。真实模型会在这里给出成段讲解："
-                        "先给结论，再说明为什么，必要时先用 <run> 跑命令验证。")
+                text = ("This is the mock tutor's sample answer. A real model explains here: "
+                        "conclusion first, then why, running commands with <run> when it needs evidence.")
             if on_delta is not None:
                 on_delta(text)
             return Completion(text=text, prompt_tokens=len(last) // 4,
@@ -308,10 +456,10 @@ class MockClient(ChatClient):
 
         n_obs = sum(1 for m in messages if m["role"] == "user") - 1  # 减去题面
         if n_obs <= 0:
-            action = {"thought": "先看有哪些文件", "action": "shell", "cmd": "ls -la challenge"}
+            action = {"thought": "List the files first", "action": "shell", "cmd": "ls -la challenge"}
         elif n_obs == 1:
             action = {
-                "thought": "把每个文件的内容打出来看看",
+                "thought": "Print every file to see what is inside",
                 "action": "shell",
                 "cmd": "for f in challenge/*; do echo \"== $f ==\"; head -c 400 \"$f\"; echo; done",
             }
@@ -330,10 +478,10 @@ class MockClient(ChatClient):
                     "        if '{' in line and '}' in line and 'pico' in line.lower():\n"
                     "            print(line.strip())\n"
                 )
-                action = {"thought": "找到了，提交并附上复现脚本", "action": "submit",
+                action = {"thought": "Found it; submit with a script that reproduces it", "action": "submit",
                           "flag": flag, "script": script}
             else:
-                action = {"thought": "没找到，交一个占位答案让流程走完", "action": "submit",
+                action = {"thought": "Nothing found; submit a placeholder so the pipeline completes", "action": "submit",
                           "flag": "picoCTF{mock_not_found}", "script": "print('nothing')"}
 
         text = "```json\n" + json.dumps(action, ensure_ascii=False) + "\n```"
@@ -344,7 +492,94 @@ class MockClient(ChatClient):
                           latency_ms=2, finish_reason="stop", usage_source="estimated")
 
 
-def build_client(spec: ModelSpec) -> ChatClient:
+# ---------------------------------------------------------------- 备援
+# 主模型在接口层面失败（不是模型答错）时，这一轮就换备援模型重发，之后整次运行 / 整个对话都用它；
+# 刚失败过的主模型记一阵子（按天的额度 1 小时、过载 1 分钟），这期间新开的运行直接用备援，不再先撞一次 429。
+FALLBACK_RESOLVER = None          # 网页服务注册：模型名 → 带端点和密钥的 ModelSpec
+_FAILOVER = re.compile(r"^(HTTP (401|403|404|408|429|5\d\d)|URLError|TimeoutError|timeout|ConnectionError|"
+                       r"RemoteDisconnected|IncompleteRead|stream error)", re.I)
+DOWN: dict[str, tuple[float, str]] = {}
+
+
+def failover_reason(err: str) -> str:
+    """该不该换备援；该换就给一句给人看的原因，否则空串。"""
+    e = err or ""
+    if not _FAILOVER.match(e):
+        return ""
+    if "daily free quota" in e or "PerDay" in e:
+        return "its daily free quota is used up"
+    if e.startswith("HTTP 429"):
+        return "it is rate-limited"
+    if re.match(r"HTTP 5\d\d", e):
+        return "it is overloaded"
+    if e.startswith("HTTP 404"):
+        return "the model is not available"
+    if re.match(r"HTTP 40[13]", e):
+        return "the key was refused"
+    return "it could not be reached"
+
+
+def _down_s(err: str) -> float:
+    r = failover_reason(err)
+    return {"its daily free quota is used up": 3600, "the model is not available": 600, "the key was refused": 600}.get(r, 60)
+
+
+class FallbackClient:
+    """一条模型链（便宜的在前）：当前这个在接口层面失败就换下一个，这一轮当场重发；之后一直用换到的那个。
+    对调用方和 ChatClient 一样：complete / scrape_metrics / spec。"""
+
+    def __init__(self, primary, spec: ModelSpec):
+        self.spec = spec
+        self.chain = [spec.name] + [m for m in dict.fromkeys(x.strip() for x in (spec.fallback or "").split(",")) if m and m != spec.name]
+        self.clients = {spec.name: primary}
+        self.i = 0
+        self.switched: dict | None = None         # {"from", "to", "reason"}：最近一次换到了谁
+        self.last_model = spec.name
+
+    def scrape_metrics(self):
+        return self.clients[self.chain[0]].scrape_metrics()
+
+    def _client(self, name):
+        if name not in self.clients:
+            self.clients[name] = build_client(FALLBACK_RESOLVER(name), chain=False)
+        return self.clients[name]
+
+    def _next(self, reason: str) -> None:
+        self.i += 1
+        if self.i < len(self.chain):
+            self.switched = {"from": self.chain[0], "to": self.chain[self.i], "reason": reason}
+
+    def complete(self, messages, max_tokens=None, on_delta=None):
+        comp = None
+        while self.i < len(self.chain):
+            name, last = self.chain[self.i], self.i == len(self.chain) - 1
+            down = DOWN.get(name)
+            if down and down[0] > time.time() and not last:
+                self._next(down[1])
+                continue
+            try:
+                c = self._client(name)
+            except Exception as e:
+                if last:
+                    return Completion(text="", error=f"no model in the chain could be reached ({e})")
+                self._next("unavailable")
+                continue
+            c.busy_retries = None if last else 0      # 还有下一家时别在这儿干等：429 / 503 立刻换
+            comp = c.complete(messages, max_tokens, on_delta=on_delta)
+            why = failover_reason(comp.error) if comp.error else ""
+            if not why or last:
+                self.last_model = name
+                return comp
+            DOWN[name] = (time.time() + _down_s(comp.error), why)
+            self._next(why)
+        return comp or Completion(text="", error="no model left in the chain")
+
+
+def build_client(spec: ModelSpec, chain: bool = True):
     if spec.name == "mock":
-        return MockClient()
-    return ChatClient(spec)
+        base = MockClient()
+    else:
+        base = ChatClient(spec)
+    if chain and getattr(spec, "fallback", "") and FALLBACK_RESOLVER is not None:
+        return FallbackClient(base, spec)
+    return base

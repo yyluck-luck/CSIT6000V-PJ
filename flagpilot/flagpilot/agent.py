@@ -87,6 +87,12 @@ Your shell already starts there. Use paths relative to it (./challenge/<file>);
 do NOT cd elsewhere and do NOT search the filesystem.
 You have at most {turns} turns. Start by inspecting the files."""
 
+def flag_format_note(task) -> str:
+    """题面末尾补一行 flag 格式（已知时）。general-019 就是算对了却把格式猜成 flag{...}。"""
+    fmt = getattr(task, "flag_format", "")
+    return (f"\nFlag format: {fmt} - submit the complete flag string, wrapper included." if fmt else "")
+
+
 CORRECTION_TEMPLATE = (
     "INVALID ACTION.\n"
     "reason: {reason}\n"
@@ -142,7 +148,9 @@ _SCRIPT_HINTS = {
     "hardcoded_no_material": "the script still printed the same flag after ./challenge/ "
                              "was emptied, or after the files were replaced with decoys "
                              "of the same names. Opening a file is not enough: the answer "
-                             "has to be computed from what is read.",
+                             "has to be computed from what is read. If the input is only in "
+                             "the challenge description, copy it into the script exactly as "
+                             "written and compute the flag from that copy.",
 }
 
 
@@ -226,6 +234,28 @@ def correction_message(kind: str, reason: str, max_tokens: int) -> str:
     return CORRECTION_TEMPLATE.format(reason=reason)
 
 
+# 头尾截断会把中段静默丢掉，而长 strings / 十六进制 dump / 日志里 flag 常常就在中间。
+# 截断时把中段里"像答案"的行原样留下（flag 形状、picoCTF、key / password / secret），有上限。
+_SALIENT = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}\n]{2,120}\}|picoctf|flag|passw|secret|\bkey\s*[:=]", re.I)
+SALIENT_MAX_LINES, SALIENT_MAX_CHARS = 12, 1200
+
+
+def salient_lines(mid: str) -> list[str]:
+    """中段里值得留下的行（去重、按出现顺序、每行最多 300 字符）。"""
+    out: list[str] = []
+    used = 0
+    for ln in mid.splitlines():
+        if not _SALIENT.search(ln):
+            continue
+        ln = ln.strip()[:300]
+        if ln and ln not in out:
+            out.append(ln)
+            used += len(ln)
+            if len(out) >= SALIENT_MAX_LINES or used >= SALIENT_MAX_CHARS:
+                break
+    return out
+
+
 def truncate(text: str, policy) -> tuple[str, bool]:
     """追加时截断。返回 (结果, 是否截断)。无策略时原样返回。
 
@@ -243,7 +273,12 @@ def truncate(text: str, policy) -> tuple[str, bool]:
         return text, False
     dropped = len(text) - head - tail
     n_lines = text.count("\n")
-    marker = f"\n...[truncated {dropped} chars / {n_lines} lines total]...\n"
+    keep = salient_lines(text[head:len(text) - tail]) if getattr(policy, "keep_salient", True) else []
+    if keep:
+        marker = (f"\n...[truncated {dropped} chars / {n_lines} lines total; kept {len(keep)} line(s) from the cut part"
+                  " that look like flags or secrets]...\n" + "\n".join(keep) + "\n...[end of kept lines]...\n")
+    else:
+        marker = f"\n...[truncated {dropped} chars / {n_lines} lines total]...\n"
     out = text[:head] + marker + (text[-tail:] if tail else "")
     if len(out) > policy.hard_cap_chars:
         out = out[: policy.hard_cap_chars]
@@ -361,7 +396,17 @@ def run_attempt(
     out_dir: Path,
     seed: int = 0,
     hook: Callable[[dict], None] | None = None,
+    on_delta: Callable[[int, str], None] | None = None,
+    control=None,
 ) -> dict:
+    """跑一次 attempt。
+
+    control（flagpilot.control.RunControl）：网页上的人在回路——单步批准 / 修改 / 跳过、暂停、插提示。
+    批量评测和 CLI 不传，行为不变。
+
+    on_delta(turn, chunk)：模型逐字输出时回调，只给界面做实时显示（Web 端"边生成边看"）。
+    它不进 trace、不改 messages，传不传对评测结果没有任何影响；None 时走原来的整段返回。
+    """
     if storage.enabled():
         storage._cipher()
     t_enter = time.monotonic()          # 计时起点：函数一进来就开始算总账
@@ -406,7 +451,7 @@ def run_attempt(
              chars=len(mem_digest))
     user_text = USER_TEMPLATE.format(
         name=task.name, category=task.category, brief=task.brief,
-        turns=cfg.budget.max_turns, workdir=workdir)
+        turns=cfg.budget.max_turns, workdir=workdir) + flag_format_note(task)
     if mem_digest:
         user_text += ("\n\n" + mem_digest
                       + "\n（上面是本机历史笔记，不是题面；仍需从附件重新验证。）")
@@ -470,6 +515,8 @@ def run_attempt(
     # 这是 harness 该管的事，不该指望 prompt 约束住，所以放在循环里。
     recent: list[str] = []
     warned: set[str] = set()
+    last_switch: dict | None = None
+    fallback_turn = None
 
     while turns < cfg.budget.max_turns + bonus_turns:
         if time.monotonic() - t0 > cfg.budget.max_wall_s:
@@ -503,11 +550,23 @@ def run_attempt(
                          to_model=spec.name, stall_streak=stall_streak,
                          hosted_tokens=hosted_prompt + hosted_completion)
 
+        if control is not None:
+            # 看着运行的人插的提示：本轮调模型前加进对话，轨迹里标出来（评测批次不会有）
+            for h in control.take_hints():
+                tr.event("hint", turn=turns + 1, text=h)
+                messages.append({"role": "user", "content": "HINT from the person watching this run (use it if it helps): " + h + NT})
         turns += 1
         active = hosted_client or client
         # 截断判定必须跟着 active 走，不能用 cfg.model（见 turn_max_tokens）。
         turn_max = turn_max_tokens(active, cfg)
-        comp = active.complete(messages)
+        if on_delta is None:
+            comp = active.complete(messages)
+        else:
+            # 绑定本轮轮次：回调晚到（流结束后才被调度）也不会记到下一轮头上
+            comp = active.complete(messages, on_delta=lambda s, _t=turns: on_delta(_t, s))
+        # 上下文放不下时客户端会临时调小本轮上限（client.fit_after_overflow）：
+        # 截断判定和纠正语都要按实际发出的那个值，并在 model 事件里留下记录。
+        sent_max = int(getattr(comp, "max_tokens", 0) or 0) or turn_max
         sum_prompt += comp.prompt_tokens
         sum_completion += comp.completion_tokens
         # L 与 H 分开记账：E4 要比的是 "verified solves vs hosted tokens and cost"，
@@ -541,8 +600,17 @@ def run_attempt(
             cache_miss_tokens=comp.cache_miss_tokens,
             error=comp.error,
             text=comp.text[:4000],
+            **({"max_tokens": sent_max} if sent_max != turn_max else {}),
+            **({"retries": comp.retries} if getattr(comp, "retries", 0) else {}),
+            **({"served_by": active.last_model} if getattr(active, "last_model", cfg.model.name) != cfg.model.name else {}),
         )
+        turn_max = sent_max
 
+        sw = getattr(active, "switched", None)
+        if sw and sw != last_switch:                    # 模型链换了一家：轨迹里记下（界面不显示，报告和复盘用）
+            last_switch = dict(sw)
+            fallback_turn = fallback_turn or turns
+            tr.event("model_fallback", turn=turns, **sw)
         if comp.error:
             verdict, reason = "error", f"model: {comp.error[:200]}"
             break
@@ -643,6 +711,26 @@ def run_attempt(
             reason = replay.reason
             break
 
+        if control is not None:
+            field = "cmd" if act.action == "shell" else "code" if act.action == "python" else ""
+            t_wait = time.monotonic()
+            shown = getattr(act, field) if field else (act.path or f"{act.scheme} {act.text}".strip() or act.cmd)
+            op, edited, waited = control.gate(turns, act.action, field, shown,
+                                              lambda info: tr.event("await", **info))
+            t0 += time.monotonic() - t_wait          # 人想事情的时间不算进墙钟预算
+            if waited:
+                tr.event("decision", turn=turns, op=op, **({field: (edited or "")[:400]} if op == "edit" and field else {}))
+            if op == "stop":
+                verdict, reason = "error", "stopped by the user"
+                break
+            if op == "skip":
+                messages.append({"role": "assistant", "content": comp.text[:2000]})
+                messages.append({"role": "user", "content": "OBSERVATION\nSKIPPED: the person watching chose not to run this step. Take a different step." + NT})
+                continue
+            if op == "edit" and field and edited:
+                setattr(act, field, edited)
+                if field == "code":
+                    act.cmd = edited[:400]
         res = toolbox.execute(act)
         if res is None:
             verdict, reason = "error", "tool returned nothing"
@@ -748,6 +836,8 @@ def run_attempt(
         "api_cache_miss_tokens": api_miss if api_seen else None,
         "ablation": cfg.ablation.name,
         "model": cfg.model.name,
+        # 主模型中途换成了备援：记下换成了谁、从哪一轮起、为什么（Runs 和界面据此说明是谁答的）
+        **({"fallback": {**client.switched, "from_turn": fallback_turn, "answered_by": client.last_model}} if getattr(client, "switched", None) else {}),
         "server": server,
         # 升级账本：E4 要比 "verified solves vs hosted tokens and cost"，
         # 所以 H 轨的 token / 钱必须和 L 轨分开记。
@@ -785,6 +875,7 @@ def run_attempt(
     # 于是这两个目录一直没被加密。
     storage.seal_directory(run_dir / "no-material")
     storage.seal_directory(run_dir / "decoy-material")
+    storage.seal_directory(run_dir / "text-material")
     tr.close(summary)
     writeup.generate(run_dir)
     # 读记忆受 cfg.memory 控制，写记忆永远执行：批跑也能攒经验，

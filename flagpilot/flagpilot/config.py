@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -62,6 +63,8 @@ class Policy:
     # 观察截断：保留头尾，中间折叠。None = 不截断（用作 baseline）
     truncate_head_chars: int | None = 1500
     truncate_tail_chars: int | None = 1500
+    # 截断时把中段里像 flag / 密钥的行原样留下（见 agent.salient_lines）；关掉就是纯头尾截断
+    keep_salient: bool = True
     # 单次观察的硬上限（字符），超长先截再入库，保证历史字节稳定
     hard_cap_chars: int = 12_000
     # 上下文压缩（compaction）阈值：messages 总字符超过它就折叠中段。
@@ -124,7 +127,13 @@ class ModelSpec:
     base_url: str = "http://127.0.0.1:8000/v1"
     api_key: str = "EMPTY"
     temperature: float = 0.2
-    max_tokens: int = 2048
+    # 每轮输出上限。2048 → 4096 是 dev 上定的（2026-11-20，qwen3.8-27b，B3，同 20 题）：
+    # 2048 时 3 题共 5 条回复被截断（截断算一次无效动作，连着 3 次整题出局），4096 时 0 条；
+    # verified 12 → 13（crypto-079），原来解出的一题没丢；输出 token +14%、墙钟 +9%。
+    # n=20 时差异不显著（McNemar p=1.0），改它是为去掉截断这个失败机制，不是为涨分。
+    # 上下文余量：实测单次最大 prompt 24.3k，加 4096 仍在 32k 之内；万一放不下，
+    # 客户端按服务端报错把本轮上限调小重试（client.fit_after_overflow）。
+    max_tokens: int = 4096
     request_timeout_s: float = 180.0
     # vLLM 的 Prometheus 端点，用于读 prefix cache 命中率；留空则不采
     metrics_url: str = ""
@@ -141,6 +150,9 @@ class ModelSpec:
     # Qwen3 系列默认开 thinking，会吐出 <think>...</think> 并把预算吃光。
     # Agent 每轮只要一个 JSON 动作，所以默认关掉；要做"思考 vs 不思考"消融再打开。
     enable_thinking: bool = False
+    # 备援模型（名字）：主模型在接口层面失败（额度、过载、模型不存在、密钥、网络）时这一轮就换它，之后一直用它。
+    # 只放名字；带端点和密钥的配置由网页服务在建客户端时生成。实验（Lab / 批跑）不设，免得一组里混进两个模型。
+    fallback: str = ""
     # 有些运行时（Ollama）不接受 chat_template_kwargs，此时用 Qwen3 的软开关
     # ——在用户消息末尾加 /no_think。由 make_model_spec() 按模型名自动打开。
     soft_no_think: bool = False
@@ -155,9 +167,16 @@ def make_model_spec(name: str, base_url: str = "", thinking: bool = False, **kw)
     所有入口必须走这里，默认值才不会再漂。
     """
     lower = str(name).lower()
-    spec = ModelSpec(name=name, base_url=base_url or "http://127.0.0.1:8000/v1", **kw)
+    # gemini-* 没给端点时默认走 Google 的 OpenAI 兼容端点
+    default = GEMINI["base_url"] if lower.startswith("gemini") else "http://127.0.0.1:8000/v1"
+    spec = ModelSpec(name=name, base_url=base_url or default, **kw)
     if urlparse(spec.base_url).hostname == "opencode.ai":
         spec.provider = "openai-compatible"
+    if is_gemini(spec.base_url):
+        # 只发标准字段：chat_template_kwargs 不认；reasoning_effort="none" 在 flash-lite 上直接 400
+        spec.provider = "gemini"
+        if not (spec.api_key or "").strip() or spec.api_key == "EMPTY":
+            spec.api_key = gemini_api_key() or spec.api_key
     spec.enable_thinking = bool(thinking)
     # Ollama 常忽略 chat_template_kwargs（会 400 后降级），所以再压一道软开关。
     spec.soft_no_think = (not thinking) and "qwen3" in lower
@@ -187,12 +206,98 @@ TRACK_H = {
 }
 
 
+# Gemini API（Google AI Studio）的 OpenAI 兼容端点。会员订阅不含 API；密钥在 AI Studio 免费创建，放根目录 .env。
+GEMINI = {
+    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "model": "gemini-flash-lite-latest",       # 2026-11-20 免费层里高峰时仍可用的那一档
+    "key_env": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+}
+
+
+def is_gemini(base_url: str) -> bool:
+    return urlparse(base_url or "").hostname == "generativelanguage.googleapis.com"
+
+
+# 密钥与端点从哪里读（前面的优先）：环境变量 > 仓库根目录 .env（个人的，不进 git）> 仓库根目录 shared.env
+# （仓库自带的共享密钥：私有仓库里给组员和评审"克隆后 ./start.sh 一键复现"用；仓库公开之前必须删掉它并作废这些密钥）。
+# 测试设 FLAGPILOT_NO_DOTENV，两个文件都不读。
+SHARED_ENV = PROJECT_ROOT.parent / "shared.env"
+
+
+def dotenv_files() -> list[Path]:
+    return [PROJECT_ROOT.parent / ".env", SHARED_ENV]
+
+
+def dotenv_pairs(dotenv: Path | None = None) -> dict[str, str]:
+    """NAME=value：给了 dotenv 只读那一个文件；否则先 .env 再 shared.env，先出现的有值的为准（空值不挡后面的）。"""
+    out: dict[str, str] = {}
+    for path in ([dotenv] if dotenv is not None else dotenv_files()):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            if "=" not in line or line.lstrip().startswith("#"):
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k and v and k not in out:
+                out[k] = v
+    return out
+
+
+def dotenv_value(name: str, dotenv: Path | None = None) -> str:
+    """.env / shared.env 里某个配置的值（例如 FLAGPILOT_FALLBACK_MODEL）；测试里设 FLAGPILOT_NO_DOTENV 就不读。"""
+    if dotenv is None and os.environ.get("FLAGPILOT_NO_DOTENV"):
+        return ""
+    return dotenv_pairs(dotenv).get(name, "")
+
+
+def extra_endpoints(environ=None, dotenv: Path | None = None) -> dict[str, dict]:
+    """别的 OpenAI 兼容端点：环境变量或仓库根目录 .env 里成对出现的 NAME_BASE_URL + NAME_API_KEY（例如 RAYGO_*）。
+
+    返回 {name: {"base_url", "api_key", "models"}}；可选 NAME_MODELS（逗号分隔）预先声明模型，端点列不出模型时用。
+    只认 https 地址；GEMINI_* 另有专门处理。密钥不打印、不进运行指纹。
+    """
+    env = os.environ if environ is None else environ
+    kv: dict[str, str] = {}
+    if not (dotenv is None and env.get("FLAGPILOT_NO_DOTENV")):
+        kv.update(dotenv_pairs(dotenv))
+    kv.update({k: v for k, v in env.items() if k.endswith(("_BASE_URL", "_API_KEY", "_MODELS"))})
+    out: dict[str, dict] = {}
+    for k, v in kv.items():
+        name = k[:-len("_BASE_URL")] if k.endswith("_BASE_URL") else ""
+        if not name or name in ("GEMINI", "FLAGPILOT", "OPENAI"):
+            continue
+        key = kv.get(name + "_API_KEY", "")
+        if (v.startswith("https://") or re.match(r"^http://(127\.0\.0\.1|localhost)(:\d+)?/", v)) and key:   # 明文 http 只许本机
+            models = [m.strip() for m in kv.get(name + "_MODELS", "").split(",") if m.strip()]
+            out[name.lower()] = {"base_url": v.rstrip("/"), "api_key": key, "models": models}
+    return out
+
+
+def gemini_api_key(environ=None, dotenv: Path | None = None) -> str:
+    """Gemini 密钥：先看环境变量，再看 .env，最后 shared.env（只读这两个名字，不打印、不进指纹）。"""
+    env = os.environ if environ is None else environ
+    for k in GEMINI["key_env"]:
+        v = (env.get(k) or "").strip()
+        if v:
+            return v
+    if dotenv is None and env.get("FLAGPILOT_NO_DOTENV"):      # 测试里不碰真实密钥
+        return ""
+    pairs = dotenv_pairs(dotenv)
+    return next((pairs[k] for k in GEMINI["key_env"] if pairs.get(k)), "")
+
+
 def track_h_api_key(environ=None) -> str:
     env = os.environ if environ is None else environ
     for k in TRACK_H["key_env"]:
         v = (env.get(k) or "").strip()
         if v:
             return v
+    if environ is None and not env.get("FLAGPILOT_NO_DOTENV"):
+        pairs = dotenv_pairs()
+        return next((pairs[k] for k in TRACK_H["key_env"] if pairs.get(k)), "")
     return ""
 
 
@@ -253,6 +358,7 @@ class RunConfig:
                 "base_url": self.model.base_url,
                 "temperature": self.model.temperature,
                 "max_tokens": self.model.max_tokens,
+                **({"fallback": self.model.fallback} if self.model.fallback else {}),
             },
             "budget": self.budget.__dict__,
             "policy": self.policy.__dict__,

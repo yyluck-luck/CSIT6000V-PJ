@@ -260,20 +260,48 @@ def _pad(text: str, width: int) -> str:
     return text + " " * max(0, width - used)
 
 
+SUCCESS = ("ok", "reproduced")
+
+
+def failure_counts(counter: dict[str, int], rows: list[dict]) -> tuple[int, dict[str, int]]:
+    """(失败条数, {标签: 命中的失败条数})——只数失败的 attempt。
+
+    verified 的题中途也会碰到 "command not found"（换个办法照样解出），那不是失败原因。
+    混进来的话，"占失败比"会超过 100%：TACC 作业 29323 里 1 条失败、两道解出的题各碰到
+    一次缺工具，报告写成"环境缺工具 2（200%）"。没有逐条标签的老摘要只能按总计数近似。
+    """
+    if not rows:
+        fails = {k: v for k, v in counter.items() if k not in SUCCESS}
+        return sum(fails.values()), fails
+    failed = [r for r in rows if r.get("primary") not in SUCCESS]
+    c = Counter(t for r in failed for t in (r.get("tags") or ["unknown"]) if t not in SUCCESS)
+    return len(failed), dict(c)
+
+
+def incidental_counts(rows: list[dict]) -> dict[str, int]:
+    """成功的 attempt 途中碰到的标签（多是环境缺口）：不算失败，但该让读报告的人知道。"""
+    return dict(Counter(t for r in rows if r.get("primary") in SUCCESS
+                        for t in (r.get("tags") or []) if t not in SUCCESS))
+
+
 def render(counter: dict[str, int], rows: list[dict], limit: int = 8) -> str:
     if not counter:
         return ""
-    fails = {k: v for k, v in counter.items() if k not in ("ok", "reproduced")}
+    n_fail, fails = failure_counts(counter, rows)
     if not fails:
         return "失败归因：全部 verified，无失败可归因。"
-    detail = [r for r in rows if r["primary"] not in ("ok", "reproduced")]
+    detail = [r for r in rows if r["primary"] not in SUCCESS]
     hits = sum(fails.values())
     # 分母必须是"失败的题数"，不是"标签数"：一条失败可能同时命中两个标签，
     # 拿标签数当分母会让百分比加起来超过 100%，读的人会以为统计错了。
-    n_fail = len(detail) or hits
     lines = [f"失败归因（{n_fail} 条失败，共 {hits} 个标签，同一条可命中多个）："]
     for k, v in sorted(fails.items(), key=lambda kv: -kv[1]):
         lines.append(f"  {_pad(LABELS.get(k, k), 32)}{v:>3}  ({v / n_fail:.0%})")
+    extra = incidental_counts(rows)
+    if extra:
+        seen = "、".join(f"{LABELS.get(k, k)}×{v}"
+                        for k, v in sorted(extra.items(), key=lambda kv: -kv[1]))
+        lines.append(f"  （成功的 attempt 途中还碰到：{seen}——不计入失败，但说明环境有缺口）")
     if fails.get("truncated"):
         # 这条必须写出来：截断是配置问题，不是模型能力问题。不点明的话，
         # 读者会把"预算配小了"读成"模型不行"，进而得出错误的模型对比结论。

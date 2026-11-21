@@ -5,6 +5,92 @@
 
 ---
 
+## 课程平台（官方 tcloud SDK）——先看这里
+
+课程 TACC 只允许用 SDK 提交、查看、下载（学生不登录服务器、不建 SSH 转发）。本文后面的 `run.slurm` /
+`serve.slurm` 流程适用于通用 Slurm 集群；**课程平台请走 `deploy/tcloud/`**，2026-11-17 已实跑（作业 29323：
+5 道 dev 题 4 道 verified）。课程平台的硬约束：分区上限 **1 小时**；模型固定为 `qwen3.8-27b`
+（Qwen3.8-27B-AWQ-INT4，混合注意力，prefix cache 按 784 token 一块对齐）；`--max-num-seqs 4`、prefix cache 常开，
+所以 E3 的"关缓存"与"8 并发"两格在课程服务上做不了。
+
+```bash
+# 全程只用课程 SDK（tcloud v0.4.1），在本机执行：不登录服务器、不 scp、不建 SSH 转发
+deploy/tcloud/submit.sh doctor                         # CPU 自检：SDK 引导、课程 Python、泄漏检查
+deploy/tcloud/submit.sh serve                          # qwen3.8-27b，2×3090，分区上限 1 小时
+tcloud cat slurm_log/qwen-public-serve-<job>.log       # 等 "Application startup complete"，抄 SERVICE_BASE_URL
+FP_LIMIT=5 deploy/tcloud/submit.sh batch http://<node>:8000/v1
+tcloud download flagpilot-runs/tacc-smoke.md ./        # 报告
+tcloud download -r flagpilot-runs/tacc-smoke ./        # 轨迹 → python3 -m flagpilot web --replay ./tacc-smoke
+tcloud cancel -j <serve job>                            # 释放 GPU
+# 或一条命令：deploy/tcloud/pipeline.sh <本地输出目录>（显存 / 8000 端口被占的节点自动排除重交，结束必取消服务）
+```
+
+**2026-11-19 起的增强**（作业 30030/30031 实跑验证）：
+
+- **一个服务作业跑多档**：`FP_ABLATIONS=B3,B0,B1,B2 FP_LIMIT=0 FP_BATCH=tacc-dev-v5 deploy/tcloud/pipeline.sh runs/tacc/v5 "10-0-1-10,10-0-1-11,10-0-4-10"`
+  在同一个 qwen 服务上依次跑四档（开服只付一次 5 分钟），每档一个批次 `<FP_BATCH>-Bx`；客户端按服务作业的
+  截止时刻估算下一档还来不来得及，不够就整档跳过并在日志里写明怎么续跑。dev 20 题 × 4 档实测约 23 分钟。
+- **补齐运行时缺的工具**：`bin/xxd`、`bin/exiftool` 是纯 Python 替身（xxd 与系统 xxd 逐字节一致），
+  pycryptodome / gmpy2 的 manylinux wheel 在本机下好、随包解进作业目录，只经 `FLAGPILOT_SANDBOX_PYTHONPATH`
+  进沙箱（动作与重放一致）。doctor 不再报这四样缺失。
+- **调度**：批跑默认"预计最慢的先跑"（LPT），先验来自同目录下历史批次的 wall_s。
+- **划分**：仓库里有团队冻结的 `docs/splits-picoctf-53.json` 就原样带上（以前每次现场重新生成；对同一份题库两者逐字节相同，
+  但题库索引一旦变了，重新生成会悄悄换成另一种划分）。作业里的 CLI 会核对索引哈希：不符时 dev 警告、test 拒跑。
+  v5 与 max_tokens 复验用的 20 道 dev 题正是冻结划分里 core 范围的 dev，与 test 无交集。
+- **本机暂存交完即删**：网页会话里每条答疑、每次单题都要交一次作业，暂存目录以前从不删（单题约 15M、整批约 88M）。
+  `FP_KEEP_STAGE=1` 保留，`FP_DRY_RUN=1` 只暂存不提交。
+- **从网页发起**：`python3 -m flagpilot web --replay runs/tacc` → Lab → *TACC batch*：选档位与题量，点 *Run on TACC*；
+  页面显示阶段（Queue → Server → Batch → Download → Done）、作业号、逐题结论，跑完把每档挂成回放（Runs 页可逐步复盘）。
+- **网页实时会话（Qwen 27B on TACC）**：点 Solve 页的 *Qwen on TACC · connect* 或 Ask 页的 *connect Qwen*（或直接点 *Run on TACC*）会提交一个服务作业并常驻，
+  时长按分区上限 1 小时、从作业真正开跑算起（排队不计），到点前 3 分钟自动取消，再点一次即断开。启动的几分钟里在 Ask 发的消息会排队，就绪后交给 Qwen，不会落到演示模型上。就绪后：
+  - Solve 的 *Run on TACC*：只带这一道题交一个客户端小作业；作业把 trace 事件按行打进 Slurm 日志（`@@ev`），
+    网页每 4 秒 `tcloud cat` 一次逐步显示，结束后下载运行目录并挂成回放。
+  - Ask：每条消息一个小作业（`fp chat-once`），回复以 `@@delta` / `@@reply` 回传；历史问答随作业带上去，线程仍存本机 `runs/chat/`。
+  - 平台上客户端作业共用一个工作目录，所以求解和答疑同一时间只跑一件，忙时网页会提示。
+  - 2026-11-20 实测（服务作业 30111，节点 10-0-3-11）：开服到就绪 300 s；一条答疑往返 31 s；
+    general-004（B3）从点击到 verified 64 s。
+  - **一条回复为什么要半分钟**：课程平台只给 SDK，消息到不了常驻服务，每条都要交一个 Slurm 作业。
+    实测拆分（作业 30163）：提交 35 s（SDK 按文件逐个上传，当时 37 个文件）→ 排队与启动 9 s → 生成 < 2 s。
+    现在除 tuxiv.conf / job.sh / run.env 外打成一个 payload.tgz、代码打成 flagpilot.zip：
+    不挂题 43.7 s → 26.6 s（作业 30165）；挂题（带 pycryptodome / gmpy2，以前 200 多个文件）约 79 s → 56 s（作业 30166）。
+  - **排队中（on hold）**：另一个回复或单题正在跑时，新请求排队而不是报 "busy"；作业排着队时页面显示 Slurm 的原因
+    （QOSMaxJobsPerUserLimit = 个人两个作业的名额已满，Resources = 没有空闲 GPU）。会话结束时取消还在排队的作业。
+  - **重启网页服务不丢会话**：会话写在 runs/tacc/session.json，重启后核实服务作业还在跑就接回来。
+
+| 档位（dev，n=20，qwen3.8-27b） | verified | 95% CI | raw | 平均轮次 | 整批 prefix cache |
+|---|---|---|---|---|---|
+| B0 | 70.0% | 48.1–85.5% | 80% | 6.5 | 76.2% |
+| B1 | 65.0% | 43.3–81.9% | 80% | 6.75 | 75.9% |
+| B2 | 60.0% | 38.7–78.1% | 70% | 7.1 | 74.4% |
+| B3 | 60.0% | 38.7–78.1% | 65% | 8.25 | 84.4% |
+
+四档区间完全重叠：n=20 时档位之间的差异不显著，这是要如实写进报告的结论，不是要调掉的噪声。
+
+上表四档都是 `max_tokens=2048`。**max_tokens 复验**（2026-11-20，作业 30114，B3，同一批 20 道 dev 题，`FP_MAX_TOKENS=4096`）：
+
+| B3 | verified | 95% CI | raw | 被截断的回复 | 每题输出 token | 平均墙钟 |
+|---|---|---|---|---|---|---|
+| 2048（v5） | 60.0%（12/20） | 38.7–78.1% | 65% | 5 条（3 题） | 2293 | 78.7 s |
+| 4096 | 65.0%（13/20） | 43.3–81.9% | 70% | 0 | 2623 | 86.0 s |
+
+逐题配对：原来解出的 12 题全部保持；唯一变化的是 crypto-079（2048 时第 2、3 轮被截断、最后耗尽轮次；
+4096 时有 3 条回复超过 2048 token，最后 verified）。n=20 下不显著（McNemar 精确 p=1.0），所以把默认值改成 4096
+的理由是去掉"截断 → 无效动作 → 整题出局"这一失败机制，而不是涨了 5 个点。上下文余量：实测单次最大 prompt
+24.3k token，加 4096 仍在 32k 之内；万一放不下，客户端按 vLLM 的报错把这一轮的上限调小重试，不再误当成
+"不认 chat_template_kwargs"而关掉思考开关。之后的批次默认 4096，四档要对比就整组重跑，不和上表混比。
+
+**按收紧后的验证器重验**（main 的 #9：第 4 道关在"清空材料"之外，再用同名、等长的假材料跑一次）：把上面两张表里
+TACC 判 verified 的 64 条提交，在本机分别用旧、新验证器重放（同一份题目附件；本机补齐 pycryptodome / gmpy2 /
+Pillow 与 `python`、`zcat` 后 64 条在旧验证器下全部复现）。新验证器只翻转 2 条，都是 crypto-005（v5 的 B2、B3）：
+脚本先读 `rot13.py`，正则落空时退回写死的密文，清空材料时 `open` 报错蒙混过关，换成假材料就露馅。
+按新验证器：B0 70.0%、B1 65.0% 不变，B2、B3 各降到 55.0%（11/20，95% CI 34.2–74.2%），4096 的 B3 仍是 65.0%。
+max_tokens 的配对变成 11 → 13（crypto-079 与 crypto-005 两对不一致，都偏向 4096；McNemar 精确 p=0.5），
+其中 crypto-005 的差别来自脚本写法，与截断无关，所以上面"为去掉截断机制而改"的结论不变。
+
+踩过的坑都已在脚本里处理：课程运行时（PRoot）没有 `python3` → 客户端垫一层；PRoot 解析不了节点名 →
+宿主机上换成 IP；`tcloud cat` 输出带 `\r` → `submit.sh` 校验地址；部分节点有 Slurm 管不到的进程占着显存或
+8000 端口 → 服务作业开服前体检，用 `FP_EXCLUDE=节点` 换节点。GPU 秒记在服务作业上，客户端批次不计。
+
 ## 0. 提交前必须问清的四件事
 
 任何一条没确认，后面都可能白跑：

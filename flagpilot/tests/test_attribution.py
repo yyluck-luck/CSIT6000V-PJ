@@ -81,6 +81,71 @@ class TestCorrectionDispatch(unittest.TestCase):
         self.assertIn("没有解析到合法的 JSON 动作", msg)
 
 
+class TestLoweredTurnBudget(unittest.TestCase):
+    """上下文放不下时客户端会把某一轮的 max_tokens 调小（client.fit_after_overflow）。
+    那一轮被截断时，判定与纠正语都得按实际生效的值，trace 里也要看得出这一轮被调过。"""
+
+    def test_truncation_uses_the_lowered_budget(self):
+        import base64
+        import hashlib
+        import json
+        from flagpilot.config import Budget, ModelSpec, SandboxLimits
+        from flagpilot.tasks import Task
+
+        flag = "picoCTF{lowered_budget_42}"
+        tmp = Path(tempfile.mkdtemp(prefix="fp-lowered-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        d = tmp / "tasks" / "low-001"
+        d.mkdir(parents=True)
+        (d / "data.txt").write_text("encoded=" + base64.b64encode(flag.encode()).decode() + "\n", encoding="utf-8")
+        task = Task(task_id=1, name="low-001", category="Synthetic", title="low", query="decode",
+                    gold_sha256=hashlib.sha256(flag.encode()).hexdigest(), assets=["data.txt"],
+                    assets_dir="tasks/low-001", suggested_tools=[], scope="core")
+        script = ("import base64\nfor l in open('challenge/data.txt'):\n"
+                  "    print(base64.b64decode(l.split('=', 1)[1]).decode())\n")
+        seen = []
+
+        class Lowered:
+            spec = ModelSpec(name="stub", max_tokens=4096)
+
+            def __init__(self):
+                self.n = 0
+
+            def complete(self, messages, max_tokens=None, on_delta=None):
+                seen.append(messages[-1]["content"])
+                self.n += 1
+                if self.n == 1:                       # 这一轮被客户端调到 1000，然后撞上了
+                    return Completion(text='{"thought": "' + "x" * 50, completion_tokens=1000,
+                                      finish_reason="length", max_tokens=1000)
+                if self.n == 2:
+                    return Completion(text=json.dumps({"action": "shell", "cmd": "cat challenge/data.txt"}),
+                                      completion_tokens=20, finish_reason="stop", max_tokens=4096)
+                return Completion(text=json.dumps({"action": "submit", "flag": flag, "script": script}),
+                                  completion_tokens=40, finish_reason="stop", max_tokens=4096)
+
+            def scrape_metrics(self):
+                from flagpilot.client import ServerMetrics
+                return ServerMetrics()
+
+        cfg = RunConfig(model=ModelSpec(name="stub", max_tokens=4096), budget=Budget(max_turns=6, max_wall_s=120),
+                        limits=SandboxLimits(action_timeout_s=10), replay_timeout_s=20.0, tasks_root=tmp)
+        original = agent.build_client
+        agent.build_client = lambda spec: Lowered()
+        try:
+            summary = agent.run_attempt(task, cfg, tmp, seed=0)
+        finally:
+            agent.build_client = original
+        rows = [json.loads(x) for x in (tmp / "low-001-s0" / "trace.jsonl").read_text().splitlines() if x.strip()]
+        models = [r for r in rows if r["type"] == "model"]
+        self.assertEqual(models[0].get("max_tokens"), 1000)                 # 被调过的一轮有记录
+        self.assertTrue(all("max_tokens" not in m for m in models[1:]))     # 正常轮次不多一个字段
+        bad = [r for r in rows if r["type"] == "invalid_action"]
+        self.assertEqual(bad[0]["kind"], "truncated")
+        self.assertIn("max_tokens=1000", bad[0]["reason"])
+        self.assertIn("1000-token limit", seen[1])                          # 纠正语按实际生效的值
+        self.assertEqual(summary["verdict"], "verified")
+
+
 class TestReadonlyHint(unittest.TestCase):
     def res(self, stderr="", exit_code=1):
         return ExecResult(cmd="", ok=exit_code == 0, exit_code=exit_code,
