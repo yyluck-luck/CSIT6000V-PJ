@@ -117,6 +117,35 @@ class TestExperiments(unittest.TestCase):
         self.assertIn("The gap is significant (paired McNemar p = 0.002)", lab.conclude(arms, pairs, 10))
 
 
+class TestCross(unittest.TestCase):
+    """跨实验：同一档位换模型 / 换版本，按 (题, seed) 配对，只算两边都有、都不是基础设施失败的。"""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="fp-lab-cross-"))
+        _write_arm(self.root / "tacc" / "v9" / "tacc-dev-v9-B0", [_row("a", "verified"), _row("b", "verified"), _row("c", "verified"), _row("d", "wrong")])
+        d = self.root / "lab" / "g1"
+        d.mkdir(parents=True)
+        (d / "meta.json").write_text(json.dumps({"label": "Gemini run", "keys": ["gem~B0"]}))
+        quota = dict(_row("c", "error"), reason="model: HTTP 429: quota")
+        _write_arm(d / "gem~B0", [_row("a", "verified"), _row("b", "wrong"), quota, _row("d", "verified"), _row("e", "verified")])
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_pairs_only_what_both_ran(self):
+        r = lab.cross(self.root, "tacc/v9::B0", "local/g1::gem~B0")
+        self.assertEqual(r["n"], 3, "c is a rate limit on one side and e ran on one side only")
+        self.assertEqual((r["a"]["verified"], r["b"]["verified"], r["only_a"], r["only_b"]), (2, 2, 1, 1))
+        self.assertEqual(r["p"], 1.0)
+        self.assertIn("Dev split · v9 · B0", r["a"]["label"])
+        self.assertIn("not significant", r["conclusion"])
+
+    def test_bad_refs(self):
+        for a, b in (("tacc/nope::B0", "local/g1::gem~B0"), ("tacc/v9::B7", "local/g1::gem~B0"), ("", "")):
+            with self.assertRaises(ValueError):
+                lab.cross(self.root, a, b)
+
+
 class TestInfrastructureFailures(unittest.TestCase):
     """限流 / 过载不是模型的成绩：不进成功率、区间和配对检验，单独计数，可以原样重跑。"""
 

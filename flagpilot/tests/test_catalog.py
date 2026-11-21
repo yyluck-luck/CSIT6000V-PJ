@@ -97,6 +97,13 @@ class TestCatalog(unittest.TestCase):
         stored = "".join(p.read_text(errors="replace") for p in root.rglob("*") if p.is_file())
         self.assertNotIn("aes_abc_m0de_1s_br0ken", stored, "the gold flag is stored only as a hash")
 
+    def test_service_challenges_are_flagged(self):
+        self.assertTrue(catalog.is_service([["Dockerfile", 10], ["chall", 100]], ""))
+        self.assertTrue(catalog.is_service([["src/ctf.xinetd", 10]], ""))
+        self.assertTrue(catalog.is_service([["chall", 1]], "Connect with nc chall.example.com 31337"))
+        self.assertFalse(catalog.is_service([["cipher.txt", 10], ["enc.py", 20]], "Decrypt the message."))
+        self.assertFalse(catalog.preview("ctfs/picoCTF/2019/crypto/AES-ABC")["service"])
+
     def test_fake_flags_are_not_gold(self):
         self.assertEqual(catalog.gold_from("flag{this_is_a_fake_flag}"), "")
         self.assertEqual(catalog.gold_from("FLAG{REDACTED}"), "")

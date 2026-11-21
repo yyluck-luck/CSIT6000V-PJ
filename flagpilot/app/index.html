@@ -844,7 +844,10 @@
       <div class="actions"><div class="segc" id="labSeg" style="--n:6"><span class="thumb"></span>
         <button data-lab="results" class="on">Results</button><button data-lab="compare">Compare</button><button data-lab="batch">Batch</button><button data-lab="diff">Diff</button><button data-lab="probe">Probe</button><button data-lab="tacc">TACC batch</button></div></div>
       <p class="hint labwhy" id="labWhy"></p>
-      <div class="labp" data-lab="results"><div class="exps" id="expList"></div><div id="expView"></div></div>
+      <div class="labp" data-lab="results"><div class="exps" id="expList"></div><div id="expView"></div>
+        <div class="form xcmp" id="xcmp" hidden><div class="frow"><span class="fl">Across experiments</span><span class="hint">Two arms from any experiments, paired on the challenges and repeats both ran: a model against a model, or a version against a version.</span></div>
+          <div class="frow"><select id="xA" class="pillsel" aria-label="First arm"></select><span class="fl" style="min-width:0">vs</span><select id="xB" class="pillsel" aria-label="Second arm"></select>
+            <button class="btn primary" id="xGo">Compare<span class="arr">→</span></button></div><div id="xView"></div></div></div>
       <div class="labp" data-lab="compare" hidden>
         <div class="form">
           <div class="frow"><span class="fl">Challenge</span><button class="taskpill" data-taskpill><span class="g ring"></span><span class="tn">Choose a challenge</span></button></div>
@@ -1036,6 +1039,16 @@ const V = {
   budget:     ['Budget exhausted before a valid submission', 'bad', 'BUDGET'],
   error:      ['Run error', 'bad', 'ERROR'],
 };
+/* why a run stopped (the engine's reason codes), in words; the failure tagger's root cause is shown separately as "likely cause" */
+const BUDGET_WHY = {invalid_action: 'Stopped: three replies were not valid JSON actions', max_turns: 'Used every turn without a valid submission',
+  wall_time: 'Ran out of time before a valid submission', context: 'The context filled up before a valid submission',
+  completion_tokens: 'Used the output-token budget before a valid submission', truncated: 'Replies kept hitting the output limit',
+  thinking_overflow: 'Reasoning kept using up the output limit'};
+const STOPPED = {invalid_action: 'stopped after three replies outside the JSON protocol', max_turns: 'all turns used', wall_time: 'time budget used',
+  context: 'context full', completion_tokens: 'output-token budget used', truncated: 'replies cut at the output limit', thinking_overflow: 'reasoning filled the output limit',
+  wrong_flag: 'the flag does not match the answer', hardcoded_no_material: 'the script prints a flag without reading the files', literal_flag: 'the script contains the flag itself',
+  script_error: 'the replay script failed', no_output: 'the replay printed nothing', timeout: 'the replay timed out', empty_flag: 'no flag was submitted',
+  reproduced_no_gold: 'reproduced; there is no answer to check it against'};
 const FAIL = {ok: 'verified', reproduced: 'reproduced, no gold', model_error: 'model call failed', thinking_overflow: 'empty reply (reasoning used the budget)',
   sandbox_timeout: 'tool timeout', tool_missing: 'tool missing in the environment', tool_denied: 'permission denied', network_blocked: 'tried the network',
   protocol: 'broke the JSON protocol', truncated: 'reply truncated at max_tokens', hardcoded: 'script hard-codes the flag', not_reproducible: 'correct but not reproducible',
@@ -1602,8 +1615,9 @@ function readEvidence(t){
 }
 function explainStep(t){
   const a = t.act, L = [];
-  if (t.invalid){ L.push('The model did not answer in the agreed JSON protocol. The harness sent a correction and <b>did not count the turn</b>: a protocol failure, not a solving failure.');
-    if (String(t.invalid).includes('空回复') || /empty/i.test(String(t.invalid))) L.push('Usually the reasoning used up <code>max_tokens</code> and left the reply empty.'); return L; }
+  if (t.invalid){ const n = run ? run.turns.filter(x => x.invalid && x.n <= t.n).length : 0;
+    L.push(`The model did not answer in the agreed JSON protocol, so nothing ran. The harness sent a correction; <b>the turn still counts</b>, and the third such reply ends the run (this is number ${n || '?'}). A protocol failure, not a solving failure.`);
+    if (String(t.invalid).includes('空回复') || /empty/i.test(String(t.invalid))) L.push('An empty reply usually means the reasoning used up <code>max_tokens</code>, or the hosted API returned nothing.'); return L; }
   if (!a) return L;
   if (a.action === 'shell'){ const tools = cmdTools(a.cmd), tgt = cmdTargets(a.cmd), docs = [...new Set(tools.map(x => TOOL_DOC[x]).filter(Boolean))];
     let s = 'Runs <code>' + esc((a.cmd || '').slice(0, 140)) + '</code>'; if (tgt.length) s += ' on <b>' + esc(tgt.slice(0, 3).join(', ')) + '</b>';
@@ -1914,6 +1928,7 @@ function showDone(ev){
   stopClock();
   let [label, tone, code] = V[ev.verdict] || [String(ev.verdict || ''), 'warn', String(ev.verdict || '?').toUpperCase()];
   if (ev.verdict === 'error' && ev.reason) label = en(ev.reason);
+  if (ev.verdict === 'budget' && BUDGET_WHY[ev.reason]) label = BUDGET_WHY[ev.reason];
   const flag = (run && run.submit && run.submit.flag) || ev.flag || '', who = sel || ev.task || ev.run_id || ev.web_run_id || '';
   setStatus(code.charAt(0) + code.slice(1).toLowerCase(), tone === 'ok' ? '' : (tone === 'warn' ? 'warn' : 'bad'), `${who} · ${ev.turns} turns`,
             R.bulk ? null : {big: code, flag: flag || label});
@@ -1922,7 +1937,8 @@ function showDone(ev){
   const f = ev.failure || {}, why = f.primary && f.primary !== 'ok' ? ` · ${FAIL[f.primary] || f.primary}` : '';
   /* turns and time already sit in the readouts on the right; the bar keeps only the tier and a reason that adds something */
   const said = [esc(ev.ablation || ablation)], rsn = ev.reason && ev.reason !== 'match' && ev.verdict !== 'error' ? ev.reason : '';
-  if (rsn || why) said.push(esc(rsn) + (rsn ? esc(why) : esc(why.replace(/^ · /, ''))));
+  if (rsn) said.push(esc(STOPPED[rsn] || rsn.replace(/_/g, ' ')));
+  if (why) said.push('likely cause: ' + esc(why.replace(/^ · /, '')));
   const bare = ev.verdict === 'error' && !(ev.turns > 0);          // nothing ran: the label already says why
   if (!(run && run.turns && run.turns.length)) $('#traceEmpty').innerHTML = '';
   $('#verdict').innerHTML = verdictHTML(code, label, tone, flag ? '<div class="vflag" id="vflag"></div>' : '')
@@ -2276,6 +2292,7 @@ async function labLoad(){
   $('#expList').innerHTML = LAB.exps.map(e => `<button class="exp${e.id === LAB.cur ? ' on' : ''}" data-id="${esc(e.id)}"><b>${esc(e.name)}</b><span>${esc(expMeta(e))}</span></button>`).join('');
   if (!LAB.exps.length){ $('#expView').innerHTML = '<p class="hint" style="margin-top:18px">No experiments yet. Start one from Compare or Batch, or run a TACC batch.</p>'; return; }
   if (!LAB.exps.some(e => e.id === LAB.cur)){ LAB.cur = LAB.exps[0].id; qs('#expList .exp')[0].classList.add('on'); }
+  xFill();
   const v = LABV.get($('#expView')); if (!v || v.id !== LAB.cur) openExp(LAB.cur, $('#expView'));
 }
 function openExp(id, host, btn){
@@ -2362,6 +2379,26 @@ $('#pLab').addEventListener('click', e => {
   const x = e.target.closest('[data-svg]'); if (x){ exportSVG(x.closest('.expv').querySelector('svg.forest')); return; }
   const ex = e.target.closest('.exp[data-id]'); if (ex){ LAB.cur = ex.dataset.id; qs('#expList .exp').forEach(b => b.classList.toggle('on', b === ex)); openExp(ex.dataset.id, $('#expView')); }
 });
+/* across experiments: two arms paired on (challenge, repeat); defaults to the same tier in two different experiments */
+function xFill(){
+  const opts = LAB.exps.flatMap(e => (e.arms || []).filter(a => a.n > 0).map(a => [`${e.id}::${a.key}`, `${e.name} · ${a.label} (${a.verified}/${a.n})`, e.id, a.tier]));
+  $('#xcmp').hidden = opts.length < 2; if (opts.length < 2) return;
+  const keep = [$('#xA').value, $('#xB').value], html = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
+  $('#xA').innerHTML = html; $('#xB').innerHTML = html;
+  const first = opts[0], other = opts.find(o => o[2] !== first[2] && o[3] === first[3]) || opts.find(o => o[2] !== first[2]) || opts[1];
+  $('#xA').value = opts.some(o => o[0] === keep[0]) ? keep[0] : first[0]; $('#xB').value = opts.some(o => o[0] === keep[1]) ? keep[1] : other[0];
+}
+$('#xGo').onclick = async () => {
+  const host = $('#xView'); host.innerHTML = '<div class="skel" style="height:120px;margin-top:14px"></div>';
+  let d; try { const r = await fetch(`/api/lab/cross?a=${encodeURIComponent($('#xA').value)}&b=${encodeURIComponent($('#xB').value)}`); d = await r.json(); if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status); }
+  catch(e){ host.innerHTML = `<p class="hint bad" style="margin-top:14px">${esc(e.message)}</p>`; return; }
+  const only = (k) => d.tasks.filter(t => k === 'a' ? t.a && !t.b : t.b && !t.a).map(t => `${t.task}${t.seed ? ' · repeat ' + (t.seed + 1) : ''}`);
+  const oa = only('a'), ob = only('b');
+  host.innerHTML = `<p class="concl" style="margin:16px 0 12px">${esc(d.conclusion)}</p>` + (d.n ? `<div class="forestbox">${forestSVG([d.a, d.b])}</div>` : '')
+    + (oa.length || ob.length ? `<table class="labt"><tr><th>Only the first verified</th><th>Only the second verified</th></tr><tr><td>${esc(oa.join(', ') || '—')}</td><td>${esc(ob.join(', ') || '—')}</td></tr></table>` : '');
+  if (!reduced()) host.querySelectorAll('.forest .ci').forEach((l, i) => { const n = l.getTotalLength(); l.animate([{strokeDasharray: `0 ${n}`}, {strokeDasharray: `${n} 0`}], {duration: 600, delay: 80 * i, easing: EASE}); });
+};
+
 /* diff: align two runs by step; the first step where they did something different is marked */
 async function diffFill(){
   let runs = []; try { runs = (await getJSON('/api/runs')).runs || []; } catch(_){}
@@ -2676,7 +2713,8 @@ async function impPreview(path){
     + (d.readme ? `<div class="md">${mdLite(en(d.readme))}</div>` : '<p class="hint">No description in the archive.</p>')
     + `<h4>Attachments</h4>${li(d.files.map(f => `<li>${esc(f.name)} · ${kb(f.size)}</li>`))}`
     + (d.skipped.length ? `<h4>Left out</h4>${li(d.skipped.map(x => `<li>${esc(x.name)}: ${esc(x.why)}</li>`))}` : '')
-    + `<p class="hint">${d.gold ? 'The archive holds the real flag, so a solve can be verified against it.' : 'No gold flag: a solve can be reproduced in a clean sandbox but not checked against an answer.'}</p>`
+    + (d.service ? '<p class="hint warn">This challenge ran as a network service in its CTF (it ships a Dockerfile or names a host and port). The sandbox here is offline, so the agent can study the files but cannot reach the service: expect no flag.</p>' : '')
+    + `<p class="hint">${d.gold ? 'The archive holds the real flag, so a solve can be verified against it.' : 'No gold flag: a solve can be reproduced in a clean sandbox but not checked against an answer, so it cannot be confirmed correct.'}</p>`
     + `<div class="actions"><button class="btn primary" data-import="${esc(path)}">${ORBIT}Import<span class="arr">→</span></button></div></div>`;
   host.scrollIntoView({block: 'nearest', behavior: reduced() ? 'auto' : 'smooth'});
 }
@@ -2685,7 +2723,7 @@ async function impImport(body, btn, host){
   try {
     const d = await impJSON('/api/catalog/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     const all = await loadTasks(), nw = (all.custom_tasks || []).find(x => x.name === d.task.name);
-    host.innerHTML = `<div class="impcard"><h3>Imported</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known' : 'no gold flag'}`
+    host.innerHTML = `<div class="impcard"><h3>Imported</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known: a solve can be verified' : 'no gold flag: a solve cannot be confirmed correct'}${d.service ? ' · network service: likely unsolvable offline' : ''}`
       + `${d.skipped && d.skipped.length ? ' · left out ' + plural(d.skipped.length, 'file') : ''}</p><div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
     $('#impSolve').onclick = () => { if (nw) pick(nw); go('solve'); };
     $('#impAsk').onclick = () => { if (nw) pick(nw); go('chat'); };

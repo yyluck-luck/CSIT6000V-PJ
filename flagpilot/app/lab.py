@@ -277,6 +277,45 @@ def _conclude(arms: list[dict], pairs: list[dict], n_tasks: int) -> str:
     return s
 
 
+def cross(runs_root: Path, a: str, b: str) -> dict:
+    """两个实验里各挑一组（"实验 id::组名"），按 (题, seed) 配对比较；只算两边都跑过、都不是基础设施失败的那些。
+
+    用途：同一档位换了模型（Qwen vs Gemini），或同一模型换了版本（v5 vs v6）。两组来自不同实验时
+    环境可能不同（集群 vs 笔记本、代码版本），结论里只说数字，判断交给读的人。
+    """
+    def side(ref: str):
+        eid, _, key = (ref or "").partition("::")
+        exp = experiment(runs_root, eid)
+        if exp is None:
+            raise ValueError(f"Unknown experiment {eid!r}")
+        arm = next((x for x in exp["arms"] if x["key"] == key), None)
+        if arm is None:
+            raise ValueError(f"No arm {key!r} in {exp['name']}")
+        got = {(t["task"], c["seed"]): c["verdict"] == "verified"
+               for t in exp.get("tasks", []) for c in t["cells"].get(key, []) if not c.get("infra")}
+        return {"exp": exp["id"], "label": f"{exp['name']} · {arm['label']}", "key": key}, got
+    A, ya = side(a)
+    B, yb = side(b)
+    both = sorted(ya.keys() & yb.keys())
+    n = len(both)
+    ka, kb = sum(ya[x] for x in both), sum(yb[x] for x in both)
+    oa = sum(ya[x] and not yb[x] for x in both)
+    ob = sum(yb[x] and not ya[x] for x in both)
+    p = round(mcnemar(oa, ob), 4)
+    for side_, k in ((A, ka), (B, kb)):
+        lo, hi = wilson(k, n)
+        side_.update(n=n, verified=k, rate=round(k / n, 4) if n else 0.0, ci=[round(lo, 4), round(hi, 4)])
+    if not n:
+        concl = "The two arms share no attempt (same challenge and repeat), so they cannot be compared."
+    else:
+        concl = (f"On the {n} attempt{'s' if n != 1 else ''} both ran, {A['label']} verified {ka} ({_pct(ka / n)}) and "
+                 f"{B['label']} {kb} ({_pct(kb / n)}); {oa} only by the first, {ob} only by the second. "
+                 + (f"The gap is significant (paired McNemar p = {p:.3f})." if p < 0.05 else
+                    f"The gap is not significant (paired McNemar p = {p:.2f})."))
+    return {"a": A, "b": B, "n": n, "only_a": oa, "only_b": ob, "p": p, "conclusion": concl,
+            "tasks": [{"task": t, "seed": s, "a": ya[(t, s)], "b": yb[(t, s)]} for t, s in both]}
+
+
 def csv_rows(exp: dict) -> str:
     """导出：一行一次 attempt。"""
     import csv

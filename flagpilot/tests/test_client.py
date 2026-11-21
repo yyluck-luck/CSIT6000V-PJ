@@ -410,3 +410,74 @@ class TestQuota(unittest.TestCase):
         comp = self.client.complete([{"role": "user", "content": "hi"}])
         self.assertIn("daily free quota", comp.error)
         self.assertEqual((len(REQUESTS), self.waits), (1, []))
+
+
+GLITCH = {"left": 0, "mode": "malformed"}
+
+
+class GlitchStub(Stub):
+    """Gemini 兼容端点的两种接口毛病：MALFORMED_FUNCTION_CALL（无正文）和一两个字符的乱码；之后正常。"""
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        REQUESTS.append(json.loads(self.rfile.read(n) or b"{}"))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if GLITCH["left"] > 0:
+            GLITCH["left"] -= 1
+            chunk = ({"choices": [{"delta": {}, "finish_reason": "function_call_filter: MALFORMED_FUNCTION_CALL"}]} if GLITCH["mode"] == "malformed"
+                     else {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]} if GLITCH["mode"] == "ok"
+                     else {"choices": [{"delta": {"content": "岨"}, "finish_reason": "stop"}]})
+        else:
+            chunk = {"choices": [{"delta": {"content": '{"action":"shell","cmd":"ls"}'}, "finish_reason": "stop"}]}
+        self.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
+        self.wfile.write(b"data: [DONE]\n\n")
+        self.wfile.flush()
+        self.close_connection = True
+
+
+class TestGeminiGlitches(unittest.TestCase):
+    """2026-11-20：两次网页运行各有 3 次"协议失败"，其实全是接口返回的畸形函数调用 / 乱码，第三次就把运行结束了。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), GlitchStub)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        REQUESTS.clear()
+        p = mock.patch("flagpilot.client.time.sleep")
+        p.start()
+        self.addCleanup(p.stop)
+        self.client = ChatClient(ModelSpec(name="gemini-flash-lite-latest", provider="gemini",
+                                           base_url=f"http://127.0.0.1:{self.port}/v1", enable_thinking=False))
+
+    def test_malformed_function_call_is_retried(self):
+        GLITCH.update(left=2, mode="malformed")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual((comp.text, comp.error, len(REQUESTS), comp.retries), ('{"action":"shell","cmd":"ls"}', "", 3, 2))
+        self.assertIn("MALFORMED_FUNCTION_CALL", comp.note)
+
+    def test_one_garbage_character_is_retried(self):
+        GLITCH.update(left=1, mode="garbage")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual((comp.text, len(REQUESTS)), ('{"action":"shell","cmd":"ls"}', 2))
+
+    def test_a_short_real_answer_is_not_retried(self):
+        GLITCH.update(left=1, mode="ok")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual((comp.text, len(REQUESTS), comp.retries), ("OK", 1, 0))
+
+    def test_gives_up_after_the_retries(self):
+        GLITCH.update(left=9, mode="malformed")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(comp.text, "")
+        self.assertEqual(len(REQUESTS), 3)

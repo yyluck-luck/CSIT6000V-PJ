@@ -194,6 +194,11 @@ try {
   await js("(document.querySelector('#batView [data-diff]') || {click(){}}).click()");
   const diffed = await until("document.querySelector('#labSeg button.on').dataset.lab === 'diff' && document.querySelector('#diffView .diff .dc') && / ended /.test(document.querySelector('#diffView .concl').textContent)", 10000);
   check("diff: two attempts side by side, with where they diverged and how each ended", diffed);
+  await js("document.querySelector('#labSeg button[data-lab=\"results\"]').click()");
+  const xReady = await until("!document.querySelector('#xcmp').hidden && document.querySelectorAll('#xA option').length >= 2 && document.querySelector('#xA').value !== document.querySelector('#xB').value", 5000);
+  if (xReady) await js("document.querySelector('#xGo').click()");
+  const xDone = xReady && await until("/On the \\d+ attempts? both ran/.test((document.querySelector('#xView .concl') || {}).textContent || '') && document.querySelector('#xView .forest')", 5000);
+  check("lab: two arms from different experiments compare on what both ran", xReady && xDone, JSON.stringify({xReady, xDone}));
   await js("document.querySelector('#labSeg button[data-lab=\"probe\"]').click()");
   await js("document.querySelector('#probeBtn').click()");
   check("probe: the bare model's answer sits next to the agent's", await until("document.querySelector('#probeSlider .cmp')", 20000));

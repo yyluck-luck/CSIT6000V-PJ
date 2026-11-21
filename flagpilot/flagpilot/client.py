@@ -290,12 +290,23 @@ class ChatClient:
         # 托管 API 过载时会回 200 却在出字之前结束流（Gemini 免费层 2026-11-20 实测：只来一个没有正文的块），
         # 或在流里给一个 error。和 429 / 503 一样算"忙"：退避后重试，不把一轮记成"空回复 → 无效动作"。
         empty = not chunks and not thinks and not finish
-        if (empty or int(stream_err.get("code") or 0) in BUSY_CODES) and self.spec.provider in ("gemini", "openai-compatible", "deepseek") \
+        # Gemini 的 OpenAI 兼容端点两种"接口自己的毛病"（2026-11-20 实测，一次运行里 3 次全是这个）：
+        #   * finish_reason = "function_call_filter: MALFORMED_FUNCTION_CALL"：没声明任何工具，它自己想做函数调用又做坏了，
+        #     正文为空或半句；
+        #   * 正常结束却只吐出一两个字符的乱码（例如单个汉字）。
+        # 两种都不是模型在答题，记成"协议失败"会白白吃掉第三次机会、提前结束运行；重试即可。
+        text_now = "".join(chunks).strip()
+        # 乱码只认"一两个字符、且没有任何 ASCII 字母 / 数字 / {"：答疑里 "OK"、"42" 这种短回答是正常的，不能重试
+        glitch = ("MALFORMED_FUNCTION_CALL" in str(finish or "")
+                  or (self.spec.provider == "gemini" and not thinks and 0 < len(text_now) <= 2
+                      and not re.search(r"[A-Za-z0-9{]", text_now)))
+        if (empty or glitch or int(stream_err.get("code") or 0) in BUSY_CODES) and self.spec.provider in ("gemini", "openai-compatible", "deepseek") \
                 and _busy_retries < BUSY_RETRIES:
-            time.sleep(busy_wait_s(json.dumps(stream_err), None, _busy_retries))
+            time.sleep(busy_wait_s(json.dumps(stream_err), None, _busy_retries) if not glitch else 0.5)
             retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
                                   _busy_retries=_busy_retries + 1)
-            retry.note = (retry.note + " " if retry.note else "") + "流提前结束（无正文），重试后成功"
+            retry.note = (retry.note + " " if retry.note else "") + (
+                f"接口返回 {str(finish)[:60] or '乱码'}，重试后成功" if glitch else "流提前结束（无正文），重试后成功")
             retry.retries += 1
             return retry
         if stream_err and not chunks:

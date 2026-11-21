@@ -448,6 +448,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/lab/experiment":
             exp = lab.experiment(config.RUNS_ROOT, self._qparam("id"))
             return self._json(200, exp) if exp else self._json(404, {"error": "unknown experiment"})
+        if path == "/api/lab/cross":
+            try:
+                return self._json(200, lab.cross(config.RUNS_ROOT, self._qparam("a"), self._qparam("b")))
+            except ValueError as e:
+                return self._json(400, {"error": str(e)})
         if path == "/api/lab/export":
             exp = lab.experiment(config.RUNS_ROOT, self._qparam("id"))
             if not exp:
