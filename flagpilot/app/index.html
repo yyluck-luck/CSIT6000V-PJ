@@ -482,6 +482,11 @@
   .impcard{margin-top:18px;border-top:1.5px solid var(--ink);padding-top:16px} .impcard h3{margin:0;font:800 22px var(--font);letter-spacing:-.01em}
   .impcard .md{max-height:260px;overflow:auto;margin:12px 0;font-size:15px;padding:12px 14px;background:var(--paper);border-left:4px solid var(--ink)}
   .impcard h4{margin:12px 0 4px;font:700 15px var(--font);color:var(--ink2)} .impcard ul{margin:0 0 6px;padding-left:20px;font:15px/1.6 var(--mono)}
+  /* a challenge's title links to its own page (picoGym, the archive, or the pasted link) */
+  .srclink{color:inherit;text-decoration:none} .srclink[href]{cursor:pointer} .srclink[href]:hover #sgTitle{text-decoration:underline;text-decoration-thickness:4px;text-underline-offset:8px}
+  .srclink .ext{display:inline-block;margin-left:.18em;font-size:.45em;vertical-align:.95em;transition:transform var(--t2) var(--ease)} .srclink:not([href]) .ext{display:none}
+  .srclink[href]:hover .ext{transform:translate(3px,-3px)}
+  .row .src{margin-left:8px;font:700 15px var(--mono);color:var(--blue);text-decoration:none;padding:2px 6px} .row .src:hover{background:var(--blue-t)}
   /* watching a run: step mode, pause, hints; a waiting command can be edited, run or skipped */
   .runctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin:16px 0 0;padding:12px 14px;border:1.5px dashed var(--ink);background:var(--white)}
   .runctl .hintbox{display:flex;flex:1 1 320px;min-width:240px;border:1.5px solid var(--rule);transition:border-color var(--t1)} .runctl .hintbox:focus-within{border-color:var(--ink)}
@@ -778,7 +783,7 @@
     </div>
     <div class="grid" id="work" hidden>
       <div class="c8" id="solveMain">
-        <h1 class="ltitle" id="sgTitle">Choose a challenge</h1>
+        <h1 class="ltitle"><a class="srclink" id="sgLink" target="_blank" rel="noopener noreferrer"><span id="sgTitle">Choose a challenge</span><span class="ext" aria-hidden="true">↗</span></a></h1>
         <div class="meta" id="sgMeta"><span class="g ring" id="sgG"></span><span id="sgId"></span></div>
         <div class="actions">
           <button class="btn primary" id="run" disabled hidden><svg class="orbit" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="0" width="100%" height="100%" pathLength="100"/></svg><svg class="chk" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Run<span class="arr">↵</span></button>
@@ -1489,11 +1494,15 @@ function catOf(c){
   return ['other', 'd ink'];
 }
 const taskByName = n => TASKS.find(x => x.name === n) || MINE.find(x => x.name === n) || null;
+/* what to call a challenge on screen: an uploaded / imported one by its title, a built-in one by its id */
+function taskLabel(nameOrTask){ const t = typeof nameOrTask === 'string' ? taskByName(nameOrTask) : nameOrTask;
+  if (!t) return String(nameOrTask || ''); return t.custom && t.title ? t.title : t.name; }
+const srcLink = t => t && t.source ? `<a class="src" href="${esc(t.source)}" target="_blank" rel="noopener noreferrer" data-tip="Open the challenge's page" aria-label="Open the challenge's page">↗</a>` : '';
 function taskRow(t, mine){
   const [cat, g] = catOf(t.category), q = (t.name + ' ' + (t.title || '') + ' ' + (t.category || '')).toLowerCase();
   return `<div class="row${sel === t.name ? ' sel' : ''}" data-name="${esc(t.name)}" data-cat="${mine ? 'mine' : cat}" data-q="${esc(q)}">`
-    + `<span class="g ${mine ? 'd ink' : g}"></span><div style="min-width:0"><div class="nm">${esc(en(t.name))}</div><div class="ds">${esc(en(t.title) || 'untitled')}</div></div>`
-    + `<span class="rt">${t.has_gold ? '' : '<span class="badge warn">no gold</span>'}${mine ? '<button class="del" aria-label="Delete">×</button>' : ''}</span></div>`;
+    + `<span class="g ${mine ? 'd ink' : g}"></span><div style="min-width:0"><div class="nm">${esc(en(mine ? taskLabel(t) : t.name))}</div><div class="ds">${esc(en(mine ? t.name : t.title) || 'untitled')}</div></div>`
+    + `<span class="rt">${t.has_gold ? '' : '<span class="badge warn">no gold</span>'}${srcLink(t)}${mine ? '<button class="del" aria-label="Delete">×</button>' : ''}</span></div>`;
 }
 function renderTaskList(){
   $('#tasks').innerHTML = TASKS.map(t => taskRow(t)).join('') + (MINE.length ? '<div class="grouphd" data-cat="mine">Uploaded</div>' + MINE.map(t => taskRow(t, true)).join('') : '');
@@ -1510,6 +1519,7 @@ function applyFilter(){
 $('#taskSearch').addEventListener('input', applyFilter);
 $('#catFilter').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; catSel = b.dataset.cat; setSeg($('#catFilter'), [...$('#catFilter').querySelectorAll('button')].indexOf(b)); applyFilter(); });
 $('#tasks').addEventListener('click', async e => {
+  if (e.target.closest('a.src')) return;            // the ↗ link opens the challenge's page; it does not pick
   const row = e.target.closest('.row'); if (!row) return; const t = taskByName(row.dataset.name); if (!t) return;
   if (e.target.closest('.del')){
     if (!confirm('Delete ' + t.name + ' and its attachments?')) return;
@@ -1548,8 +1558,9 @@ function pick(t){
   qs('#tasks .row.sel').forEach(x => x.classList.remove('sel'));
   if (sel) qs('#tasks .row').forEach(x => { if (x.dataset.name === sel) x.classList.add('sel'); });
   const g = t ? catOf(t.category)[1] : 'ring';
-  qs('.taskpill').forEach(p => { p.querySelector('.g').className = 'g ' + g; p.querySelector('.tn').textContent = t ? t.name : 'Choose a challenge'; });
-  $('#mountChip .g').className = 'g ' + g; $('#mountChip .tn').textContent = t ? t.name : 'Attach a challenge';
+  qs('.taskpill').forEach(p => { p.querySelector('.g').className = 'g ' + g; p.querySelector('.tn').textContent = t ? taskLabel(t) : 'Choose a challenge'; });
+  $('#mountChip .g').className = 'g ' + g; $('#mountChip .tn').textContent = t ? taskLabel(t) : 'Attach a challenge';
+  const lk = $('#sgLink'); if (t && t.source){ lk.href = t.source; lk.dataset.tip = 'Open the challenge\'s page'; } else { lk.removeAttribute('href'); delete lk.dataset.tip; }
   $('#sgG').className = 'g ' + g;
   $('#sgId').textContent = t ? `${t.name} · ${t.category || ''} · ${t.has_gold ? 'gold flag known' : 'no gold flag'}` : '';
   decrypt($('#sgTitle'), t ? (t.title || t.name) : 'Choose a challenge');
@@ -1615,6 +1626,7 @@ function readEvidence(t){
 }
 function explainStep(t){
   const a = t.act, L = [];
+  if (t.callError && !a){ L.push('The model API returned an error, so nothing ran and the run stopped here.' + (/429|quota/i.test(t.callError) ? ' The free quota for this model is used up: pick another model and run again.' : /503|overload|high demand/i.test(t.callError) ? ' The provider was overloaded; trying again later, or another model, usually works.' : '')); return L; }
   if (t.invalid){ const n = run ? run.turns.filter(x => x.invalid && x.n <= t.n).length : 0;
     L.push(`The model did not answer in the agreed JSON protocol, so nothing ran. The harness sent a correction; <b>the turn still counts</b>, and the third such reply ends the run (this is number ${n || '?'}). A protocol failure, not a solving failure.`);
     if (String(t.invalid).includes('空回复') || /empty/i.test(String(t.invalid))) L.push('An empty reply usually means the reasoning used up <code>max_tokens</code>, or the hosted API returned nothing.'); return L; }
@@ -1633,7 +1645,7 @@ function explainStep(t){
   if (t.repeat) L.push('The same action repeated; the harness inserted a REPEAT WARNING asking for a new approach.');
   return L;
 }
-function stepStatus(t){ if (t.invalid) return ['s-bad', '✗', 'failed']; if (t.skipped) return ['s-warn', '↷', 'skipped by you']; if (t.tool) return t.tool.exit_code === 0 ? ['s-ok', '✓', 'ok'] : ['s-warn', '!', 'non-zero exit']; return ['', '·', '']; }
+function stepStatus(t){ if (t.callError && !t.act) return ['s-bad', '✗', 'model call failed']; if (t.invalid) return ['s-bad', '✗', 'failed']; if (t.skipped) return ['s-warn', '↷', 'skipped by you']; if (t.tool) return t.tool.exit_code === 0 ? ['s-ok', '✓', 'ok'] : ['s-warn', '!', 'non-zero exit']; return ['', '·', '']; }
 function actBlock(a){
   if (!a) return '';
   if (a.action === 'shell') return termBlock(a.cmd || '', null, {title: 'sandbox — bash'});
@@ -1645,7 +1657,7 @@ function actBlock(a){
 }
 /* chipWhat: the short "what" of a step — tool and target only */
 function chipWhat(t){
-  const a = t.act; if (!a) return t.invalid ? 'protocol failure' : '—';
+  const a = t.act; if (!a) return t.invalid ? 'protocol failure' : t.callError ? 'model call failed' : '—';
   if (a.action === 'shell'){ const tools = cmdTools(a.cmd), tgt = cmdTargets(a.cmd); return (tools.slice(0, 2).join(' + ') || 'shell') + (tgt.length ? ' · ' + tgt[0] : ''); }
   if (a.action === 'decode') return (a.scheme || '?') + ' · ' + (a.text || '').slice(0, 16);
   if (a.action === 'python'){ const code = a.code || '', libs = pyLibs(code);
@@ -1689,7 +1701,7 @@ function flush(){
   counters(); renderFig(); liveMetrics(); renderScrub();
 }
 function summaryHTML(t){
-  return `<span class="no">${pad2(t.n)}</span><span class="act"><span class="g ${ACT[t.act && t.act.action] || 'ring'}"></span>${esc(t.act ? t.act.action : (t.invalid ? 'error' : '?'))}</span>
+  return `<span class="no">${pad2(t.n)}</span><span class="act"><span class="g ${ACT[t.act && t.act.action] || (t.callError ? 'red' : 'ring')}"></span>${esc(t.act ? t.act.action : (t.invalid || t.callError ? 'error' : '?'))}</span>
     <span class="ttl">${esc(chipWhat(t))}${t.hint ? ' · after your hint' : ''}${t.decision === 'edit' ? ' · edited by you' : t.skipped ? ' · skipped by you' : ''}</span><span class="tm">${t.tool ? (t.tool.ms / 1000).toFixed(2) + ' s' : ''}</span><span class="mk"></span><span class="chev">›</span>`;
 }
 function bodyHTML(t){
@@ -1702,6 +1714,7 @@ function bodyHTML(t){
     body.push(sect('Tool output', termBlock(null, en(t.tool.obs) || '(no output)', {title: 'observation', exit: t.tool.exit_code, ms: t.tool.ms, note}), true, "Tool output — the sandbox's real output, which is also what the model sees")); }
   if (t.tool && t.tool.stderr) body.push(sect('stderr', termBlock(null, en(t.tool.stderr), {title: 'stderr'}), false));
   if (t.invalid) body.push(sect('Protocol error', codeBlock(en(t.invalid), 'text', 'harness'), true));
+  if (t.callError && !t.act) body.push(sect('Model call failed', codeBlock(en(t.callError).slice(0, 1200), 'text', 'model API'), true));
   if (t.raw) body.push(sect('Raw reply', codeBlock(t.raw.slice(0, 1500), 'json', 'raw'), false));
   if (t.act && t.act.action !== 'submit') body.push(`<div class="explain"><button type="button" class="dbtn" data-explain="${esc(t.key)}">Explain this step in Ask →</button></div>`);
   return body.join('');
@@ -1889,7 +1902,7 @@ function onEvent(ev){
     case 'model': { dropLive();
       const o = parseModel(ev.text), key = 't' + ev.turn;
       const t = {key, n: ev.turn, ptok: ev.prompt_tokens, ctok: ev.completion_tokens, ttft: ev.ttft_ms, ms: ev.latency_ms, raw: ev.text || '',
-                 act: (o && o.action) ? o : null, thought: (o && o.thought) ? o.thought : '', tool: null, invalid: null, repeat: 0, hint: (run.hints || {})[ev.turn] || ''};
+                 act: (o && o.action) ? o : null, thought: (o && o.thought) ? o.thought : '', tool: null, invalid: null, repeat: 0, hint: (run.hints || {})[ev.turn] || '', callError: ev.error || ''};
       run.turns.push(t); run.byKey.set(key, t); run.ctok += ev.completion_tokens || 0; run.ptok += ev.prompt_tokens || 0; run.modelMs += ev.latency_ms || 0;
       if (ev.ttft_ms > 0) run.ttfts.push(ev.ttft_ms);
       if (!R.bulk) openSteps.add(key); touch(key); break; }
@@ -1943,6 +1956,7 @@ function showDone(ev){
   if (!(run && run.turns && run.turns.length)) $('#traceEmpty').innerHTML = '';
   $('#verdict').innerHTML = verdictHTML(code, label, tone, flag ? '<div class="vflag" id="vflag"></div>' : '')
     + (bare ? '' : `<div class="vbar"><span>${said.join(' · ')}</span><span class="gap"></span>
+       ${ev.verdict === 'error' && /^model:/.test(ev.reason || '') ? '<button class="btn" id="changeModel" type="button">Change model<span class="arr">→</span></button>' : ''}
        <button class="pixbtn" id="promptBtn" type="button"><canvas></canvas><span class="pl">Copy explainer prompt</span></button>
        ${ev.web_run_id ? `<a id="writeupDownload" class="btn sm" href="/api/writeup?id=${encodeURIComponent(ev.web_run_id)}" download>Writeup<span class="arr">↓</span></a>` : ''}</div>`);
   const vd = $('#verdict .verdict');
@@ -1950,6 +1964,7 @@ function showDone(ev){
   flipText(vd.querySelector('.vcode'), code);
   if (flag) decrypt($('#vflag'), flag, 520);
   if ($('#promptBtn')) PixelButton($('#promptBtn'));
+  if ($('#changeModel')) $('#changeModel').onclick = () => { toggleInsp(true); setTimeout(() => { const m = $('#modelSel'); if (m){ m.focus(); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } }, 260); };
   const rb = $('#run'); if (tone === 'ok' && !reduced()){ rb.classList.add('done'); setTimeout(() => rb.classList.remove('done'), 1400); }
   if (!R.bulk && page === 'solve' && !reduced()) requestAnimationFrame(() => $('#verdict').scrollIntoView({behavior: 'smooth', block: 'nearest'}));
   $('#mState').textContent = 'final'; $('#mState').className = 'badge ' + (tone === 'ok' ? 'ok' : tone);
@@ -2165,7 +2180,7 @@ function renderHistory(animate){
     const tone = verdictTone(h.verdict), shape = tone === 'ok' ? 'c blue' : tone === 'bad' ? 'red' : tone === 'warn' ? 't yellow' : tone === 'run' ? 'spin' : 'ring';
     const q = `${h.task} ${h.model || ''} ${h.ablation || ''} ${h.verdict}`.toLowerCase(), t = h.e2e_s != null ? h.e2e_s : h.wall_s;
     html += `<div class="row" data-id="${esc(h.id)}" data-tone="${tone}" data-q="${esc(q)}" title="${esc((h.model || '') + ' · ' + (h.ablation || ''))}"><span class="g ${shape}"></span>`
-      + `<div style="min-width:0"><div class="nm">${esc(en(h.task))}</div><div class="ds">${esc(h.model || '—')} · ${esc(h.ablation || '—')}${h.source === 'replay' ? ' · mounted' : ''}</div></div>`
+      + `<div style="min-width:0"><div class="nm">${esc(en(taskLabel(h.task)))}</div><div class="ds">${esc(h.model || '—')} · ${esc(h.ablation || '—')}${h.source === 'replay' ? ' · mounted' : ''}</div></div>`
       + `<span><span class="badge ${tone === 'idle' ? '' : tone}">${esc(h.verdict)}</span></span>`
       + `<span class="tcell col-t"><span>${h.turns != null ? h.turns + ' turns' : '—'}${t != null ? ' · ' + (+t).toFixed(1) + ' s' : ''}</span><span class="bar ${tone}"><i style="--w:${t != null ? Math.max(.02, (+t) / maxT).toFixed(3) : 0}"></i></span></span>`
       + `<span class="ago col-a">${ago(h.ts)}</span><span class="chev-r">›</span></div>`;
@@ -2192,7 +2207,7 @@ function renderLatest(){
   speed($('#latestRate'), n ? ok / n * 100 : null, v => v.toFixed(1) + '%');
   $('#latestCi').textContent = n ? `${ok} of ${n} real-model runs verified · 95% CI ${(ci[0] * 100).toFixed(1)}–${(ci[1] * 100).toFixed(1)}%` : 'No real-model runs yet.';
   $('#latestList').innerHTML = H.slice(0, 6).map(h => { const tone = verdictTone(h.verdict), shape = tone === 'ok' ? 'c blue' : tone === 'bad' ? 'red' : tone === 'warn' ? 't yellow' : tone === 'run' ? 'spin' : 'ring';
-    return `<div class="row" data-id="${esc(h.id)}"><span class="g ${shape}"></span><div style="min-width:0"><div class="nm">${esc(en(h.task))}</div><div class="ds">${esc(h.model || '—')} · ${esc(h.ablation || '—')} · ${ago(h.ts)}</div></div><span class="badge ${tone === 'idle' ? '' : tone}">${esc(h.verdict)}</span></div>`; }).join('');
+    return `<div class="row" data-id="${esc(h.id)}"><span class="g ${shape}"></span><div style="min-width:0"><div class="nm">${esc(en(taskLabel(h.task)))}</div><div class="ds">${esc(h.model || '—')} · ${esc(h.ablation || '—')} · ${ago(h.ts)}</div></div><span class="badge ${tone === 'idle' ? '' : tone}">${esc(h.verdict)}</span></div>`; }).join('');
 }
 
 function filterHistory(){
@@ -2709,7 +2724,7 @@ async function impPreview(path){
   const host = $('#impPrev'); host.innerHTML = '<div class="impcard"><div class="skel" style="height:26px;width:40%"></div><div class="skel" style="height:120px;margin-top:14px"></div></div>';
   let d; try { d = await impJSON('/api/catalog/preview?path=' + encodeURIComponent(path)); } catch(e){ impFail(host, e); return; }
   const parts = path.split('/'), li = xs => xs.length ? `<ul>${xs.join('')}</ul>` : '<p class="hint">None.</p>';
-  host.innerHTML = `<div class="impcard"><h3>${esc(parts[parts.length - 1])}</h3><p class="hint">${esc(parts.slice(1, -1).join(' · '))}</p>`
+  host.innerHTML = `<div class="impcard"><h3><a class="srclink" href="${esc(d.source)}" target="_blank" rel="noopener noreferrer">${esc(d.title || parts[parts.length - 1])}<span class="ext" aria-hidden="true">↗</span></a></h3><p class="hint">${esc(parts.slice(1, -1).join(' · '))}</p>`
     + (d.readme ? `<div class="md">${mdLite(en(d.readme))}</div>` : '<p class="hint">No description in the archive.</p>')
     + `<h4>Attachments</h4>${li(d.files.map(f => `<li>${esc(f.name)} · ${kb(f.size)}</li>`))}`
     + (d.skipped.length ? `<h4>Left out</h4>${li(d.skipped.map(x => `<li>${esc(x.name)}: ${esc(x.why)}</li>`))}` : '')
@@ -2723,7 +2738,7 @@ async function impImport(body, btn, host){
   try {
     const d = await impJSON('/api/catalog/import', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     const all = await loadTasks(), nw = (all.custom_tasks || []).find(x => x.name === d.task.name);
-    host.innerHTML = `<div class="impcard"><h3>Imported</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known: a solve can be verified' : 'no gold flag: a solve cannot be confirmed correct'}${d.service ? ' · network service: likely unsolvable offline' : ''}`
+    host.innerHTML = `<div class="impcard"><h3>Imported: ${d.task.source ? `<a class="srclink" href="${esc(d.task.source)}" target="_blank" rel="noopener noreferrer">${esc(d.task.title)}<span class="ext" aria-hidden="true">↗</span></a>` : esc(d.task.title)}</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known: a solve can be verified' : 'no gold flag: a solve cannot be confirmed correct'}${d.service ? ' · network service: likely unsolvable offline' : ''}`
       + `${d.skipped && d.skipped.length ? ' · left out ' + plural(d.skipped.length, 'file') : ''}</p><div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
     $('#impSolve').onclick = () => { if (nw) pick(nw); go('solve'); };
     $('#impAsk').onclick = () => { if (nw) pick(nw); go('chat'); };
@@ -3010,7 +3025,7 @@ function cmdkItems(){
   add('Actions', 'Diff two runs', 'Lab', 't yellow', () => { go('lab'); labShow('diff'); }, 'compare steps');
   add('Actions', 'Find a challenge online', 'public CTF archive', 'red', () => { go('upload'); setTimeout(() => $('#impQ').focus(), 60); }, 'import github search archive');
   add('Actions', QW.phase === 'ready' ? 'Disconnect Qwen on TACC' : QW.phase === 'starting' ? 'Stop starting Qwen on TACC' : 'Connect Qwen on TACC', 'two TACC GPUs', 'c blue', () => qwenToggle(), 'tacc qwen gpu');
-  for (const t of TASKS.concat(MINE)) add('Challenges', t.name, t.title || t.category || '', catOf(t.category)[1], () => { pick(t); go('solve'); }, `${t.category || ''} ${t.title || ''}`);
+  for (const t of TASKS.concat(MINE)) add('Challenges', taskLabel(t), t.custom ? t.name : (t.title || t.category || ''), catOf(t.category)[1], () => { pick(t); go('solve'); }, `${t.name} ${t.category || ''} ${t.title || ''}`);
   for (const r of CMDK.extra.runs) add('Runs', `${en(r.task)} · ${String(r.verdict || '').toUpperCase()}`, `${r.ablation || ''} · ${prettyModel(r.model) || ''} · ${ago(r.ts)}`, toneGlyph(r.verdict), () => openReplay(r.id), 'run replay ' + (r.ablation || ''));
   for (const t of CMDK.extra.threads) add('Conversations', t.title, `${plural(t.turns, 'message')} · ${ago(t.ts)}`, t.model ? modelGlyph(t.model) : 'd ink', () => { go('chat'); openThread(t.id); }, 'thread chat ' + (t.model || ''));
   for (const e of CMDK.extra.exps) add('Experiments', e.name, `${e.attempts} attempts · ${ago(e.ts)}`, 't yellow', () => { LAB.cur = e.id; go('lab'); labShow('results'); }, 'experiment lab ' + (e.models || []).join(' '));

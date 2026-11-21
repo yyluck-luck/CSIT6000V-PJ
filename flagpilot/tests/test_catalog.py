@@ -104,6 +104,23 @@ class TestCatalog(unittest.TestCase):
         self.assertFalse(catalog.is_service([["cipher.txt", 10], ["enc.py", 20]], "Decrypt the message."))
         self.assertFalse(catalog.preview("ctfs/picoCTF/2019/crypto/AES-ABC")["service"])
 
+    def test_titles_come_from_the_question(self):
+        self.assertEqual(catalog.readme_title("# AES-ABC\nDecrypt it."), "AES-ABC")
+        self.assertEqual(catalog.readme_title("## Description\nSome text\n# **Children Tcache**\n"), "Children Tcache")
+        self.assertEqual(catalog.readme_title("no heading at all"), "")
+        pv = catalog.preview("ctfs/picoCTF/2019/crypto/AES-ABC")
+        self.assertEqual(pv["title"], "AES-ABC")
+        self.assertEqual(pv["source"], "https://github.com/sajjadium/ctf-archives/tree/main/ctfs/picoCTF/2019/crypto/AES-ABC")
+
+    def test_an_import_keeps_its_source_page(self):
+        root = self.tmp / "custom2"
+        with mock.patch.object(custom, "store_root", return_value=root):
+            r = catalog.import_archive("ctfs/picoCTF/2019/crypto/AES-ABC")
+            again = custom.get(r["task"].name, root=root)
+        self.assertEqual(r["task"].title, "AES-ABC")
+        self.assertTrue(r["task"].source.startswith("https://github.com/sajjadium/ctf-archives/tree/main/ctfs/picoCTF/"))
+        self.assertEqual(again.source, r["task"].source, "the link survives a reload from disk")
+
     def test_fake_flags_are_not_gold(self):
         self.assertEqual(catalog.gold_from("flag{this_is_a_fake_flag}"), "")
         self.assertEqual(catalog.gold_from("FLAG{REDACTED}"), "")

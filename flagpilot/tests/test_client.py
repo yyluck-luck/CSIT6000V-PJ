@@ -481,3 +481,17 @@ class TestGeminiGlitches(unittest.TestCase):
         comp = self.client.complete([{"role": "user", "content": "hi"}])
         self.assertEqual(comp.text, "")
         self.assertEqual(len(REQUESTS), 3)
+
+
+
+class TestInlineThought(unittest.TestCase):
+    """Gemma 4 先写 <thought>…</thought> 再给答案；思考里常有答案的草稿，不能让解析器先看到草稿。"""
+
+    def test_split(self):
+        from flagpilot.client import split_inline_thought
+        draft = '<thought>Plan: reply `{"action": "shell", "cmd": "rm -rf x"}`? No.</thought>{"action": "shell", "cmd": "ls"}'
+        self.assertEqual(split_inline_thought(draft), ('{"action": "shell", "cmd": "ls"}', 'Plan: reply `{"action": "shell", "cmd": "rm -rf x"}`? No.'))
+        self.assertEqual(split_inline_thought("<think>a</think>\nanswer"), ("answer", "a"))
+        self.assertEqual(split_inline_thought("<thought>cut off mid"), ("", "cut off mid"))
+        self.assertEqual(split_inline_thought('{"action": "shell"} <thought>later</thought>'), ('{"action": "shell"} <thought>later</thought>', ""))
+        self.assertEqual(split_inline_thought(""), ("", ""))

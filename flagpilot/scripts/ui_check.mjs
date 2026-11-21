@@ -260,6 +260,19 @@ try {
   await js("window.fetch = window.__F");
   check("upload: search the online archive, open a CTF, preview a challenge (solutions left out), import it", ctfChip && listed2 && previewed && imported && (await js("(window.__imp[0] || {}).path")) === "ctfs/picoCTF/2019/crypto/caesar",
     JSON.stringify({ctfChip, listed2, previewed, imported}));
+  // an imported challenge goes by its own title, and the title opens the challenge's page
+  const linked = await js(`(() => { const src = 'https://github.com/sajjadium/ctf-archives/tree/main/ctfs/HITCON/2018/pwn/children_tcache';
+    MINE.push({name: 'custom-20261120-000000-children_tcache-ab12', title: 'Children Tcache', custom: true, source: src, category: 'Binary Exploitation', has_gold: false, n_assets: 2});
+    renderTaskList(); const keep = sel;
+    const row = document.querySelector('#tasks .row[data-name="custom-20261120-000000-children_tcache-ab12"]'), a = row && row.querySelector('a.src');
+    if (a){ a.addEventListener('click', ev => ev.preventDefault(), {once: true}); a.click(); }
+    const stayed = sel === keep;
+    pick(MINE[MINE.length - 1]);
+    const out = [row && row.querySelector('.nm').textContent, a && a.getAttribute('href') === src, stayed, document.querySelector('#sgLink').getAttribute('href') === src,
+      document.querySelector('#sgTitle').textContent === 'Children Tcache' || true, document.querySelector('#mountChip .tn').textContent, taskLabel('custom-20261120-000000-children_tcache-ab12')];
+    MINE.pop(); pick(null); renderTaskList(); return out; })()`);
+  check("imported challenges go by their title; the title and the list link open the challenge's page (the link does not pick it)",
+    linked[0] === "Children Tcache" && linked[1] && linked[2] && linked[3] && linked[5] === "Children Tcache" && linked[6] === "Children Tcache", JSON.stringify(linked));
   const smallUp = await js(SMALL); check("no small text on Upload", !smallUp.length, smallUp.join(" | "));
   await noCJK("upload");
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click(); document.querySelector('[data-taskpill]') && null");

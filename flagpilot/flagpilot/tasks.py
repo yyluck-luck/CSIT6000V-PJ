@@ -7,6 +7,8 @@ _private/gold_private.json 只在本地自测时使用，**不得上传到集群
 
 from __future__ import annotations
 
+import re
+
 import json
 import shutil
 from dataclasses import dataclass
@@ -32,6 +34,8 @@ class Task:
     brief_override: str = ""
     # flag 的外层格式（如 picoCTF{...}）。属于题面信息：真实比赛都会公布；不说，模型就会在格式上蒙。
     flag_format: str = ""
+    # 原题网页（picoGym 题目页、赛题归档里那道题的页面、导入时贴的链接）；只给界面做跳转，不进题面
+    source: str = ""
 
     @property
     def has_gold(self) -> bool:
@@ -65,6 +69,12 @@ class Task:
         return out
 
 
+
+def web_url(v) -> str:
+    """只认 http(s) 链接，别的（相对路径、javascript: 之类）一律当没有。"""
+    v = str(v or "").strip()
+    return v if re.match(r"^https?://[^\s\"'<>]{3,500}$", v) else ""
+
 def load_index(root: Path | None = None) -> list[Task]:
     root = root or config.TASKS_ROOT
     index = root / "index" / "tasks.jsonl"
@@ -92,6 +102,7 @@ def load_index(root: Path | None = None) -> list[Task]:
                 suggested_tools=list(r.get("suggested_tools") or []),
                 scope=r.get("scope", "core"),
                 flag_format=_flag_format(r),
+                source=web_url(r.get("source")),
             )
         )
     return tasks

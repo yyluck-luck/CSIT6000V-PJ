@@ -46,6 +46,21 @@ SERVICE_NOTE = ("Note: in the original CTF this challenge ran as a network servi
                 "service cannot be reached; study the files, and do not try to install packages or connect anywhere.")
 
 
+_GENERIC = re.compile(r"^(description|challenge|readme|flag|solution|writeup|write-up|overview|task|problem|statement)s?$", re.I)
+
+
+def readme_title(text: str) -> str:
+    """题面 README 里的题目名：前 15 行里第一个 markdown 标题（去掉强调符号）；泛称（Description 之类）不算。"""
+    for line in (text or "").splitlines()[:15]:
+        m = re.match(r"^\s{0,3}#{1,3}\s+(.+?)\s*#*\s*$", line)
+        if not m:
+            continue
+        t = re.sub(r"[*_`\[\]]|<[^>]+>", "", m.group(1)).strip(" :-")
+        if 2 <= len(t) <= 120 and not _GENERIC.match(t):
+            return t
+    return ""
+
+
 def is_service(files: list[list], readme: str) -> bool:
     return any(_SERVICE_FILE.match(rel.rpartition("/")[2]) for rel, _ in files) or bool(_SERVICE_TEXT.search(readme or ""))
 _FAKE = re.compile(r"fake|placeholder|dummy|redacted|example|test|xxx|not_?the|real_?flag|local|sample|flag_?here|your_?flag", re.I)
@@ -280,6 +295,8 @@ def preview(path: str) -> dict:
         readme = _get(_raw(f"{path}/{rel}"), limit=README_MAX, accept="*/*").decode("utf-8", "replace")
     gold = gold_from(_get(_raw(f"{path}/{flag_file}"), limit=400, accept="*/*").decode("utf-8", "replace")) if flag_file else ""
     return {"path": path, "ctf": ctf, "readme": readme[:4000], "files": [{"name": r, "size": s} for r, s in keep],
+            "title": readme_title(readme) or path.rstrip("/").rpartition("/")[2],
+            "source": f"https://github.com/{REPO}/tree/{BRANCH}/{urllib.parse.quote(path)}",
             "service": is_service(files, readme),
             "skipped": skip + ([{"name": flag_file, "why": "kept out; used as the gold flag" if gold else "kept out; does not look like a real flag"}] if flag_file else []),
             "gold": bool(gold)}
@@ -299,12 +316,12 @@ def _unique(names: list[str]) -> list[str]:
     return out
 
 
-def _create(title: str, query: str, category: str, got: list[tuple[str, bytes]], gold: str):
+def _create(title: str, query: str, category: str, got: list[tuple[str, bytes]], gold: str, source: str = ""):
     if not got:
         raise CatalogError("Nothing to import: no attachments left after leaving out solutions")
     if sum(len(b) for _, b in got) > custom.MAX_TOTAL_BYTES:
         raise CatalogError("The attachments add up to more than 128 MB")
-    return custom.create(title=title[:200], query=query[:6000], files=got, category=category or "custom", gold=gold)
+    return custom.create(title=title[:200], query=query[:6000], files=got, category=category or "custom", gold=gold, source=source)
 
 
 def import_archive(path: str) -> dict:
@@ -320,9 +337,8 @@ def import_archive(path: str) -> dict:
     query = (pv["readme"].strip() or f"Challenge {parts[-1]} from {ctf} {year}".strip()) + f"\n\n(Imported from {REPO}: {path})"
     if pv["service"]:
         query += "\n\n" + SERVICE_NOTE
-    task = _create(parts[-1], query, cat, got, gold)
-    return {"task": task, "gold": bool(gold), "service": pv["service"], "skipped": pv["skipped"],
-            "source": f"https://github.com/{REPO}/tree/{BRANCH}/{urllib.parse.quote(path)}"}
+    task = _create(pv["title"], query, cat, got, gold, pv["source"])
+    return {"task": task, "gold": bool(gold), "service": pv["service"], "skipped": pv["skipped"], "source": pv["source"]}
 
 
 _GH_TREE = re.compile(r"^https://github\.com/([\w.-]+)/([\w.-]+)/tree/([^/]+)/(.+?)/?$")
@@ -347,7 +363,7 @@ def import_url(url: str) -> dict:
         name = path.rstrip("/").rpartition("/")[2]
         cat = next((CATS[p.lower()] for p in path.split("/")[:-1] if p.lower() in CATS), "")
         service = is_service(files, text)
-        task = _create(name, (text.strip() or f"Challenge {name}") + f"\n\n(Imported from {url})" + ("\n\n" + SERVICE_NOTE if service else ""), cat, got, gold)
+        task = _create(readme_title(text) or name, (text.strip() or f"Challenge {name}") + f"\n\n(Imported from {url})" + ("\n\n" + SERVICE_NOTE if service else ""), cat, got, gold, url)
         return {"task": task, "gold": bool(gold), "service": service, "skipped": skip, "source": url}
     m = _GH_BLOB.match(url)
     if m:
@@ -357,5 +373,5 @@ def import_url(url: str) -> dict:
     if _SOLUTION.match(name):
         raise CatalogError("That file looks like a solution, not a challenge")
     data = _get(url, limit=custom.MAX_FILE_BYTES, accept="*/*")
-    task = _create(name, f"Challenge file {name}.\n\n(Imported from {url})", "", [(name, data)], "")
+    task = _create(name, f"Challenge file {name}.\n\n(Imported from {url})", "", [(name, data)], "", url)
     return {"task": task, "gold": False, "skipped": [], "source": url}

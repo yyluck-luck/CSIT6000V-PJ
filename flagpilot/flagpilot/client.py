@@ -56,6 +56,20 @@ def quota_kind(body: str) -> str:
     return ""
 
 
+_THOUGHT_OPEN = re.compile(r"^\s*<(thought|think|thinking)>", re.I)
+
+
+def split_inline_thought(text: str) -> tuple[str, str]:
+    """正文开头的 <thought>/<think> 块 → (答案, 思考)。没闭合的思考块整段算思考（多半是被截断了）。"""
+    m = _THOUGHT_OPEN.match(text or "")
+    if not m:
+        return text, ""
+    close = re.search(rf"</{m.group(1)}>", text[m.end():], re.I)
+    if not close:
+        return "", text[m.end():].strip()
+    return text[m.end() + close.end():].lstrip(), text[m.end():m.end() + close.start()].strip()
+
+
 def busy_wait_s(detail: str, retry_after: str | None, attempt: int, cap: float = BUSY_WAIT_CAP_S) -> float:
     """429 / 503 该等多久：Retry-After 头 > Google 错误体里的 retryDelay > 正文里的 "retry in Ns" > 2、5 秒退避。有上限。"""
     for raw in (retry_after or "", (re.search(r'"retryDelay"\s*:\s*"([\d.]+)s"', detail or "") or [None, ""])[1],
@@ -315,6 +329,12 @@ class ChatClient:
         text = "".join(chunks)
         reasoning = "".join(thinks)
         note = ""
+        # Gemma 4 on the Gemini API (2026-11-20) writes "<thought>…</thought>" before the answer, often with a draft of the
+        # answer inside. The thought goes to reasoning, so the protocol parser only sees the answer.
+        text, inline = split_inline_thought(text)
+        if inline:
+            reasoning = (reasoning + "\n" + inline).strip()
+            note = "思考块已从正文移出"
         if not text.strip() and reasoning.strip():
             # 兜底：有些运行时/版本忽略关闭参数，只会返回 reasoning。
             # 与其把这轮判成"空回复"，不如把动作从思维链里捞出来。

@@ -155,3 +155,23 @@ class TestNoGold(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TestSourceLink(unittest.TestCase):
+    """原题网页只认 http(s)：界面拿它做跳转，javascript: 之类必须丢掉。"""
+
+    def test_only_web_links_are_kept(self):
+        import shutil
+        import tempfile
+        from pathlib import Path
+        from flagpilot import custom
+        root = Path(tempfile.mkdtemp(prefix="fp-src-"))
+        try:
+            ok = custom.create("t", "q", files=[("a.txt", b"x")], root=root, source="https://play.picoctf.org/practice/challenge/362")
+            bad = custom.create("t2", "q", files=[("a.txt", b"x")], root=root, source="javascript:alert(1)")
+            self.assertEqual(ok.source, "https://play.picoctf.org/practice/challenge/362")
+            self.assertEqual(bad.source, "")
+            self.assertEqual(custom.get(ok.name, root=root).source, ok.source)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)

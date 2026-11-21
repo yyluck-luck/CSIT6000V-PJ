@@ -27,7 +27,7 @@ import time
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from .tasks import Task
+from .tasks import Task, web_url
 
 MAX_FILES = 20
 MAX_FILE_BYTES = 32 * 1024 * 1024          # 单文件 32MB
@@ -83,6 +83,7 @@ def create(
     category: str = "custom",
     gold: str = "",
     root: Path | None = None,
+    source: str = "",
 ) -> Task:
     """落盘一道自建题并返回 Task。
 
@@ -147,6 +148,7 @@ def create(
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "files": written,     # 用户上传的原始文件名
         "assets": assets,     # challenge/ 下的实际文件（含 zip 解出来的）
+        "source": web_url(source),   # 原题网页（从网上导入时有）
     }
     (base / "task.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return _to_task(meta, chal)
@@ -210,6 +212,7 @@ def _to_task(meta: dict, chal: Path) -> Task:
     if query and query.strip() != title.strip():
         brief = f"{title}\n\n{query}"
     return Task(
+        source=web_url(meta.get("source")),
         # 负数 id：与内置题库（正整数）不可能撞
         task_id=-abs(hash(meta["slug"])) % 900000 - 1000,
         name=meta["slug"],

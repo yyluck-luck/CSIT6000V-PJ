@@ -386,11 +386,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._writeup()
         if path == "/api/tasks":
             tasks = [{"name": t.name, "category": t.category, "scope": t.scope,
-                      "title": t.title[:90], "custom": False, "has_gold": t.has_gold}
+                      "title": t.title[:90], "custom": False, "has_gold": t.has_gold, "source": t.source}
                      for t in load_index()]
             mine = [{"name": t.name, "category": t.category, "scope": "custom",
                      "title": t.title[:90], "custom": True, "has_gold": t.has_gold,
-                     "n_assets": len(t.assets)} for t in custom.load()]
+                     "n_assets": len(t.assets), "source": t.source} for t in custom.load()]
             return self._json(200, {
                 "tasks": tasks,
                 "custom_tasks": mine,
@@ -629,7 +629,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": str(e)})
         t = r["task"]
         return self._json(200, {**r, "task": {"name": t.name, "title": t.title, "category": t.category,
-                                              "has_gold": t.has_gold, "n_assets": len(t.assets)}})
+                                              "has_gold": t.has_gold, "n_assets": len(t.assets), "source": t.source}})
 
     def _run_control(self, payload: dict) -> None:
         """看着一次本机运行的人：单步、暂停 / 继续、批准 / 修改 / 跳过当前命令、停止、插提示。"""
