@@ -100,7 +100,12 @@ class TestCleanup(unittest.TestCase):
         self.assertTrue((b / "runs.jsonl").exists())
 
     def test_submit_stages_only_three_small_files_for_cleanup(self):
-        env = {**os.environ, "FP_DRY_RUN": "1", "FP_DROP": "tacc-dev-v5-B0 tacc-smoke", "TMPDIR": str(self.tmp)}
+        fake = self.tmp / "bin" / "tcloud"                 # submit.sh checks that the SDK is installed (CI has none)
+        fake.parent.mkdir()
+        fake.write_text("#!/bin/sh\necho 'Submitted batch job 1'\n")
+        fake.chmod(0o755)
+        env = {**os.environ, "FP_DRY_RUN": "1", "FP_DROP": "tacc-dev-v5-B0 tacc-smoke", "TMPDIR": str(self.tmp),
+               "PATH": f"{fake.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
         r = subprocess.run(["bash", str(DEPLOY / "submit.sh"), "cleanup"], capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         stage = next(self.tmp.glob("fp-tcloud-*/flagpilot-client"))
