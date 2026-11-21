@@ -97,6 +97,11 @@ class TestExperiments(unittest.TestCase):
         for bad in ("tacc/../..", "../tacc/v9", "other/v9", "tacc/", "local/nope"):
             self.assertIsNone(lab.experiment(self.root, bad), bad)
 
+    def test_names(self):
+        self.assertEqual(lab._tacc_name("v5", [Path("tacc-dev-v5-B0")]), "Dev split · v5")
+        self.assertEqual(lab._tacc_name("web-11201305", [Path("crypto-005-B3")]), "Single runs on TACC · 11-20 13:05")
+        self.assertEqual(lab._tacc_name("odd", [Path("x")]), "odd")
+
     def test_single_runs_under_tacc_are_not_experiments(self):
         _write_arm(self.root / "tacc" / "web-1" / "x-B3", [_row("a", "verified")])
         self.assertEqual(lab.experiments(self.root), [])

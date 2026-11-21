@@ -240,6 +240,9 @@ def _tacc_name(name: str, arm_dirs: list[Path]) -> str:
         m = re.match(r"^tacc-([a-z]+)-(.+)-B[0-3]$", a.name)
         if m:
             return f"{m.group(1).capitalize()} split · {m.group(2)}"
+    m = re.match(r"^web-(\d{2})(\d{2})(\d{2})(\d{2})$", name)      # 网页上单题交给 TACC 的运行，按会话归档
+    if m:
+        return f"Single runs on TACC · {m.group(1)}-{m.group(2)} {m.group(3)}:{m.group(4)}"
     return name
 
 
