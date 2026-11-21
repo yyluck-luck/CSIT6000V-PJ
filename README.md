@@ -944,8 +944,8 @@ nothing (controls that would start TACC jobs, delete, stop or reach the internet
    defences are that the flag never enters the sandbox and that the replay uses a fresh copy of the
    task files, not the process isolation. `doctor` prints the achieved level (`process` or
    `container`) so a report never overstates it.
-2. **Container isolation is implemented but unexercised.** The backend probes
-   apptainer/singularity/docker/podman and uses one when a local image exists, falling back to
+2. **Container isolation is implemented but unexercised.** The backend probes for
+   apptainer, singularity, docker or podman and uses one when a local image exists, falling back to
    process isolation otherwise. No machine we have access to provides a runtime, so
    `caps.isolation == "container"` has not been observed in a real run.
 3. **Network isolation is `proxy-only`.** It points `http_proxy` at a dead port; a raw socket can
