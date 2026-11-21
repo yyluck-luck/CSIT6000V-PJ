@@ -399,20 +399,42 @@ def text_literals(script: str, text: str, flag: str) -> list:
     return out
 
 
-def _shift(c: str) -> str:
-    for lo, hi in (("a", "z"), ("A", "Z"), ("0", "9")):
-        if lo <= c <= hi:
-            return lo if c == hi else chr(ord(c) + 1)
-    return c
+def _step(i: int) -> int:
+    """第 i 个字符挪几位：1、2 或 3，按位置伪随机、没有短周期。
+
+    以前所有字母一律挪一位。凯撒一类的题（crypto-072 "new caesar"）脚本会穷举密钥，统一挪一位只等于换了个密钥，
+    穷举照样解出同一个 flag——正确的解法被判成"答案不依赖题面"（v7 B3 crypto-072-s0）。按位置挪不同的位数，
+    任何单个密钥、短周期的维吉尼亚密钥都抵消不了。"""
+    return 1 + ((i * 2654435761) >> 11) % 3
+
 
 
 def _perturbed(v):
-    """同长度、同字符类的另一个值：字母和数字各自往后挪一位（z→a、9→0），其余字符不动。"""
-    if isinstance(v, bytes):
-        return v.decode("latin-1").translate({i: _shift(chr(i)) for i in range(256)}).encode("latin-1")
+    """同长度的另一个值，字母和数字只在这个字面量自己用到的字符里挪 _step(位置) 位（循环），其余字符不动；整数加减 1。
+
+    只在自己的字符里挪：十六进制还是十六进制、base64 还是合法 base64、a–p 的密文还在 a–p 里。改过的输入就能照常
+    算下去，算出别的东西，而不是一出错就停——以前挪出了字母表（p→q），脚本当场报错，"报错"被当成"依赖题面"，
+    脚本最后写死的 flag 反而躲过了检查。某一类只用到一个字符时，在整个类里挪。"""
     if isinstance(v, int):
         return v + 1 if v >= 0 else v - 1
-    return "".join(_shift(c) for c in v)
+    text = v.decode("latin-1") if isinstance(v, bytes) else v
+    groups: dict[str, list[str]] = {}
+    for lo, hi in (("a", "z"), ("A", "Z"), ("0", "9")):
+        used = sorted({c for c in text if lo <= c <= hi})
+        if len(used) < 2:
+            used = [chr(x) for x in range(ord(lo), ord(hi) + 1)]
+        for c in used:
+            groups[c] = used
+    out = []
+    for i, c in enumerate(text):
+        g = groups.get(c)
+        if g is None:
+            out.append(c)
+            continue
+        k = _step(i) % len(g) or 1                    # never 0: every letter and digit changes
+        out.append(g[(g.index(c) + k) % len(g)])
+    s = "".join(out)
+    return s.encode("latin-1") if isinstance(v, bytes) else s
 
 
 def perturb_literals(script: str, nodes: list) -> str:
