@@ -28,6 +28,8 @@ def _compact(ev: dict) -> dict:
             continue
         if isinstance(v, str) and k in _TRIM:
             v = v[:_TRIM[k]]
+        elif k == "act" and isinstance(v, dict):       # action 事件里的动作：每个字段最多 3000 字，TACC 日志不被长脚本撑大
+            v = {kk: (vv[:3000] if isinstance(vv, str) else vv) for kk, vv in v.items()}
         out[k] = v
     return out
 
@@ -37,10 +39,15 @@ def _emit(tag: str, obj) -> None:
     sys.stdout.flush()
 
 
+# TACC 上的运行只有这些事件回到网页。网页显示的引擎事件都得在这里：tests/test_remote_events.py 对照 app/index.html 的
+# onEvent 检查（2026-11-22 新加的 action / repeat_blocked 差点只在本机运行里出现）
+PAGE_EVENTS = ("meta", "start", "model", "action", "tool", "invalid_action", "repeat_warning", "repeat_blocked",
+               "submit", "replay", "summary", "done")
+
+
 def events_printer(ev: dict) -> None:
     """BatchRunner 的 hook：一条 trace 事件打印成一行 @@ev。"""
-    if ev.get("type") in ("meta", "start", "model", "tool", "invalid_action", "repeat_warning",
-                          "submit", "replay", "summary", "done"):
+    if ev.get("type") in PAGE_EVENTS:
         _emit("@@ev", _compact(ev))
 
 

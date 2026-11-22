@@ -872,6 +872,7 @@ try {
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
   const xEsc = await until("!document.querySelector('#selMenu') && document.querySelector('#modelSel').selectedIndex === 2", 1500);
   await js("document.querySelector('#modelSel')._xsel.button.click()"); await until("document.querySelector('#selMenu')", 1500);
+  await sleep(120);     // the outside-click listener is added on the next tick after the list opens (no person clicks sooner)
   await js("document.querySelector('#sgTitle').dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}))");
   const xOut = await until("!document.querySelector('#selMenu') && document.querySelector('#modelSel')._xsel.button.getAttribute('aria-expanded') === 'false'", 1500);
   await js("loadModels && loadModels()"); await sleep(300);
@@ -888,6 +889,25 @@ try {
     /MALFORMED_FUNCTION_CALL.*after 2 retries.*next provider/.test(why.malformed) && /safety filter/.test(why.filter) && /max_tokens/.test(why.length)
       && /no text at all/.test(why.empty) && /DSML/.test(why.dsml) && /deepseek-v4\.1-flash/.test(why.dsml) && /middle of its JSON/.test(why.cut)
       && !Object.values(why).some(t => /usually means/.test(t)), JSON.stringify(why));
+
+  // the page reads a reply as the engine does and shows what it ran (2026-11-22: DSML replies showed "? —", a directory
+  // came out as "on .", and a repeat the engine did not run has to say so)
+  const seenAs = await js(`(() => {
+    const dsml = parseModel('Let me look.<｜DSML｜ invoke name="python"><｜DSML｜ parameter name="code" string="true">print(1)</｜DSML｜ parameter></｜DSML｜ invoke>');
+    const lone = parseModel('scratch {"action": "shell", "cmd": "rm x"}</think>{"action": "shell", "cmd": "ls"}');
+    const rawNl = parseModel('{"action": "python", "code": "a' + String.fromCharCode(10) + 'b"}');
+    const fn = parseModel('{"name": "shell", "arguments": {"cmd": "id"}}');
+    const dir = {act: {action: 'shell', cmd: 'ls ./challenge/ | grep -i cat'}, tool: null, n: 3};
+    const rep = {act: {action: 'shell', cmd: 'ls'}, tool: null, n: 3, notRun: [1, 2]};
+    return {dsml: !!dsml && dsml.action === 'python' && dsml.code === 'print(1)' && dsml.thought === 'Let me look.', lone: !!lone && lone.cmd === 'ls',
+      rawNl: !!rawNl && rawNl.code === 'a' + String.fromCharCode(10) + 'b', fn: !!fn && fn.action === 'shell' && fn.cmd === 'id',
+      chip: chipWhat(dir), dirWhy: explainStep(dir).join(' '), repStatus: stepStatus(rep)[2], repWhy: explainStep(rep).join(' '),
+      repTitle: summaryHTML(rep)}; })()`);
+  check("the page reads replies as the engine does (DSML, a lone </think>, raw line breaks, name/arguments) and names a folder",
+    seenAs.dsml && seenAs.lone && seenAs.rawNl && seenAs.fn && seenAs.chip === 'ls + grep · challenge' && /on <b>challenge<\/b>/.test(seenAs.dirWhy)
+      && !/ on \./.test(seenAs.dirWhy), JSON.stringify(seenAs));
+  check("a repeat the engine did not run says so on its step",
+    seenAs.repStatus === 'not run: a repeat' && /same action as steps 1 and 2/.test(seenAs.repWhy) && /not run \(a repeat\)/.test(seenAs.repTitle), JSON.stringify(seenAs));
 
   // turns per run: the drawer offers 20/40/60/100 (40 by default, remembered); a run uses the choice; a run that used all
   // its turns offers to run again with more (2026-11-21: "why only 20 rounds?")

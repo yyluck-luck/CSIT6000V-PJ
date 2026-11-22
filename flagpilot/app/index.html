@@ -1235,8 +1235,9 @@ const PROVENANCE = {literal_flag: 'Right flag, but the script only prints it: th
 const BUDGET_WHY = {invalid_action: 'Stopped: three replies were not valid JSON actions', max_turns: 'Used every turn without a valid submission',
   wall_time: 'Ran out of time before a valid submission', context: 'The context filled up before a valid submission',
   completion_tokens: 'Used the output-token budget before a valid submission', truncated: 'Replies kept hitting the output limit',
-  thinking_overflow: 'Reasoning kept using up the output limit', repetition: 'Replies kept repeating the same text'};
-const STOPPED = {invalid_action: 'stopped after three replies outside the JSON protocol', max_turns: 'all turns used', wall_time: 'time budget used',
+  thinking_overflow: 'Reasoning kept using up the output limit', repetition: 'Replies kept repeating the same text',
+  repeat_loop: 'Stopped: the model kept sending an action that had already given the same result twice'};
+const STOPPED = {invalid_action: 'stopped after three replies outside the JSON protocol', repeat_loop: 'stopped: the same action again and again', max_turns: 'all turns used', wall_time: 'time budget used',
   context: 'context full', completion_tokens: 'output-token budget used', truncated: 'replies cut at the output limit', thinking_overflow: 'reasoning filled the output limit', repetition: 'replies stuck repeating themselves',
   wrong_flag: 'the flag does not match the answer', hardcoded_no_material: 'the flag does not depend on the challenge material', literal_flag: 'the script contains the flag itself',
   script_error: 'the replay script failed', no_output: 'the replay printed nothing', timeout: 'the replay timed out', empty_flag: 'no flag was submitted',
@@ -1900,10 +1901,67 @@ async function loadMemory(name){
 }
 
 /* ======================= Reading actions (same parser contract as the harness) ======================= */
-function parseModel(text){
-  const t = (text || '').replace(/```(?:json)?/g, '').trim();
-  try { return JSON.parse(t); } catch(_) { const i = t.indexOf('{'), j = t.lastIndexOf('}'); if (i >= 0 && j > i){ try { return JSON.parse(t.slice(i, j + 1)); } catch(_){} } return null; }
+/* ==== reply parser (begin) ====
+   The page reads a reply exactly as the engine does (flagpilot/tools.py: parse_action → json_object, markup_call, as_action):
+   <think> blocks dropped, after a lone </think> first, a fenced block, the whole reply, then the first balanced {…} (braces
+   inside strings do not count); JSON with raw line breaks in strings (json.loads strict=False); DeepSeek's DSML tool-call
+   markup; {"name", "arguments"}. Runs since 2026-11-22 also carry the engine's own reading (the "action" event), which wins.
+   2026-11-22: the page knew none of the markup, so 32 of 100 steps of a run showed "? —".
+   tests/test_page_parser.py runs this code under node on every reply in results/ and fails when it disagrees with the engine. */
+const RP_THINK = /<think\b[^>]*>[\s\S]*?<\/think\s*>/gi, RP_FENCE = /```(?:json)?\s*([\s\S]+?)\s*```/g;
+const RP_DSML = '<\\s*[｜|]\\s*DSML\\s*[｜|]\\s*', RP_DSML_END = '<\\s*/\\s*[｜|]\\s*DSML\\s*[｜|]\\s*';
+const RP_INVOKE = new RegExp(RP_DSML + 'invoke\\s+name\\s*=\\s*"([^"]+)"[^>]*>([\\s\\S]*?)' + RP_DSML_END + 'invoke\\s*>', 'i');
+const RP_PARAM = new RegExp(RP_DSML + 'parameter\\s+name\\s*=\\s*"([^"]+)"([^>]*)>([\\s\\S]*?)' + RP_DSML_END + 'parameter\\s*>', 'gi');
+const RP_PAIR = new RegExp(RP_DSML + '(?:invoke|parameter)\\s+name\\s*=\\s*"([^"]+)"([^>]*)>([\\s\\S]*?)' + RP_DSML_END + '(?:parameter|invoke)\\s*>', 'gi');
+const rpIsObj = o => !!o && typeof o === 'object' && !Array.isArray(o);
+function rpLoose(s){                       /* json.loads(s, strict=False): raw control characters inside strings are allowed */
+  try { return JSON.parse(s); } catch(_){}
+  let out = '', q = false, e = false;
+  for (const ch of s){
+    if (q){
+      if (e){ e = false; out += ch; continue; }
+      if (ch === '\\'){ e = true; out += ch; continue; }
+      if (ch === '"'){ q = false; out += ch; continue; }
+      const c = ch.charCodeAt(0); out += c < 0x20 ? '\\u' + c.toString(16).padStart(4, '0') : ch; continue; }
+    if (ch === '"') q = true;
+    out += ch; }
+  try { return JSON.parse(out); } catch(_){ return undefined; }
 }
+function rpTry(s){ s = s.trim(); return s.startsWith('{') || s.startsWith('[') ? rpLoose(s) : undefined; }
+function rpFirstObject(text){
+  for (const c of [...[...text.matchAll(RP_FENCE)].map(m => m[1]), text.trim()]){ const o = rpTry(c); if (rpIsObj(o)) return o; }
+  const start = text.indexOf('{'); if (start < 0) return null;
+  let d = 0, q = false, e = false;
+  for (let i = start; i < text.length; i++){ const ch = text[i];
+    if (q){ if (e) e = false; else if (ch === '\\') e = true; else if (ch === '"') q = false; }
+    else if (ch === '"') q = true; else if (ch === '{') d++;
+    else if (ch === '}' && --d === 0){ const o = rpTry(text.slice(start, i + 1)); return rpIsObj(o) ? o : null; } }
+  return null;
+}
+function rpJsonObject(text){
+  text = String(text || '').replace(RP_THINK, '');
+  if (text.toLowerCase().includes('</think>')){ const parts = text.split(/<\/think\s*>/i), tail = parts[parts.length - 1];
+    if (tail.trim()){ const o = rpFirstObject(tail); if (o) return o; } }
+  return rpFirstObject(text);
+}
+function rpDsmlValue(attrs, v){ if (/string\s*=\s*"false"/i.test(attrs)){ try { return JSON.parse(v); } catch(_){} } return v; }
+function rpMarkup(text){
+  text = String(text || ''); let obj = null; const m = RP_INVOKE.exec(text);
+  if (m && m[1].trim().toLowerCase() !== 'action'){ obj = {action: m[1].trim()}; for (const p of m[2].matchAll(RP_PARAM)) obj[p[1].trim()] = rpDsmlValue(p[2], p[3]); }
+  else { const pairs = {}; for (const p of text.matchAll(RP_PAIR)){ const k = p[1].trim(); if (!(k in pairs)) pairs[k] = rpDsmlValue(p[2], p[3]); }
+    if (typeof pairs.action === 'string') obj = pairs; }
+  if (!obj) return null;
+  const lead = text.split(new RegExp(RP_DSML))[0].trim(); if (lead && !('thought' in obj)) obj.thought = lead;
+  return obj;
+}
+function rpAsAction(o){
+  if (!rpIsObj(o) || 'action' in o || !('name' in o) || !('arguments' in o)) return o;
+  let a = o.arguments; if (typeof a === 'string'){ try { a = JSON.parse(a); } catch(_){ return o; } }
+  if (!rpIsObj(a)) return o;
+  return Object.assign({}, a, {action: o.name}, 'thought' in o ? {thought: o.thought} : {});
+}
+function parseModel(text){ const raw = String(text || ''); if (!raw.trim()) return null; return rpAsAction(rpJsonObject(raw) || rpMarkup(raw)) || null; }
+/* ==== reply parser (end) ==== */
 /* ============ Glossary: what a command is for ============ */
 const TOOL_DOC = {
   ls: 'lists the directory to see which files the challenge ships', cat: 'prints a file', head: 'shows the first lines', tail: 'shows the last lines',
@@ -1925,7 +1983,7 @@ function cmdTools(cmd){ const names = [];
     while (i < toks.length && (toks[i].includes('=') || /^[<>]/.test(toks[i]) || toks[i] === 'sudo')) i++; if (toks[i]) names.push(toks[i].split('/').pop()); }
   return [...new Set(names)].filter(Boolean); }
 function cmdTargets(cmd){ const raw = String(cmd || '').match(/[\w.@/-]*\/[\w.@/-]+|[\w-]+\.(?:txt|bin|py|pcap|pcapng|png|jpe?g|gif|zip|gz|tar|elf|dat|log|csv|json|pdf|docx?|xlsx?|java|class|wasm)/gi) || [];
-  return [...new Set(raw.map(x => x.split('/').pop()))]; }
+  return [...new Set(raw.map(x => x.replace(/\/+$/, '').split('/').pop()).filter(x => x && x !== '.' && x !== '..'))]; }
 const pyLibs = code => [...new Set(PY_DOC.filter(([re]) => re.test(code || '')).map(([, d]) => d))];
 const MAGIC = [[/7f\s?45\s?4c\s?46|ELF/i, 'an ELF executable'], [/89\s?50\s?4e\s?47/i, 'a PNG image'], [/ff\s?d8\s?ff/i, 'a JPEG image'],
   [/50\s?4b\s?03\s?04/i, 'a ZIP archive'], [/25\s?50\s?44\s?46/i, 'a PDF'], [/d4\s?c3\s?b2\s?a1|0a\s?0d\s?0d\s?0a/i, 'a packet capture']];
@@ -1964,6 +2022,7 @@ function explainStep(t){
   if (t.invalid){ const n = run ? run.turns.filter(x => x.invalid && x.n <= t.n).length : 0;
     L.push(`The model did not answer in the agreed JSON protocol, so nothing ran. The harness sent a correction; <b>the turn still counts</b>, and the third such reply ends the run (this is number ${n || '?'}). A protocol failure, not a solving failure.`);
     const why = whyRejected(t); if (why) L.push(why); return L; }
+  if (t.notRun) L.push(`<b>Not run.</b> This is the same action as steps ${t.notRun.join(' and ')}, and both gave exactly the same result, so running it again could not show anything new. FlagPilot told the model to take a different step; the third such reply in a row ends the run.`);
   if (!a) return L;
   if (a.action === 'shell'){ const tools = cmdTools(a.cmd), tgt = cmdTargets(a.cmd), docs = [...new Set(tools.map(x => TOOL_DOC[x]).filter(Boolean))];
     let s = 'Runs <code>' + esc((a.cmd || '').slice(0, 140)) + '</code>'; if (tgt.length) s += ' on <b>' + esc(tgt.slice(0, 3).join(', ')) + '</b>';
@@ -1979,7 +2038,7 @@ function explainStep(t){
   if (t.repeat) L.push('The same action repeated; the harness inserted a REPEAT WARNING asking for a new approach.');
   return L;
 }
-function stepStatus(t){ if (t.callError && !t.act) return ['s-bad', '✗', 'model call failed']; if (t.invalid) return ['s-bad', '✗', 'failed']; if (t.skipped) return ['s-warn', '↷', 'skipped by you']; if (t.tool) return t.tool.exit_code === 0 ? ['s-ok', '✓', 'ok'] : ['s-warn', '!', 'non-zero exit']; return ['', '·', '']; }
+function stepStatus(t){ if (t.callError && !t.act) return ['s-bad', '✗', 'model call failed']; if (t.invalid) return ['s-bad', '✗', 'failed']; if (t.skipped) return ['s-warn', '↷', 'skipped by you']; if (t.notRun) return ['s-warn', '↷', 'not run: a repeat']; if (t.tool) return t.tool.exit_code === 0 ? ['s-ok', '✓', 'ok'] : ['s-warn', '!', 'non-zero exit']; return ['', '·', '']; }
 function actBlock(a){
   if (!a) return '';
   if (a.action === 'shell') return termBlock(a.cmd || '', null, {title: 'sandbox — bash'});
@@ -2036,7 +2095,7 @@ function flush(){
 }
 function summaryHTML(t){
   return `<span class="no">${pad2(t.n)}</span><span class="act"><span class="g ${ACT[t.act && t.act.action] || (t.callError ? 'red' : 'ring')}"></span>${esc(t.act ? t.act.action : (t.invalid || t.callError ? 'error' : '?'))}</span>
-    <span class="ttl">${esc(chipWhat(t))}${t.hint ? ' · after your hint' : ''}${t.decision === 'edit' ? ' · edited by you' : t.skipped ? ' · skipped by you' : ''}</span><span class="tm">${t.tool ? (t.tool.ms / 1000).toFixed(2) + ' s' : ''}</span><span class="mk"></span><span class="chev">›</span>`;
+    <span class="ttl">${esc(chipWhat(t))}${t.hint ? ' · after your hint' : ''}${t.decision === 'edit' ? ' · edited by you' : t.skipped ? ' · skipped by you' : t.notRun ? ' · not run (a repeat)' : ''}</span><span class="tm">${t.tool ? (t.tool.ms / 1000).toFixed(2) + ' s' : ''}</span><span class="mk"></span><span class="chev">›</span>`;
 }
 function bodyHTML(t){
   const [, mk, word] = stepStatus(t), body = [], why = explainStep(t);
@@ -2246,6 +2305,8 @@ function onEvent(ev){
       if (t){ t.tool = {action: ev.action, exit_code: ev.exit_code, ms: ev.duration_ms, chars: ev.sent_chars, truncated: ev.truncated, timed_out: ev.timed_out, obs: ev.obs_head, stderr: ev.stderr_head || ''}; touch(t.key); }
       break; }
     case 'invalid_action': { const t = run.turns[run.turns.length - 1]; if (t){ t.invalid = ev.reason; touch(t.key); } break; }
+    case 'action': { const t = run.turns[run.turns.length - 1]; if (t && ev.act && ev.act.action){ t.act = ev.act; if (ev.act.thought) t.thought = ev.act.thought; touch(t.key); } break; }
+    case 'repeat_blocked': { const t = run.turns[run.turns.length - 1]; if (t){ t.notRun = (ev.same_as || []).map(Number); touch(t.key); } break; }
     case 'repeat_warning': { const t = run.turns[run.turns.length - 1]; if (t){ t.repeat = (t.repeat || 0) + 1; touch(t.key); } break; }
     case 'submit': run.submit = {flag: ev.flag, script: ev.script}; openSteps.add('submit');
       $('#scriptNote').innerHTML = ev.script ? SCRIPT_NOTE_DEFAULT : '<span class="warn">Only a flag, no script: without a reproducible process the best verdict is unverified.</span>';
@@ -2865,6 +2926,8 @@ async function diffRuns(){
   if (!A.events || !B.events){ host.innerHTML = '<p class="hint bad" style="margin-top:18px">Could not load one of the runs.</p>'; return; }
   const steps = r => { const out = []; for (const ev of r.events){ if (ev.type === 'model'){ const o = parseModel(ev.text); out.push({n: ev.turn, act: o && o.action ? o : null, invalid: null, tool: null}); }
     else if (ev.type === 'tool' && out.length) out[out.length - 1].tool = {exit_code: ev.exit_code, obs: ev.obs_head || ''};
+    else if (ev.type === 'action' && out.length && ev.act && ev.act.action) out[out.length - 1].act = ev.act;
+    else if (ev.type === 'repeat_blocked' && out.length) out[out.length - 1].notRun = (ev.same_as || []).map(Number);
     else if (ev.type === 'invalid_action' && out.length) out[out.length - 1].invalid = ev.reason; } return out; };
   const sa = steps(A), sb = steps(B), what = t => t ? chipWhat(t) : '', sig = t => t ? (t.act ? t.act.action + ':' + what(t) : 'x') : '';
   let fork = -1; for (let i = 0; i < Math.max(sa.length, sb.length); i++) if (sig(sa[i]) !== sig(sb[i])){ fork = i; break; }
@@ -3004,7 +3067,12 @@ function qwenChipLabel(){
 }
 /* 每秒把还开着的那几处文字改掉（只改文字，不重绘、不打断选择） */
 function qwenTick(){
-  const ph = QW.phase;            // Ask's model menu no longer lists Qwen on TACC (2026-11-22): only Solve's chip counts
+  const ph = QW.phase, m = document.getElementById('modelMenu');
+  if (m){
+    const s = m.querySelector('[data-qwtacc]');
+    if (s) s.textContent = ph === 'ready' ? `connected · ${Math.ceil(qwLeft() / 60)} min left`
+      : ph === 'starting' ? `starting · ${fmtClock(qwElapsed())}` : ph === 'failed' ? 'the last start did not work' : 'starts in about 5 min';
+  }
   if (ph !== 'starting' && ph !== 'ready') return;
   const c = $('#qwenChip'); if (c) c.querySelector('.tn').textContent = qwenChipLabel();
   syncAskChip();
@@ -3242,20 +3310,21 @@ function pickForThread(sid, serverModel){ const m = readPicks()[sid]; if (m && (
   return serverModel ? (isTaccName(serverModel) ? {route: 'tacc', model: ''} : {route: 'local', model: serverModel}) : newPick(); }
 let threadPick = newPick();
 function useThreadPick(pk){ threadPick = pk; syncAskChip(); }
-function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; const ph = QW.phase, r = askRouteOf(threadPick), mins = Math.ceil((QW.remaining || 0) / 60);
+function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; const ph = QW.phase, r = askRouteOf(threadPick), mins = Math.ceil(qwLeft() / 60);
   c.classList.toggle('on', r === 'tacc' && ph === 'ready'); c.classList.toggle('wait', r === 'tacc' && ph === 'starting');
   c.querySelector('.g').className = 'g ' + (r === 'tacc' ? (ph === 'ready' ? 'c blue' : ph === 'starting' ? 'spin' : 'ring') : modelGlyph(modelOf(threadPick)));
-  c.querySelector('.tn').textContent = r === 'tacc' ? (ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}` : 'Qwen on TACC · starts when you send')
+  c.querySelector('.tn').textContent = r === 'tacc' ? (ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(qwElapsed())}` : 'Qwen on TACC · starts when you send')
     : prettyModel(modelOf(threadPick)); }
 function openModelMenu(anchor){
-  closeModelMenu(); const ph = QW.phase, r = askRouteOf(threadPick), cur = modelOf(threadPick), mins = Math.ceil((QW.remaining || 0) / 60);
+  closeModelMenu(); if (typeof closeSelMenu === 'function') closeSelMenu(); const ph = QW.phase, r = askRouteOf(threadPick), cur = modelOf(threadPick), mins = Math.ceil(qwLeft() / 60);
   const list = [...new Set([...MODELS, ...(/^mock/i.test(LOCALMODEL) ? [LOCALMODEL] : [])].filter(Boolean))];
   const row = (act, name, sub, on, cls) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-act="${esc(act)}"${cls ? ` class="${cls}"` : ''}><span class="ck">✓</span><span class="nm">${esc(name)}</span><span class="sub">${esc(sub)}</span></button>`;
   const m = document.createElement('div'); m.className = 'mmenu'; m.id = 'modelMenu'; m.setAttribute('role', 'menu'); m.setAttribute('aria-label', 'Who answers this conversation');
   m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), n === LOCALMODEL ? 'default' : '', r === 'local' && (n === cur || providerOf(n) === providerOf(cur)))).join('')
-    + '<hr>' + row('tacc', 'Qwen 27B on TACC', ph === 'ready' ? `connected · ${mins} min left` : ph === 'starting' ? `starting · ${fmtClock(QW.elapsed)}` : 'starts in about 5 min', r === 'tacc')
+    + '<hr>' + row('tacc', 'Qwen 27B on TACC', ph === 'ready' ? `connected · ${mins} min left` : ph === 'starting' ? `starting · ${fmtClock(qwElapsed())}` : 'starts in about 5 min', r === 'tacc')
     + (ph === 'starting' ? row('progress', 'Show start-up progress', 'step by step', false) + row('stop', 'Stop starting Qwen', '', false, 'danger') : ph === 'ready' ? row('stop', 'Disconnect TACC', 'frees the GPUs', false, 'danger') : '');
   document.body.appendChild(m);
+  const ts = m.querySelector('button[data-act="tacc"] .sub'); if (ts) ts.dataset.qwtacc = '1';   // qwenTick 每秒改它
   const a = anchor.getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth, up = a.top - h - 10 >= 8;
   m.style.top = (up ? a.top - h - 10 : Math.min(innerHeight - h - 8, a.bottom + 10)) + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - w - 8, a.left)) + 'px';
   m.style.transformOrigin = up ? '20% 100%' : '20% 0'; anchor.setAttribute('aria-expanded', 'true');
@@ -3278,7 +3347,10 @@ async function pickModel(act){
     if (askRouteOf(pk) === 'tacc'){ pk.route = 'local'; pk.model = pk.model || LOCALMODEL; rememberPick(chatId, pk); }
     await post('/api/tacc/session/stop'); toast(was === 'starting' ? 'Stopped starting Qwen; ' + prettyModel(modelOf(pk)) + ' answers here' : 'Disconnected from TACC'); qwenPoll(); syncAskChip(); return; }
   if (act === 'tacc'){ pk.route = 'tacc'; pk.model = ''; rememberPick(chatId, pk); syncAskChip();
-    if (QW.phase !== 'ready' && QW.phase !== 'starting'){ await post('/api/tacc/session/start'); toast('Starting Qwen 27B on TACC (about 5 minutes); messages here wait for it'); }
+    if (QW.phase !== 'ready' && QW.phase !== 'starting'){
+      const d = await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(r => r.json()).catch(() => ({}));
+      if (d && d.need_tcloud) return openQwenPanel();       // 先问 SDK 在哪，别假装在启动
+      toast('Starting Qwen 27B on TACC (about 5 minutes); messages here wait for it'); }
     qwenPoll(); return; }
   pk.route = 'local'; pk.model = act.slice(6); rememberPick(chatId, pk); syncAskChip(); toast(prettyModel(pk.model) + ' answers in this conversation');
 }
