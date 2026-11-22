@@ -405,7 +405,7 @@ challenge × tier map and the paired tests (`./start.sh` copies the records into
 
 **`v7`, the final engine** (2026-11-21; the figure at the top):
 
-| Tier | Verified as run | 95% CI | Re-scored | Mean turns | Mean tokens | Median wall time |
+| Tier | Verified as run | 95% interval | Re-scored | Mean turns | Mean tokens | Median wall time |
 |---|---|---|---|---|---|---|
 | B0 bare model | 33/40 · 82.5% | 68.0–91.2% | 33/40 | 5.5 | 16,148 | 29 s |
 | B1 + trimming | 33/40 · 82.5% | 68.0–91.2% | 33/40 | 5.8 | 20,375 | 31 s |

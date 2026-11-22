@@ -63,7 +63,7 @@ while i < len(lines):
             for m in BADGE.finditer(lines[j]):
                 labels.append(f"[{m.group(1)}]({m.group(2)})" if m.group(2) else m.group(3))
             j += 1
-        out.append(" · ".join(labels))
+        out.append(" `\\enspace`{=latex}·`\\enspace`{=latex} ".join(labels))
         i = j
         continue
     out.append(lines[i])
@@ -71,6 +71,7 @@ while i < len(lines):
 s = "\n".join(out)
 # relative links (not images) point at the commit on GitHub; relative images are embedded from the checkout of that commit
 s = re.sub(r"(?<!!)\[([^\]]*)\]\((?!https?://|#|mailto:)([^)\s]+)\)", lambda m: f"[{m.group(1)}]({blob}/{m.group(2).lstrip('./')})", s)
+s = re.sub(r"!\[([^\]]*)\]\((?!https?://)([^)\s]+)\)", lambda m: f"![{m.group(1)}](.ref/{m.group(2).lstrip('./')})", s)
 
 # pipe tables: give each column a width that follows its content (pandoc reads the widths from the dashes of the
 # separator line), so long cells wrap inside the page instead of running off it
@@ -116,7 +117,7 @@ open("readme-src.md", "w", encoding="utf-8").write("\n".join(out))
 PY
 
 pandoc readme-src.md -f markdown+gfm_auto_identifiers+autolink_bare_uris+lists_without_preceding_blankline-yaml_metadata_block-smart-implicit_figures \
-  --resource-path=.ref --columns=70 -t latex -s -o flagpilot-submission.tex \
+  --columns=70 -t latex -s -o flagpilot-submission.tex \
   -H header.tex -B front.tex \
   -V documentclass=article -V fontsize=10pt -V geometry:margin=2cm -V block-headings \
   -V mainfont="Helvetica Neue" -V monofont="Menlo" -V CJKmainfont="PingFang SC" \
