@@ -197,9 +197,10 @@ def cmd_doctor(args) -> int:
 
 def cmd_list(args) -> int:
     tasks = select(load_index(), category=args.category, scope=args.scope)
-    _p(f"{'name':<18}{'cat':<18}{'scope':<8}title")
+    # scope 列宽 9：最长取值 `extra-gs` 正好 8 个字符，宽度给 8 会和标题粘在一起
+    _p(f"{'name':<18}{'cat':<18}{'scope':<9}title")
     for t in tasks:
-        _p(f"{t.name:<18}{t.category:<18}{t.scope:<8}{(t.title or '')[:70]}")
+        _p(f"{t.name:<18}{t.category:<18}{t.scope:<9}{(t.title or '')[:70]}")
     _p(f"\n共 {len(tasks)} 题")
     return 0
 
