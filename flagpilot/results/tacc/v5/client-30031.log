@@ -1,0 +1,454 @@
+SDK_BOOTSTRAP=/mnt/home/public/course-envs/CSIT6000V/assignment1/mpi-gemm-v1
+[fp] job=30031 node=10-0-1-10 mode=batch batch=tacc-dev-v5
+[fp] python 3.12.14 /mnt/home/public/course-envs/CSIT6000V/project/qwen3.8-27b-v1/vllm-env/bin/python
+[fp] sandbox python3: /tmp/csit6000v-qwen-20716-30031.kERiEy/fp-bin/python3 -> 3.12.14
+[fp] shims: xxd=/mnt/home/yliutz/WORKDIR/flagpilot-client/bin/xxd exiftool=/mnt/home/yliutz/WORKDIR/flagpilot-client/bin/exiftool
+[fp] vendored: pycryptodome 4.5.0 gmpy2 2.3.2
+[fp] doctor
+FlagPilot 0.1.0
+python           3.12.14  (/mnt/home/public/course-envs/CSIT6000V/project/qwen3.8-27b-v1/vllm-env/bin/python)
+题库             /mnt/home/yliutz/WORKDIR/flagpilot-client/tasks
+运行产物         /mnt/home/yliutz/USERDIR/flagpilot-runs
+
+题目数           53  Cryptography=16, Forensics=12, General Skills=25
+题库一致性       通过（53 题的目录与附件齐全）
+泄漏检查         通过（无明文 gold、无题解目录）
+
+网络隔离         proxy-only  ← 不可作为强隔离证据
+资源上限         可用
+隔离等级         process  ← 非容器，报告里必须如实说明
+容器             none
+SMT (z3)         可用
+反汇编           /usr/bin/objdump
+调试器           未找到  ← 只能靠 shell 调其它调试器
+  · 网络隔离：无可用 namespace，退化为代理屏蔽（不可作为强隔离的证据）
+  · 隔离：无可用容器运行时，退化为进程级 + rlimit（非容器）
+
+⚠ 题目声明需要、但本机没有的工具：
+  - binwalk        影响 6 题（如 forensics-065）
+  - zsteg          影响 5 题（如 forensics-008）
+  - tshark         影响 2 题（如 forensics-002）
+  - sleuthkit      影响 1 题（如 forensics-065）
+  → 这些题要在报告里单独说明，否则会被读成模型能力问题
+
+python3          /tmp/csit6000v-qwen-20716-30031.kERiEy/fp-bin/python3
+java             缺失
+javap            缺失
+objdump          /usr/bin/objdump
+gcc              /mnt/home/public/course-envs/CSIT6000V/assignment1/mpi-gemm-v1/bin/gcc
+unshare          /usr/bin/unshare
+nvidia-smi       缺失
+
+Slurm 作业       30031  分区=tacc  节点=10-0-1-10
+模型端点         未设置（用 --base-url 或 FLAGPILOT_BASE_URL）
+
+结论：可以开始跑
+[fp] service=http://10.0.3.11:8000/v1（10-0-3-11）
+[fp] models: ['qwen3.8-27b']
+[fp] tier B3 → tacc-dev-v5-B3（剩 2580s）
+[split] dev：27 题（/mnt/home/yliutz/WORKDIR/flagpilot-client/tasks/index/splits.json）
+[batch] tacc-dev-v5-B3: 20 题 × 1 seeds, model=qwen3.8-27b, ablation=B3（截断 + 结构化工具 + 完整 prompt）
+[runner] 待跑 20 个 attempt，并发 4，调度：最长预计优先（LPT，参考 5 条历史）
+[1/20] forensics-071-s0       VERIFIED   turns=9 46.69s
+[2/20] forensics-003-s0       VERIFIED   turns=7 54.7s
+[3/20] forensics-094-s0       VERIFIED   turns=5 22.9s
+[4/20] forensics-065-s0       VERIFIED   turns=7 71.26s
+[5/20] crypto-005-s0          VERIFIED   turns=2 13.16s
+[6/20] forensics-008-s0       VERIFIED   turns=9 39.73s
+[7/20] crypto-058-s0          VERIFIED   turns=6 49.62s
+[8/20] crypto-074-s0          budget     turns=12 149.73s
+[9/20] crypto-072-s0          budget     turns=20 166.77s
+[10/20] forensics-059-s0       budget     turns=20 259.44s
+[11/20] crypto-097-s0          VERIFIED   turns=4 14.88s
+[12/20] general-004-s0         VERIFIED   turns=3 6.21s
+[13/20] general-022-s0         wrong      turns=5 43.44s
+[14/20] crypto-093-s0          budget     turns=7 78.15s
+[15/20] general-024-s0         VERIFIED   turns=6 20.24s
+[16/20] general-025-s0         VERIFIED   turns=5 30.2s
+[17/20] general-037-s0         VERIFIED   turns=4 21.01s
+[18/20] general-019-s0         unverified turns=3 14.65s
+[19/20] crypto-092-s0          budget     turns=11 162.05s
+[20/20] crypto-079-s0          budget     turns=20 310.08s
+[runner] 完成 20 个，用时 435.1s
+
+attempts        20   ablation=B3
+verified        12  (60.0%, 95% CI 38.7%–78.1%)
+raw (flag ok)   13  (65.0%, 95% CI 43.3%–81.9%)
+gap             5.0%
+wrong / budget / error  1 / 6 / 0
+mean turns      8.25
+mean wall       78.75 s
+mean tokens     42618
+TTFT p50        652 ms（各题中位数之均值）
+wall p50/p95    45.1 / 262.0 s（n=20）
+solve p50/p95   27.3 / 63.9 s（verified 端到端，n=12）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 84.4%（680512/806494 token；服务只被本批使用时成立）
+reasons         match=12, wrong_flag=2, max_turns=2, invalid_action=2, truncated=1, hardcoded_no_material=1
+by category:
+  Cryptography       n=8   verified=3   raw=3   v_rate=38% r_rate=38%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=5   v_rate=67% r_rate=83%
+
+失败归因（8 条失败，共 12 个标签，同一条可命中多个）：
+  不守 JSON 协议                    3  (38%)
+  输出被截断（撞 max_tokens）       3  (38%)
+  轮次耗尽未提交                    3  (38%)
+  工具/沙箱超时                     1  (12%)
+  答案错误                          1  (12%)
+  脚本硬编码答案                    1  (12%)
+  （成功的 attempt 途中还碰到：环境缺工具×6——不计入失败，但说明环境有缺口）
+  → 有题是输出被 max_tokens 截断：先调大 --max-tokens 再比较模型，否则比的是预算不是能力。
+
+逐条（取前 8 条）：
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-072-s0           工具/沙箱超时                   turn 5 shell
+  forensics-059-s0        输出被截断（撞 max_tokens）     turn 20: 2048/2048 tok 用满，JSON 未闭合
+  general-022-s0          答案错误                        
+  crypto-093-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-019-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           输出被截断（撞 max_tokens）     turn 3: 2048/2048 tok 用满，JSON 未闭合
+attempts        20   ablation=B3
+verified        12  (60.0%, 95% CI 38.7%–78.1%)
+raw (flag ok)   13  (65.0%, 95% CI 43.3%–81.9%)
+gap             5.0%
+wrong / budget / error  1 / 6 / 0
+mean turns      8.25
+mean wall       78.75 s
+mean tokens     42618
+TTFT p50        652 ms（各题中位数之均值）
+wall p50/p95    45.1 / 262.0 s（n=20）
+solve p50/p95   27.3 / 63.9 s（verified 端到端，n=12）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 84.4%（680512/806494 token；服务只被本批使用时成立）
+reasons         match=12, wrong_flag=2, max_turns=2, invalid_action=2, truncated=1, hardcoded_no_material=1
+by category:
+  Cryptography       n=8   verified=3   raw=3   v_rate=38% r_rate=38%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=5   v_rate=67% r_rate=83%
+
+失败归因（8 条失败，共 12 个标签，同一条可命中多个）：
+  不守 JSON 协议                    3  (38%)
+  输出被截断（撞 max_tokens）       3  (38%)
+  轮次耗尽未提交                    3  (38%)
+  工具/沙箱超时                     1  (12%)
+  答案错误                          1  (12%)
+  脚本硬编码答案                    1  (12%)
+  （成功的 attempt 途中还碰到：环境缺工具×6——不计入失败，但说明环境有缺口）
+  → 有题是输出被 max_tokens 截断：先调大 --max-tokens 再比较模型，否则比的是预算不是能力。
+
+逐条（取前 8 条）：
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-072-s0           工具/沙箱超时                   turn 5 shell
+  forensics-059-s0        输出被截断（撞 max_tokens）     turn 20: 2048/2048 tok 用满，JSON 未闭合
+  general-022-s0          答案错误                        
+  crypto-093-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-019-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           输出被截断（撞 max_tokens）     turn 3: 2048/2048 tok 用满，JSON 未闭合
+
+Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v5-B3.md
+[fp] tier-done tacc-dev-v5-B3 438s
+[fp] tier B0 → tacc-dev-v5-B0（剩 2142s）
+[split] dev：27 题（/mnt/home/yliutz/WORKDIR/flagpilot-client/tasks/index/splits.json）
+[batch] tacc-dev-v5-B0: 20 题 × 1 seeds, model=qwen3.8-27b, ablation=B0（无截断 + 仅 shell/python + 最小 prompt）
+[runner] 待跑 20 个 attempt，并发 4，调度：最长预计优先（LPT，参考 25 条历史）
+[1/20] forensics-059-s0       budget     turns=11 96.89s
+[2/20] crypto-079-s0          VERIFIED   turns=6 151.1s
+[3/20] crypto-072-s0          budget     turns=14 168.35s
+[4/20] crypto-093-s0          VERIFIED   turns=5 37.76s
+[5/20] crypto-092-s0          budget     turns=10 196.81s
+[6/20] forensics-065-s0       VERIFIED   turns=5 36.19s
+[7/20] crypto-074-s0          budget     turns=14 137.43s
+[8/20] crypto-058-s0          VERIFIED   turns=7 47.8s
+[9/20] forensics-071-s0       VERIFIED   turns=8 33.53s
+[10/20] forensics-003-s0       VERIFIED   turns=5 53.2s
+[11/20] general-022-s0         unverified turns=5 29.74s
+[12/20] forensics-094-s0       VERIFIED   turns=4 15.99s
+[13/20] forensics-008-s0       VERIFIED   turns=5 29.7s
+[14/20] general-037-s0         VERIFIED   turns=4 14.72s
+[15/20] general-024-s0         VERIFIED   turns=4 16.37s
+[16/20] general-025-s0         VERIFIED   turns=6 50.12s
+[17/20] general-019-s0         unverified turns=3 9.09s
+[18/20] general-004-s0         VERIFIED   turns=3 8.45s
+[19/20] crypto-005-s0          VERIFIED   turns=6 31.36s
+[20/20] crypto-097-s0          VERIFIED   turns=5 30.67s
+[runner] 完成 20 个，用时 314.3s
+
+attempts        20   ablation=B0
+verified        14  (70.0%, 95% CI 48.1%–85.5%)
+raw (flag ok)   16  (80.0%, 95% CI 58.4%–91.9%)
+gap             10.0%
+wrong / budget / error  0 / 4 / 0
+mean turns      6.5
+mean wall       59.76 s
+mean tokens     24220
+TTFT p50        591 ms（各题中位数之均值）
+wall p50/p95    34.9 / 169.8 s（n=20）
+solve p50/p95   33.0 / 88.3 s（verified 端到端，n=14）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 76.2%（342608/449768 token；服务只被本批使用时成立）
+reasons         match=14, invalid_action=2, wrong_flag=2, hardcoded_no_material=1, script_error=1
+by category:
+  Cryptography       n=8   verified=5   raw=5   v_rate=62% r_rate=62%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=6   v_rate=67% r_rate=100%
+
+失败归因（6 条失败，共 8 个标签，同一条可命中多个）：
+  不守 JSON 协议                    4  (67%)
+  环境缺工具                        2  (33%)
+  脚本硬编码答案                    1  (17%)
+  答案对但不可复现                  1  (17%)
+  （成功的 attempt 途中还碰到：环境缺工具×6、输出被截断（撞 max_tokens）×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 6 条）：
+  forensics-059-s0        环境缺工具                      ls -la ./challenge/ && file ./challenge/email-export.eml /bin/sh: 1: file: not found
+  crypto-072-s0           环境缺工具                      file ./challenge/new_caesar.py; xxd ./challenge/new_caesar.py | tail -5 /bin/sh: 1: file: 
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-022-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  general-019-s0          答案对但不可复现                script_error: 输出里没有该 flag（exit=0）
+attempts        20   ablation=B0
+verified        14  (70.0%, 95% CI 48.1%–85.5%)
+raw (flag ok)   16  (80.0%, 95% CI 58.4%–91.9%)
+gap             10.0%
+wrong / budget / error  0 / 4 / 0
+mean turns      6.5
+mean wall       59.76 s
+mean tokens     24220
+TTFT p50        591 ms（各题中位数之均值）
+wall p50/p95    34.9 / 169.8 s（n=20）
+solve p50/p95   33.0 / 88.3 s（verified 端到端，n=14）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 76.2%（342608/449768 token；服务只被本批使用时成立）
+reasons         match=14, invalid_action=2, wrong_flag=2, hardcoded_no_material=1, script_error=1
+by category:
+  Cryptography       n=8   verified=5   raw=5   v_rate=62% r_rate=62%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=6   v_rate=67% r_rate=100%
+
+失败归因（6 条失败，共 8 个标签，同一条可命中多个）：
+  不守 JSON 协议                    4  (67%)
+  环境缺工具                        2  (33%)
+  脚本硬编码答案                    1  (17%)
+  答案对但不可复现                  1  (17%)
+  （成功的 attempt 途中还碰到：环境缺工具×6、输出被截断（撞 max_tokens）×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 6 条）：
+  forensics-059-s0        环境缺工具                      ls -la ./challenge/ && file ./challenge/email-export.eml /bin/sh: 1: file: not found
+  crypto-072-s0           环境缺工具                      file ./challenge/new_caesar.py; xxd ./challenge/new_caesar.py | tail -5 /bin/sh: 1: file: 
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-022-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  general-019-s0          答案对但不可复现                script_error: 输出里没有该 flag（exit=0）
+
+Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v5-B0.md
+[fp] tier-done tacc-dev-v5-B0 316s
+[fp] tier B1 → tacc-dev-v5-B1（剩 1826s）
+[split] dev：27 题（/mnt/home/yliutz/WORKDIR/flagpilot-client/tasks/index/splits.json）
+[batch] tacc-dev-v5-B1: 20 题 × 1 seeds, model=qwen3.8-27b, ablation=B1（截断 + 仅 shell/python + 最小 prompt）
+[runner] 待跑 20 个 attempt，并发 4，调度：最长预计优先（LPT，参考 45 条历史）
+[1/20] crypto-079-s0          VERIFIED   turns=6 142.23s
+[2/20] crypto-072-s0          wrong      turns=13 166.33s
+[3/20] forensics-059-s0       budget     turns=18 172.07s
+[4/20] crypto-092-s0          budget     turns=10 196.16s
+[5/20] forensics-065-s0       VERIFIED   turns=6 36.07s
+[6/20] crypto-093-s0          VERIFIED   turns=7 57.9s
+[7/20] crypto-058-s0          VERIFIED   turns=4 20.05s
+[8/20] forensics-003-s0       VERIFIED   turns=5 47.07s
+[9/20] forensics-071-s0       VERIFIED   turns=6 28.3s
+[10/20] general-025-s0         VERIFIED   turns=4 38.94s
+[11/20] general-022-s0         unverified turns=5 20.38s
+[12/20] crypto-074-s0          budget     turns=15 122.26s
+[13/20] forensics-094-s0       VERIFIED   turns=4 20.11s
+[14/20] forensics-008-s0       VERIFIED   turns=6 29.98s
+[15/20] crypto-005-s0          unverified turns=5 27.59s
+[16/20] crypto-097-s0          VERIFIED   turns=5 30.81s
+[17/20] general-019-s0         unverified turns=3 10.03s
+[18/20] general-004-s0         VERIFIED   turns=3 8.95s
+[19/20] general-037-s0         VERIFIED   turns=5 16.77s
+[20/20] general-024-s0         VERIFIED   turns=5 34.35s
+[runner] 完成 20 个，用时 323.7s
+
+attempts        20   ablation=B1
+verified        13  (65.0%, 95% CI 43.3%–81.9%)
+raw (flag ok)   16  (80.0%, 95% CI 58.4%–91.9%)
+gap             15.0%
+wrong / budget / error  1 / 3 / 0
+mean turns      6.75
+mean wall       61.32 s
+mean tokens     22262
+TTFT p50        768 ms（各题中位数之均值）
+wall p50/p95    32.6 / 173.3 s（n=20）
+solve p50/p95   32.0 / 92.5 s（verified 端到端，n=13）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 75.9%（311248/410228 token；服务只被本批使用时成立）
+reasons         match=13, invalid_action=3, hardcoded_no_material=2, wrong_flag=1, script_error=1
+by category:
+  Cryptography       n=8   verified=4   raw=5   v_rate=50% r_rate=62%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=6   v_rate=67% r_rate=100%
+
+失败归因（7 条失败，共 9 个标签，同一条可命中多个）：
+  不守 JSON 协议                    3  (43%)
+  脚本硬编码答案                    2  (29%)
+  工具/沙箱超时                     1  (14%)
+  答案错误                          1  (14%)
+  环境缺工具                        1  (14%)
+  答案对但不可复现                  1  (14%)
+  （成功的 attempt 途中还碰到：环境缺工具×7、输出被截断（撞 max_tokens）×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 7 条）：
+  crypto-072-s0           工具/沙箱超时                   turn 9 shell
+  forensics-059-s0        环境缺工具                      ls -la ./challenge/ && file ./challenge/email-export.eml /bin/sh: 1: file: not found
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-022-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-005-s0           脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  general-019-s0          答案对但不可复现                script_error: 输出里没有该 flag（exit=0）
+attempts        20   ablation=B1
+verified        13  (65.0%, 95% CI 43.3%–81.9%)
+raw (flag ok)   16  (80.0%, 95% CI 58.4%–91.9%)
+gap             15.0%
+wrong / budget / error  1 / 3 / 0
+mean turns      6.75
+mean wall       61.32 s
+mean tokens     22262
+TTFT p50        768 ms（各题中位数之均值）
+wall p50/p95    32.6 / 173.3 s（n=20）
+solve p50/p95   32.0 / 92.5 s（verified 端到端，n=13）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 75.9%（311248/410228 token；服务只被本批使用时成立）
+reasons         match=13, invalid_action=3, hardcoded_no_material=2, wrong_flag=1, script_error=1
+by category:
+  Cryptography       n=8   verified=4   raw=5   v_rate=50% r_rate=62%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=6   v_rate=67% r_rate=100%
+
+失败归因（7 条失败，共 9 个标签，同一条可命中多个）：
+  不守 JSON 协议                    3  (43%)
+  脚本硬编码答案                    2  (29%)
+  工具/沙箱超时                     1  (14%)
+  答案错误                          1  (14%)
+  环境缺工具                        1  (14%)
+  答案对但不可复现                  1  (14%)
+  （成功的 attempt 途中还碰到：环境缺工具×7、输出被截断（撞 max_tokens）×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 7 条）：
+  crypto-072-s0           工具/沙箱超时                   turn 9 shell
+  forensics-059-s0        环境缺工具                      ls -la ./challenge/ && file ./challenge/email-export.eml /bin/sh: 1: file: not found
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-022-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-005-s0           脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+  general-019-s0          答案对但不可复现                script_error: 输出里没有该 flag（exit=0）
+
+Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v5-B1.md
+[fp] tier-done tacc-dev-v5-B1 326s
+[fp] tier B2 → tacc-dev-v5-B2（剩 1500s）
+[split] dev：27 题（/mnt/home/yliutz/WORKDIR/flagpilot-client/tasks/index/splits.json）
+[batch] tacc-dev-v5-B2: 20 题 × 1 seeds, model=qwen3.8-27b, ablation=B2（截断 + 结构化工具 + 最小 prompt）
+[runner] 待跑 20 个 attempt，并发 4，调度：最长预计优先（LPT，参考 65 条历史）
+[1/20] forensics-059-s0       budget     turns=20 101.17s
+[2/20] crypto-092-s0          budget     turns=10 151.26s
+[3/20] crypto-072-s0          budget     turns=15 158.27s
+[4/20] crypto-074-s0          budget     turns=10 70.26s
+[5/20] crypto-079-s0          budget     turns=6 197.66s
+[6/20] crypto-093-s0          unverified turns=6 48.82s
+[7/20] crypto-058-s0          VERIFIED   turns=5 29.66s
+[8/20] forensics-003-s0       VERIFIED   turns=6 52.51s
+[9/20] forensics-065-s0       VERIFIED   turns=5 24.77s
+[10/20] forensics-071-s0       VERIFIED   turns=8 29.97s
+[11/20] crypto-097-s0          VERIFIED   turns=5 27.01s
+[12/20] general-025-s0         VERIFIED   turns=5 46.62s
+[13/20] forensics-008-s0       VERIFIED   turns=6 28.35s
+[14/20] crypto-005-s0          VERIFIED   turns=5 22.79s
+[15/20] general-022-s0         wrong      turns=7 38.0s
+[16/20] general-024-s0         VERIFIED   turns=7 30.93s
+[17/20] general-019-s0         unverified turns=3 12.32s
+[18/20] general-037-s0         VERIFIED   turns=4 23.11s
+[19/20] forensics-094-s0       VERIFIED   turns=5 30.57s
+[20/20] general-004-s0         VERIFIED   turns=4 11.35s
+[runner] 完成 20 个，用时 291.5s
+
+attempts        20   ablation=B2
+verified        12  (60.0%, 95% CI 38.7%–78.1%)
+raw (flag ok)   14  (70.0%, 95% CI 48.1%–85.5%)
+gap             10.0%
+wrong / budget / error  1 / 5 / 0
+mean turns      7.1
+mean wall       56.77 s
+mean tokens     23003
+TTFT p50        695 ms（各题中位数之均值）
+wall p50/p95    30.8 / 160.2 s（n=20）
+solve p50/p95   29.7 / 49.9 s（verified 端到端，n=12）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 74.4%（318304/427824 token；服务只被本批使用时成立）
+reasons         match=12, invalid_action=3, max_turns=1, truncated=1, no_output=1, wrong_flag=1
+by category:
+  Cryptography       n=8   verified=3   raw=4   v_rate=38% r_rate=50%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=5   v_rate=67% r_rate=83%
+
+失败归因（8 条失败，共 8 个标签，同一条可命中多个）：
+  不守 JSON 协议                    3  (38%)
+  轮次耗尽未提交                    1  (12%)
+  输出被截断（撞 max_tokens）       1  (12%)
+  答案对但不可复现                  1  (12%)
+  答案错误                          1  (12%)
+  脚本硬编码答案                    1  (12%)
+  （成功的 attempt 途中还碰到：环境缺工具×4——不计入失败，但说明环境有缺口）
+  → 有题是输出被 max_tokens 截断：先调大 --max-tokens 再比较模型，否则比的是预算不是能力。
+
+逐条（取前 8 条）：
+  forensics-059-s0        轮次耗尽未提交                  20 轮用满，始终没走到 submit
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-072-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           输出被截断（撞 max_tokens）     turn 6: 2048/2048 tok 用满，JSON 未闭合
+  crypto-093-s0           答案对但不可复现                no_output: 重放无输出（exit=0）
+  general-022-s0          答案错误                        
+  general-019-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+attempts        20   ablation=B2
+verified        12  (60.0%, 95% CI 38.7%–78.1%)
+raw (flag ok)   14  (70.0%, 95% CI 48.1%–85.5%)
+gap             10.0%
+wrong / budget / error  1 / 5 / 0
+mean turns      7.1
+mean wall       56.77 s
+mean tokens     23003
+TTFT p50        695 ms（各题中位数之均值）
+wall p50/p95    30.8 / 160.2 s（n=20）
+solve p50/p95   29.7 / 49.9 s（verified 端到端，n=12）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 74.4%（318304/427824 token；服务只被本批使用时成立）
+reasons         match=12, invalid_action=3, max_turns=1, truncated=1, no_output=1, wrong_flag=1
+by category:
+  Cryptography       n=8   verified=3   raw=4   v_rate=38% r_rate=50%
+  Forensics          n=6   verified=5   raw=5   v_rate=83% r_rate=83%
+  General Skills     n=6   verified=4   raw=5   v_rate=67% r_rate=83%
+
+失败归因（8 条失败，共 8 个标签，同一条可命中多个）：
+  不守 JSON 协议                    3  (38%)
+  轮次耗尽未提交                    1  (12%)
+  输出被截断（撞 max_tokens）       1  (12%)
+  答案对但不可复现                  1  (12%)
+  答案错误                          1  (12%)
+  脚本硬编码答案                    1  (12%)
+  （成功的 attempt 途中还碰到：环境缺工具×4——不计入失败，但说明环境有缺口）
+  → 有题是输出被 max_tokens 截断：先调大 --max-tokens 再比较模型，否则比的是预算不是能力。
+
+逐条（取前 8 条）：
+  forensics-059-s0        轮次耗尽未提交                  20 轮用满，始终没走到 submit
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-072-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           输出被截断（撞 max_tokens）     turn 6: 2048/2048 tok 用满，JSON 未闭合
+  crypto-093-s0           答案对但不可复现                no_output: 重放无输出（exit=0）
+  general-022-s0          答案错误                        
+  general-019-s0          脚本硬编码答案                  hardcoded_no_material: 清空 challenge/ 后仍打印出同一个 flag：答案不是从题目材料推出来的
+
+Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v5-B2.md
+[fp] tier-done tacc-dev-v5-B2 294s
+[fp] done: /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v5

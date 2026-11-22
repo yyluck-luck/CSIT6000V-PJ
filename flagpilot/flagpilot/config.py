@@ -46,14 +46,25 @@ class SandboxLimits:
 
 @dataclass
 class Budget:
-    """一次 attempt 的预算。三种上限任一触发即终止。"""
+    """一次 attempt 的预算。任一上限触发即终止。
 
-    # TODO(你): 跑完 20 题冒烟后，按真实轮次分布调 max_turns（现在 20 是拍的）。
+    20 轮是评测口径（v5–v7 都是它）。按 v7 的分布它在评测题上不起作用：通过的尝试中位数 4–5 轮、最多 14 轮，
+    160 次尝试没有一次是因为轮数用完而结束的。导入的难题（堆利用之类）20 轮不够：网页单题默认 40 轮，可选更多（for_turns）。
+    max_prompt_tokens 管的是单次请求的上下文（每轮取当次的 prompt_tokens），max_completion_tokens 和 max_wall_s 是整次尝试累计。
+    """
 
     max_turns: int = 20
     max_prompt_tokens: int = 200_000
     max_completion_tokens: int = 32_000
     max_wall_s: int = 1500
+
+    @classmethod
+    def for_turns(cls, turns: int, wall_s: int | None = None) -> "Budget":
+        """turns 轮的预算。累计的输出 token 和墙钟时间按 20 轮时的比例跟着放大（每轮 1,600 token、75 s）：只加轮数，
+        长一点的尝试会先撞上它们。20 轮时正好是评测口径（32,000 token、1,500 s）。"""
+        turns = int(turns)
+        return cls(max_turns=turns, max_completion_tokens=max(32_000, 1_600 * turns),
+                   max_wall_s=int(wall_s) if wall_s else max(1_500, 75 * turns))
 
 
 @dataclass
@@ -74,6 +85,14 @@ class Policy:
     # 压缩时保留最近多少条消息（user/assistant 混计）。
     # 6 条 ≈ 最近 3 轮，够模型接上"我正在干什么"。
     compact_keep_recent: int = 6
+    # 回复中途结束（README 已知局限 16）的三个对策，默认都关：v5–v7 都没开，打开就是另一个引擎，要新批次来量。
+    # 模型自己的回复以什么样子留在历史里（agent.history_reply）：cut = 前 2000 字（v5–v7）；
+    # elide = 同样 2000 字，但把最长的字符串字段从中间省略并标出，JSON 保持完整
+    reply_history: str = "cut"
+    # 回复停在 JSON 中间（finish_reason=stop）时请模型从断处接着写一次，拼起来再解析（agent.CONTINUE_CUT）
+    continue_cut: bool = False
+    # 每段工具输出末尾加一行 "--- end of output ---"（agent.OUTPUT_FENCE）
+    fence_output: bool = False
 
 
 @dataclass
@@ -156,6 +175,10 @@ class ModelSpec:
     # 有些运行时（Ollama）不接受 chat_template_kwargs，此时用 Qwen3 的软开关
     # ——在用户消息末尾加 /no_think。由 make_model_spec() 按模型名自动打开。
     soft_no_think: bool = False
+    # 采样种子：每个请求都带上（vLLM、OpenAI 认 seed 字段，同一 prompt + 同一 seed 采出同样的回复）。None = 不发，
+    # v5–v7 的评测批次都没发。agent 给第 s 次尝试用 seed + s（cli --sample-seed / submit.sh FP_SAMPLE_SEED），
+    # 重复的几次仍是不同的样本。服务端不认这个字段（400 里提到 seed）时客户端就不再发，见 ChatClient。
+    seed: int | None = None
 
 
 def make_model_spec(name: str, base_url: str = "", thinking: bool = False, **kw) -> ModelSpec:
@@ -359,6 +382,7 @@ class RunConfig:
                 "temperature": self.model.temperature,
                 "max_tokens": self.model.max_tokens,
                 **({"fallback": self.model.fallback} if self.model.fallback else {}),
+                **({"seed": self.model.seed} if self.model.seed is not None else {}),
             },
             "budget": self.budget.__dict__,
             "policy": self.policy.__dict__,

@@ -178,7 +178,7 @@ try {
   check("step mode: a held command can be edited, skipped or run; a hint reaches the next step", stHeld && edited && stSkipped && finished && hinted, JSON.stringify({stHeld, edited, stSecond, stSkipped, finished, hinted}));
   await js("localStorage.removeItem('fp.stepmode')");
   await js("(() => { const d = document.querySelector('#flow details.step'); if (d) d.open = true; const b = document.querySelector('[data-explain]'); b && b.click(); })()");
-  check("a step can be explained in Ask", await until("document.querySelector('.page.on').dataset.page === 'chat' && /Explain step \\d+ of my run/.test((document.querySelector('#chatLog .bub.me') || {}).textContent || '') && document.querySelector('#chatLog .bub.bot .md')", 15000));
+  check("a step can be explained in Ask, in a new conversation about the run's challenge", await until("document.querySelector('.page.on').dataset.page === 'chat' && /Explain step \\d+ of my run/.test((document.querySelector('#chatLog .bub.me') || {}).textContent || '') && document.querySelector('#chatLog .bub.bot .md') && askTask && askTask.name === sel", 15000));
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
 
   // 5c. Finish ends a run at once (its card says so), and the card runs it again with a hint that reaches the agent
@@ -222,6 +222,11 @@ try {
               {id: 'warmup', label: 'Allocating memory and warming up', state: 'todo', s: 15}, {id: 'server', label: 'Opening the API', state: 'todo', s: 5},
               {id: 'ready', label: 'Ready', state: 'todo', s: 0}]}}`);
   const pStart = await until("document.querySelectorAll('#qwBody .qsteps li').length === 9 && document.querySelector('#qwBody .qsteps li.current') && /60%/.test(document.querySelector('#qwBody').textContent) && /about (1:\\d\\d|\\d+ s) left/.test(document.querySelector('#qwBody .qline').textContent) && document.querySelector('#qwBody .qlog')", 6000);
+  await js("window.__QW.progress.slow = true; window.__QW.progress.eta = 80; qwenPoll()");
+  const pSlow = await until("/slower than usual today/.test(document.querySelector('#qwBody .qline').textContent)", 4000)
+    && await js(`taccStage({stage: 'retrying', message: "TACC's login gateway dropped the connection; trying again in 20 s (4/6)"}).startsWith("TACC's")
+      && taccStage({stage: 'retrying', message: 'The upload to TACC did not arrive whole'}).startsWith('the upload')`);
+  await js("window.__QW.progress.slow = false; window.__QW.progress.eta = 70; qwenPoll()");
   const smallPanel = await js(SMALL);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
   const pClosed = await until("document.querySelector('#qwWrap').hidden", 2000);
@@ -233,8 +238,8 @@ try {
   const dlgGone = await until("document.querySelector('#dlgWrap').hidden", 3000), noPost = await js("window.__posts3.length === 0"), noPending = await js("!pendingRun");
   const declined = dlgGone && noPost && noPending;
   await js("window.fetch = window.__F3; QW = {phase: 'idle'}; qwenPoll()");
-  check("Qwen panel shows each start-up step live; a session about to end asks before a run", pIdle && pStart && pClosed && qAsked && declined && !smallPanel.length,
-    JSON.stringify({pIdle, pStart, pClosed, qAsked, dlgGone, noPost, noPending, posts: await js('window.__posts3'), dlg: await js("(() => { const w = document.querySelector('#dlgWrap'); return [w.hidden, w.className, (w.querySelector('#dlgT') || {}).textContent || '', w.querySelectorAll('.btn').length]; })()"), small: smallPanel.slice(0, 3)}));
+  check("Qwen panel shows each start-up step live (and says when it is slower than usual); a session about to end asks before a run", pIdle && pStart && pSlow && pClosed && qAsked && declined && !smallPanel.length,
+    JSON.stringify({pIdle, pStart, pSlow, pClosed, qAsked, dlgGone, noPost, noPending, posts: await js('window.__posts3'), dlg: await js("(() => { const w = document.querySelector('#dlgWrap'); return [w.hidden, w.className, (w.querySelector('#dlgT') || {}).textContent || '', w.querySelectorAll('.btn').length]; })()"), small: smallPanel.slice(0, 3)}));
   await noCJK("solve, after the Qwen panel");
 
   // 5e. pasting a link: several matches → a list to pick from; a challenge already here → offered at once; fixes are shown
@@ -368,7 +373,7 @@ try {
     const stayed = sel === keep;
     pick(MINE[MINE.length - 1]);
     const out = [row && row.querySelector('.nm').textContent, a && a.getAttribute('href') === src, stayed, document.querySelector('#sgLink').getAttribute('href') === src,
-      document.querySelector('#sgTitle').textContent === 'Children Tcache' || true, document.querySelector('#mountChip .tn').textContent, taskLabel('custom-20261120-000000-children_tcache-ab12')];
+      document.querySelector('#sgTitle').textContent === 'Children Tcache' || true, document.querySelector('.taskpill .tn').textContent, taskLabel('custom-20261120-000000-children_tcache-ab12')];
     MINE.pop(); pick(null); renderTaskList(); return out; })()`);
   const pvOpen = await until("!document.querySelector('#tpWrap').hidden && document.querySelector('#tpTitle').textContent === 'Children Tcache' && (document.querySelector('#tpActs a') || {}).href === 'https://github.com/sajjadium/ctf-archives/tree/main/ctfs/HITCON/2018/pwn/children_tcache'", 3000);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
@@ -619,20 +624,274 @@ try {
   await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()"); await sleep(300);
   await js("document.querySelector('#mountChip').click()"); await until("!document.querySelector('#sheetWrap').hidden", 2000); await sleep(200);
   await js(sheetAll); await sleep(150);
-  const askPickName = await js("(() => { const r = [...document.querySelectorAll('#tasks .row')].filter(x => !x.hidden && x.dataset.name !== sel)[0]; r.click(); return r.dataset.name; })()");
-  const askStay = await until(`document.querySelector('.page.on').dataset.page === 'chat' && document.querySelector('#sheetWrap').hidden && sel === ${JSON.stringify(askPickName)}`, 2000);
-  check("picking a challenge from the Lab or Ask stays on that page", labStay && askStay, JSON.stringify({labStay, askStay}));
+  const solveWas = await js("sel");
+  const askPickName = await js("(() => { const r = [...document.querySelectorAll('#tasks .row')].filter(x => !x.hidden && x.dataset.name !== sel && x.dataset.name !== (askTask && askTask.name))[0]; r.click(); return r.dataset.name; })()");
+  const askStay = await until(`document.querySelector('.page.on').dataset.page === 'chat' && document.querySelector('#sheetWrap').hidden && askTask && askTask.name === ${JSON.stringify(askPickName)} && sel === ${JSON.stringify(solveWas)}`, 2000);
+  check("picking a challenge from the Lab stays on the Lab; from Ask it sets only Ask's (Solve keeps its own)", labStay && askStay, JSON.stringify({labStay, askStay, solveWas, askPickName}));
+
+  // Solve and Ask keep their own challenge: a new conversation starts with the one open in Solve; choosing one in Ask never
+  // changes Solve's; a conversation with messages stays with its challenge (choosing another opens a new one, Solve's
+  // changes leave it alone); reopening a thread brings its challenge back, and its messages go out with it
+  const [tA, tB, tC] = await js("(() => { const g = TASKS.filter(t => !t.custom); return [g[0].name, g[1].name, g[2].name]; })()");
+  await js(`pick(taskByName(${JSON.stringify(tA)}))`);
+  await js("document.querySelector('#newChat').click()"); await sleep(150);
+  const sxNew = await js(`askTask && askTask.name === ${JSON.stringify(tA)} && document.querySelector('#mountChip .tn').textContent === taskLabel(taskByName(${JSON.stringify(tA)}))`);
+  await js("document.querySelector('#mountChip').click()"); await until("!document.querySelector('#sheetWrap').hidden", 2000); await sleep(200);
+  await js(sheetAll); await sleep(150);
+  await js(`document.querySelector('#tasks .row[data-name=${JSON.stringify(tB)}]').click()`);
+  const sxOwn = await until(`askTask && askTask.name === ${JSON.stringify(tB)} && sel === ${JSON.stringify(tA)} && document.querySelector('#sheetWrap').hidden && document.querySelector('.page.on').dataset.page === 'chat'`, 2000);
+  await js("window.__chatBodies = []; window.__F3 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/chat') window.__chatBodies.push(JSON.parse(o.body)); return window.__F3(u, o); }");
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'what is in the files?'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const sxSent = await until(`window.__chatBodies.length >= 1 && window.__chatBodies[0].task === ${JSON.stringify(tB)} && chatId && !chatBusy && document.querySelector('#chatLog .bub.bot .md')`, 15000);
+  const threadB = await js("chatId");
+  await js(`pick(taskByName(${JSON.stringify(tC)}))`);
+  const sxKept = await js(`askTask.name === ${JSON.stringify(tB)} && document.querySelector('#mountChip .tn').textContent === taskLabel(taskByName(${JSON.stringify(tB)}))`);
+  await js(`askSwitch(taskByName(${JSON.stringify(tA)}))`);
+  const sxSplit = await js(`!chatId && !document.querySelector('#chatLog .bub') && askTask.name === ${JSON.stringify(tA)} && sel === ${JSON.stringify(tC)}`);
+  await until(`document.querySelector('#threadList .thread[data-sid=${JSON.stringify(threadB)}]')`, 5000);
+  await js(`document.querySelector('#threadList .thread[data-sid=${JSON.stringify(threadB)}]').click()`);
+  const sxBack = await until(`chatId === ${JSON.stringify(threadB)} && askTask && askTask.name === ${JSON.stringify(tB)} && sel === ${JSON.stringify(tC)}`, 5000);
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'and the second file?'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const sxAgain = await until(`window.__chatBodies.length >= 2 && window.__chatBodies[1].task === ${JSON.stringify(tB)} && window.__chatBodies[1].session_id === ${JSON.stringify(threadB)} && !chatBusy`, 15000);
+  await js("window.fetch = window.__F3; newChat()");
+  check("Solve and Ask keep their own challenge (new conversation from Solve; Ask's choice never changes Solve; threads keep theirs)",
+    sxNew && sxOwn && sxSent && sxKept && sxSplit && sxBack && sxAgain, JSON.stringify({sxNew, sxOwn, sxSent, sxKept, sxSplit, sxBack, sxAgain, tA, tB, tC}));
+
+  // Ask: a conversation can be left while its reply is still coming in; its row in Threads blinks until the reply is done,
+  // the reply never lands in another conversation, and opening the conversation again shows it (live, then finished)
+  await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()"); await sleep(250);
+  await js(`(() => { window.__F5 = window.fetch; window.__ES5 = window.EventSource; window.__gate5 = null; window.__aDone = false;
+    const json = x => Promise.resolve(new Response(JSON.stringify(x), {headers: {'Content-Type': 'application/json'}}));
+    window.fetch = (u, o) => { u = String(u);
+      if (u === '/api/chat' && o && o.method === 'POST' && JSON.parse(o.body).message === 'long question') return json({session_id: 'aaaaaaaaaaaa', turn: 1});
+      if (u.startsWith('/api/chat/sessions')) return window.__F5(u, o).then(r => r.json()).then(d => json({sessions: [{id: 'aaaaaaaaaaaa', title: 'long question', turns: 1, ts: Date.now() / 1000}].concat((d.sessions || []).filter(x => x.id !== 'aaaaaaaaaaaa'))}));
+      if (u.startsWith('/api/chat/history?id=aaaaaaaaaaaa')) return json({session_id: 'aaaaaaaaaaaa', model: '', task: '', exists: true,
+        messages: [{type: 'user', turn: 1, text: 'long question'}].concat(window.__aDone ? [{type: 'reply', turn: 1, answer: 'Long answer'}] : [])});
+      return window.__F5(u, o); };
+    window.EventSource = class { constructor(url){ if (!String(url).includes('aaaaaaaaaaaa')) return new window.__ES5(url);
+      window.__gate5 = () => { window.__aDone = true; this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Long answer', turns: 1, session_id: 'aaaaaaaaaaaa'})}); }; } close(){} }; })()`);
+  await js("newChat()"); await sleep(150);
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'long question'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const swBlink = await until("window.__gate5 && document.querySelector('#threadList .thread[data-sid=\"aaaaaaaaaaaa\"].replying') && /Replying/.test(document.querySelector('#threadList .thread[data-sid=\"aaaaaaaaaaaa\"]').textContent)", 5000);
+  const otherSid = await js("(() => { const b = [...document.querySelectorAll('#threadList .thread')].find(x => x.dataset.sid !== 'aaaaaaaaaaaa'); return b && b.dataset.sid; })()");
+  const toastsBefore = await js("document.querySelectorAll('.toast').length");
+  await js(`document.querySelector('#threadList .thread[data-sid="${otherSid}"]').click()`);
+  const swAway = await until(`chatId === ${JSON.stringify(otherSid)} && !/long question/.test(document.querySelector('#chatLog').textContent) && !chatBusy`, 5000);
+  const swNoRefuse = !(await js("[...document.querySelectorAll('.toast')].some(t => /still coming in/.test(t.textContent))"));
+  await js(`document.querySelector('#threadList .thread[data-sid="aaaaaaaaaaaa"]').click()`);
+  const swBack = await until("chatId === 'aaaaaaaaaaaa' && /long question/.test(document.querySelector('#chatLog').textContent) && document.querySelector('#chatLog .bub.bot .typing') && chatBusy", 5000);
+  await js(`document.querySelector('#threadList .thread[data-sid="${otherSid}"]').click()`);
+  await until(`chatId === ${JSON.stringify(otherSid)}`, 5000); await sleep(200);
+  await js("window.__gate5()");
+  const swDone = await until("!document.querySelector('#threadList .thread.replying') && !/Long answer/.test(document.querySelector('#chatLog').textContent) && chatId !== 'aaaaaaaaaaaa'", 5000);
+  await js(`document.querySelector('#threadList .thread[data-sid="aaaaaaaaaaaa"]').click()`);
+  const swFinal = await until("chatId === 'aaaaaaaaaaaa' && /Long answer/.test(document.querySelector('#chatLog').textContent) && !document.querySelector('#chatLog .typing') && !chatBusy", 5000);
+  await js("window.fetch = window.__F5; window.EventSource = window.__ES5; newChat()");
+  check("Ask: a conversation can be left while it is being answered; it blinks in Threads, and the reply stays in it",
+    swBlink && !!otherSid && swAway && swNoRefuse && swBack && swDone && swFinal, JSON.stringify({swBlink, otherSid, swAway, swNoRefuse, swBack, swDone, swFinal, toastsBefore}));
+
+  // Ask: a new conversation whose first message cannot go out yet (Qwen still starting, or slow to send) is listed in Threads
+  // from the page, blinking; a new conversation can be started meanwhile and the waiting one opened again; once the server
+  // gives it an id, its row becomes the real one
+  await js(`(() => { window.__F6 = window.fetch; window.__ES6 = window.EventSource; window.__post6 = null; window.__done6 = null; window.__c6 = false;
+    const json = x => Promise.resolve(new Response(JSON.stringify(x), {headers: {'Content-Type': 'application/json'}}));
+    window.fetch = (u, o) => { u = String(u);
+      if (u === '/api/chat' && o && o.method === 'POST' && JSON.parse(o.body).message === 'draft question')
+        return new Promise(res => { window.__post6 = () => { window.__c6 = true; res(new Response(JSON.stringify({session_id: 'cccccccccccc', turn: 1}), {headers: {'Content-Type': 'application/json'}})); }; });
+      if (u.startsWith('/api/chat/sessions')) return window.__F6(u, o).then(r => r.json()).then(d => json({sessions: (window.__c6 ? [{id: 'cccccccccccc', title: 'draft question', turns: 1, ts: Date.now() / 1000}] : []).concat((d.sessions || []).filter(x => x.id !== 'cccccccccccc'))}));
+      if (u.startsWith('/api/chat/history?id=cccccccccccc')) return json({session_id: 'cccccccccccc', model: '', task: '', exists: true, messages: [{type: 'user', turn: 1, text: 'draft question'}]});
+      return window.__F6(u, o); };
+    window.EventSource = class { constructor(url){ if (!String(url).includes('cccccccccccc')) return new window.__ES6(url);
+      window.__done6 = () => this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Draft answer', turns: 1, session_id: 'cccccccccccc'})}); } close(){} }; })()`);
+  await js("newChat()"); await sleep(150);
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'draft question'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const drRow = await until("window.__post6 && (() => { const b = document.querySelector('#threadList .thread.draft.replying[data-key]'); return b && /draft question/.test(b.textContent) && /Sending|On hold|Waiting/i.test(b.querySelector('span').textContent) && b.classList.contains('on'); })()", 5000);
+  await js("document.querySelector('#newChat').click()"); await sleep(200);
+  const drNew = await until("!/draft question/.test(document.querySelector('#chatLog').textContent) && !chatBusy && !document.querySelector('#threadList .thread.draft.on') && !!document.querySelector('#threadList .thread.draft.replying')", 5000);
+  await js("document.querySelector('#threadList .thread.draft').click()");
+  const drBack = await until("/draft question/.test(document.querySelector('#chatLog').textContent) && document.querySelector('#chatLog .bub.bot .typing') && chatBusy && document.querySelector('#threadList .thread.draft.on')", 5000);
+  await js("window.__post6()");
+  const drReal = await until("!document.querySelector('#threadList .thread.draft') && document.querySelector('#threadList .thread.replying[data-sid=\"cccccccccccc\"]') && curKey === 'cccccccccccc' && chatId === 'cccccccccccc'", 5000);
+  await until("window.__done6", 5000); await js("window.__done6()");
+  const drDone = await until("!document.querySelector('#threadList .thread.replying') && /Draft answer/.test(document.querySelector('#chatLog').textContent) && !chatBusy", 5000);
+  await js("window.fetch = window.__F6; window.EventSource = window.__ES6; newChat()");
+  check("Ask: a conversation still waiting to send is listed in Threads (blinking); new ones can start meanwhile, and it can be opened again",
+    drRow && drNew && drBack && drReal && drDone, JSON.stringify({drRow, drNew, drBack, drReal, drDone}));
+
+  // Ask's context, end to end on the real server: a conversation of three exchanges shows what the model sees; one exchange
+  // left out and put back, a fresh start from the third, everything brought back; the server's plan follows each step
+  await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()"); await sleep(200);
+  const cxSid = await js(`(async () => { let sid = null;
+    for (const m of ['context one', 'context two', 'context three']){
+      const r = await (await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: m, tools: false, ...(sid ? {session_id: sid} : {})})})).json();
+      sid = r.session_id;
+      for (let i = 0; i < 200; i++){ const h = await (await fetch('/api/chat/history?id=' + sid)).json();
+        if (h.messages.filter(x => x.type === 'reply').length >= (m === 'context one' ? 1 : m === 'context two' ? 2 : 3)) break;
+        await new Promise(res => setTimeout(res, 50)); } }
+    return sid; })()`);
+  await js(`openThread(${JSON.stringify(cxSid)})`);
+  const cxShown = await until("!document.querySelector('#ctxBar').hidden && /The model sees 3 of 3 earlier exchanges · about [0-9.]+k? of 32k tokens/.test(document.querySelector('#ctxText').textContent) && document.querySelectorAll('#chatLog .bub.me[data-ctx=\"in\"]').length === 3", 8000);
+  const ctxState = async () => js(`fetch('/api/chat/context?id=${cxSid}').then(r => r.json()).then(d => d.turns.map(t => t.state).join(','))`);
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"1\"] .ctxbtn[data-op=\"toggle\"]').click()");
+  const cxOut = await until("(() => { const me = document.querySelector('#chatLog .bub.me[data-turn=\"1\"]'), bot = document.querySelector('#chatLog .bub.bot[data-turn=\"1\"]'); return me.classList.contains('ctx-out') && bot && bot.classList.contains('ctx-out') && /Left out by you/.test(me.textContent) && /Put back/.test(me.querySelector('.ctxbtn[data-op=\"toggle\"]').textContent) && !document.querySelector('#ctxReset').hidden && /sees 2 of 3/.test(document.querySelector('#ctxText').textContent); })()", 5000)
+    && (await ctxState()) === 'excluded,in,in';
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"1\"] .ctxbtn[data-op=\"toggle\"]').click()");
+  const cxBack = await until("!document.querySelector('#chatLog .bub.me[data-turn=\"1\"]').classList.contains('ctx-out') && /sees 3 of 3/.test(document.querySelector('#ctxText').textContent) && document.querySelector('#ctxReset').hidden", 5000)
+    && (await ctxState()) === 'in,in,in';
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"1\"] .ctxbtn[data-op=\"toggle\"]').click()"); await until("(document.querySelector('#chatLog .bub.me[data-turn=\"1\"]').dataset.ctx === 'excluded')", 5000);
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"3\"] .ctxbtn[data-op=\"fresh\"]').click()");
+  const cxFresh = await until("document.querySelector('#chatLog .bub.me[data-turn=\"2\"]').dataset.ctx === 'before_fresh' && /Before the fresh start/.test(document.querySelector('#chatLog .bub.me[data-turn=\"2\"]').textContent) && /sees 1 of 3/.test(document.querySelector('#ctxText').textContent)", 5000)
+    && (await ctxState()) === 'excluded,before_fresh,in';
+  await js("document.querySelector('#ctxReset').click()");
+  const cxReset = await until("!document.querySelector('#chatLog .bub.ctx-out') && document.querySelector('#ctxReset').hidden && /sees 3 of 3/.test(document.querySelector('#ctxText').textContent)", 5000)
+    && (await ctxState()) === 'in,in,in';
+  // left out to fit: the meter says so and turns yellow past 60% of the window
+  await js("paintContext({window: 32768, budget: 14064, tokens: 21000, fresh: 0, turns: [{turn: 1, state: 'auto'}, {turn: 2, state: 'in'}, {turn: 3, state: 'in'}]})");
+  const cxAuto = await js("/1 oldest left out to fit/.test(document.querySelector('#ctxText').textContent) && document.querySelector('#ctxBar').classList.contains('hot') && /Left out to fit the model/.test(document.querySelector('#chatLog .bub.me[data-turn=\"1\"]').textContent)");
+  await js("newChat()");
+  const cxNew = await until("document.querySelector('#ctxBar').hidden && !document.querySelector('#chatLog .bub')", 3000);
+  check("Ask's context: what the model sees is shown; an exchange can be left out and put back, a fresh start made and undone",
+    !!cxSid && cxShown && cxOut && cxBack && cxFresh && cxReset && cxAuto && cxNew, JSON.stringify({cxSid, cxShown, cxOut, cxBack, cxFresh, cxReset, cxAuto, cxNew}));
+
+  // a challenge that needs its original network service: Run asks first (once per challenge), Cancel runs nothing, and a
+  // failed run says the failure was expected
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  const svName = await js(`fetch('/api/upload', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: 'service check', query: 'This challenge ran as a network service at chal.example.org 31337. Connect and get the flag.', category: 'misc', files: [{name: 'server.py', data_b64: btoa('print(1)')}]})}).then(r => r.json()).then(d => d.task.name)`);
+  await js("loadTasks()"); await sleep(300);
+  await js(`pick(MINE.find(t => t.name === ${JSON.stringify(svName)}))`); await sleep(150);
+  const svFlag = await js("!!(selTask && selTask.service) && !document.querySelector('#sgSvc').hidden");
+  await js("window.__svRuns = 0; window.__F8 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/run') window.__svRuns++; return window.__F8(u, o); }");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  const svAsk = await until("!document.querySelector('#dlgWrap').hidden && /needs its original server/.test(document.querySelector('#dlgT').textContent)", 3000);
+  await js("[...document.querySelectorAll('#dlgWrap .btn')].find(b => /Cancel/.test(b.textContent)).click()"); await sleep(400);
+  const svCancel = await js("window.__svRuns === 0 && !busy");
+  await js("document.querySelector('#run').click()");
+  await until("!document.querySelector('#dlgWrap').hidden", 3000);
+  await js("[...document.querySelectorAll('#dlgWrap .btn')].find(b => /Run anyway/.test(b.textContent)).click()");
+  const svRan = await until("window.__svRuns === 1", 5000) && await until("!busy && run && run.done", 30000);
+  const svNote = await js("run.done.verdict === 'verified' || /expected: this challenge needs its original server/.test(document.querySelector('#verdict').textContent)");
+  await js("document.querySelector('#run').click()"); await sleep(400);
+  const svOnce = await js("document.querySelector('#dlgWrap').hidden") && await until("window.__svRuns === 2", 5000);
+  await until("!busy", 30000);
+  await js("window.fetch = window.__F8");
+  check("a challenge that needs its original server asks before its first run, and a failure is called expected",
+    !!svName && svFlag && svAsk && svCancel && svRan && svNote && svOnce, JSON.stringify({svName, svFlag, svAsk, svCancel, svRan, svNote, svOnce}));
+
+  // the bottom of a finished run holds still (steps used content-visibility, and the page bounced 32 px there: "the whole page
+  // shakes with Add the answer"); the answer form's warning is about one value and "Save it anyway" saves that value
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  const gName = await js(`fetch('/api/upload', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: 'gold form', query: 'Find the flag in note.txt', category: 'misc', files: [{name: 'note.txt', data_b64: btoa('nothing here')}]})}).then(r => r.json()).then(d => d.task.name)`);
+  await js("loadTasks()"); await sleep(300);
+  await js(`pick(MINE.find(t => t.name === ${JSON.stringify(gName)}))`); await sleep(150);
+  await js("localStorage.removeItem('fp.stepmode'); (() => { const c = document.querySelector('#ctlStep'); if (c && c.checked){ c.checked = false; c.dispatchEvent(new Event('change', {bubbles: true})); } })()");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  await until("document.querySelector('#addGold') && !busy", 30000);
+  await js("showDone({type: 'done', verdict: 'budget', reason: 'invalid_action', turns: 3, ablation: 'B3'})"); await sleep(1200);
+  await js("(() => { const pg = document.querySelector('.page.on'); pg.scrollTop = pg.scrollHeight; })()"); await sleep(400);
+  const still = await js(`new Promise(res => { const pg = document.querySelector('.page.on'), seen = []; const t0 = performance.now();
+    const tick = () => { seen.push(pg.scrollTop); if (performance.now() - t0 < 600) requestAnimationFrame(tick); else res(Math.max(...seen) - Math.min(...seen)); }; requestAnimationFrame(tick); })`);
+  await js(`(() => { window.__gold = []; window.__F6 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/custom/gold'){ const b = JSON.parse(o.body); window.__gold.push(b);
+      return Promise.resolve(new Response(JSON.stringify(b.confirm ? {ok: true, match: null} : {needs_confirm: true, error: 'That is the flag this run could not back up, so it is probably made up. Save it only if you know it is the real flag.'}), {status: b.confirm ? 200 : 409, headers: {'Content-Type': 'application/json'}})); }
+      return window.__F6(u, o); }; })()`);
+  await js("document.querySelector('#addGold').click()"); await until("document.querySelector('#goldIn')", 2000);
+  const typeGold = async v => js(`(() => { const i = document.querySelector('#goldIn'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input', {bubbles: true})); })()`);
+  await typeGold("picoCTF{made_up}"); await js("document.querySelector('#goldSave').click()");
+  const gWarn = await until("/made_up/.test((document.querySelector('.goldin .gwarn') || {}).textContent || '') && document.querySelector('#goldAnyway')", 3000);
+  await typeGold("");
+  const gGone = await until("!document.querySelector('.goldin .gwarn') && !document.querySelector('#goldAnyway')", 2000);
+  await typeGold("picoCTF{made_up}"); await js("document.querySelector('#goldSave').click()"); await until("document.querySelector('#goldAnyway')", 3000);
+  await js("document.querySelector('#goldIn').value = ''"); await js("document.querySelector('#goldAnyway').click()");
+  const gSaved = await until("window.__gold.length === 3 && window.__gold[2].confirm === true && window.__gold[2].gold === 'picoCTF{made_up}'", 3000);
+  await js("window.fetch = window.__F6");
+  check("a finished run's page holds still at the bottom; the answer form's warning names its value and goes when the box changes",
+    still <= 1 && gWarn && gGone && gSaved, JSON.stringify({still, gWarn, gGone, gSaved}));
+
+  // run settings, start to finish (2026-11-22: "settings such as turns and the model should be set at the start; a replay should
+  // re-run"): chosen in the bar before a run, sent with it, shown (not editable) while it runs, where only +20 turns is offered,
+  // then "This run used ..." with Run again / Change settings; a replay shows its own settings under its challenge's title
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  const rsTask = await js("(() => { const t = TASKS.filter(x => !x.custom)[0]; run = null; rsEditing = false; pick(t); return t.name; })()"); await sleep(200);
+  const rsBefore = await js("!document.querySelector('#runSet').hidden && !document.querySelector('#rsEdit').hidden && document.querySelector('#rsInfo').hidden && !document.querySelector('#insp #modelSel') && !!document.querySelector('#runSet #turnSeg')");
+  await js("document.querySelector('#ablSeg button[data-name=\"B1\"]').click(); document.querySelector('#turnSeg button[data-turns=\"40\"]').click()");
+  await js("window.__rb = []; window.__F7 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/run') window.__rb.push(JSON.parse(o.body)); return window.__F7(u, o); }");
+  await js("localStorage.setItem('fp.stepmode', '1'); (() => { const c = document.querySelector('#ctlStep'); if (c && !c.checked){ c.checked = true; c.dispatchEvent(new Event('change', {bubbles: true})); } })()");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  const rsSent = await until("window.__rb.length === 1 && window.__rb[0].ablate === 'B1' && window.__rb[0].turns === 40 && !!window.__rb[0].model", 5000);
+  const rsLive = await until("busy && !document.querySelector('#rsInfo').hidden && document.querySelector('#rsEdit').hidden && /This run: .* · B1 · 40 turns/.test(document.querySelector('#rsNow').textContent) && !document.querySelector('#rsMore').hidden && document.querySelector('#rsAgain').hidden", 8000);
+  await until("!document.querySelector('#awaitCard').hidden", 15000);
+  // twice while the step waits: 40 -> 60 -> 80 (past the four choices); shown at once, taken before the next turn
+  await js("document.querySelector('#rsMore').click()");
+  const rsMore1 = await until("run && run.maxTurns === 60 && /60 turns/.test(document.querySelector('#rsNow').textContent)", 8000);
+  await js("document.querySelector('#rsMore').click()");
+  const rsMore = rsMore1 && await until("run && run.maxTurns === 80 && /80 turns/.test(document.querySelector('#rsNow').textContent)", 8000);
+  // step mode off: the waiting command runs and its card goes (its Run button, clicked afterwards, used to get a 409)
+  await js("(() => { const c = document.querySelector('#ctlStep'); c.checked = false; c.dispatchEvent(new Event('change', {bubbles: true})); })()");
+  const rsCard = await until("document.querySelector('#awaitCard').hidden", 3000);
+  await until("!busy && run && run.done", 30000);
+  const rsDone = await until("/This run used: .* · B1 · 80 turns/.test(document.querySelector('#rsNow').textContent) && !document.querySelector('#rsAgain').hidden && !document.querySelector('#rsChange').hidden && document.querySelector('#rsMore').hidden", 5000);
+  const rsRid = await js("here().run || (window.__rb.length && null)");
+  await js("localStorage.removeItem('fp.stepmode')");
+  // its replay: the challenge's title, its own settings
+  await js("document.querySelector('#ablSeg button[data-name=\"B3\"]').click(); document.querySelector('#turnSeg button[data-turns=\"100\"]').click()");
+  if (rsRid) await js(`openReplay(${JSON.stringify(rsRid)})`);
+  const rsReplay = !!rsRid && await until(`!busy && run && run.done && document.querySelector('#sgTitle').textContent === (taskByName(${JSON.stringify(rsTask)}).title || ${JSON.stringify(rsTask)}) && /This run used: .* · B1 · 80 turns/.test(document.querySelector('#rsNow').textContent)`, 10000);
+  await js("document.querySelector('#rsChange').click()");
+  const rsChange = await until("!document.querySelector('#rsEdit').hidden && ablation === 'B1' && turnBudget === 80 && document.querySelector('#turnSeg').classList.contains('none') && /80 turns/.test(document.querySelector('#turnDesc').textContent)", 3000);
+  await js("rsEditing = false; syncRunSet()");
+  await js("document.querySelector('#rsAgain').click()");
+  const rsAgain = await until("window.__rb.length === 2 && window.__rb[1].ablate === 'B1' && window.__rb[1].turns === 80 && window.__rb[1].task === " + JSON.stringify(rsTask), 8000)
+    && await until("busy || (run && run.done)", 8000) && await until("!busy && run && run.done && run.maxTurns === 80", 30000);
+  // and back on a choice: the segment shows it again
+  await js("document.querySelector('#rsChange').click(); document.querySelector('#turnSeg button[data-turns=\"40\"]').click()");
+  const rsSeg = await until("turnBudget === 40 && !document.querySelector('#turnSeg').classList.contains('none')", 3000);
+  await js("rsEditing = false; syncRunSet()");
+  await js("window.fetch = window.__F7");
+  check("run settings: set before a run and sent with it; shown while it runs (+20 turns only); a finished run and its replay show what they used and run again with it",
+    rsBefore && rsSent && rsLive && rsMore && rsCard && rsDone && rsReplay && rsChange && rsAgain && rsSeg, JSON.stringify({rsBefore, rsSent, rsLive, rsMore1, rsMore, rsCard, rsDone, rsRid, rsReplay, rsChange, rsAgain, rsSeg}));
+
+  // turns per run: the drawer offers 20/40/60/100 (40 by default, remembered); a run uses the choice; a run that used all
+  // its turns offers to run again with more (2026-11-21: "why only 20 rounds?")
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  await js(`pick(taskByName(${JSON.stringify(tA)}))`);
+  const tb = await js("(() => { localStorage.removeItem('fp.turns'); renderTurns(turnChoices, 40); return {seg: [...document.querySelectorAll('#turnSeg button')].map(b => b.textContent).join(','), def: turnBudget}; })()");
+  await js("document.querySelector('#turnSeg button[data-turns=\"60\"]').click()");
+  const tbKept = await js("turnBudget === 60 && localStorage.getItem('fp.turns') === '60' && /60 turns/.test(document.querySelector('#turnDesc').textContent)");
+  await js("window.__runBodies = []; window.__F4 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/run') window.__runBodies.push(JSON.parse(o.body)); return window.__F4(u, o); }");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  const tbRun = await until("window.__runBodies.length >= 1 && window.__runBodies[0].turns === 60 && run && run.maxTurns === 60", 10000);
+  await until("!busy", 30000);
+  await js("run.maxTurns = 20; showDone({type: 'done', verdict: 'budget', reason: 'max_turns', turns: 20, ablation: 'B3'})");
+  const tbOffer = await js("(document.querySelector('#turnsRerun') || {}).textContent || ''");
+  const tbSaid = await js("/all 20 turns used/.test(document.querySelector('#verdict .vbar').textContent)");
+  await js("document.querySelector('#turnsRerun') && document.querySelector('#turnsRerun').click()");
+  const tbMore = await until("window.__runBodies.length >= 2 && window.__runBodies[1].turns === 40 && turnBudget === 40", 10000);
+  await until("!busy", 30000);
+  await js("window.fetch = window.__F4; localStorage.removeItem('fp.turns'); renderTurns(turnChoices, 40)");
+  check("turns per run: 20/40/60/100 (40 by default, remembered); a run uses the choice; a run out of turns offers more",
+    tb.seg === "20,40,60,100" && tb.def === 40 && tbKept && tbRun && /Run again with 40 turns/.test(tbOffer) && tbSaid && tbMore,
+    JSON.stringify({tb, tbKept, tbRun, tbOffer, tbSaid, tbMore}));
 
   // a reload comes back to the open challenge and picks its run up again; while a run is going the browser asks first
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
   const backTask = await js("(() => { const t = TASKS.find(x => x.has_gold) || TASKS[0]; pick(t); return t.name; })()");
-  await js("document.querySelector('#run').click()"); await until("busy && here().run", 3000);
+  // the server is slow to answer the new run (600 ms): until it does, the page must not point a reload at the previous run
+  // (2026-11-22: under load this check reopened the challenge's previous run, which pick() had kept)
+  const runPrev = await js("here().run || ''");
+  await js("window.__F9 = window.fetch; window.fetch = (u, o) => String(u) === '/api/run' ? new Promise(r => setTimeout(r, 600)).then(() => window.__F9(u, o)) : window.__F9(u, o)");
+  await js("document.querySelector('#run').click()"); await sleep(250);
+  const staleGone = await js(`busy && !here().run`);
+  await until(`busy && here().run && here().run !== ${JSON.stringify(runPrev)}`, 5000);
+  await js("window.fetch = window.__F9");
   const runWas = await js("here().run"); const dlgBefore = dialogs.length;
   await send("Page.reload"); await until("document.readyState === 'complete'", 10000); await sleep(400);
   const asked = dialogs.length > dlgBefore && dialogs[dialogs.length - 1] === "beforeunload";
   const cameBack = await until(`sel === ${JSON.stringify(backTask)} && !document.querySelector('#work').hidden && document.querySelector('#landing').hidden`, 6000);
   const runBack = await until(`here().run === ${JSON.stringify(runWas)} && /VERIFIED|UNVERIFIED|WRONG|BUDGET|REPRODUCED/.test(document.querySelector('#verdict').textContent)`, 15000);
-  check("reload: asks first while a run is going, then comes back to the challenge and its run", asked && cameBack && runBack, JSON.stringify({asked, cameBack, runBack, runWas}));
+  check("reload: asks first while a run is going, then comes back to the challenge and its run", staleGone && asked && cameBack && runBack, JSON.stringify({staleGone, runPrev, asked, cameBack, runBack, runWas}));
 
   // the logo goes home: Solve's landing even when a challenge is open
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");

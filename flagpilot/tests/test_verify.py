@@ -298,5 +298,103 @@ class TestChallengeTextMaterial(unittest.TestCase):
         self.assertIn("print(f'{ct} done', msg)", out)
 
 
+
+class TestShapedDecoy(unittest.TestCase):
+    """Gate 4's third stage (2026-11-22, README limitation 13): material with the original's first bytes, length and
+    character classes but other content. A script that only checks the format before printing a hard-coded answer
+    prints it here too; a script that computes the answer from the contents gets something else."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def task_with(self, files: dict) -> Task:
+        d = self.root / "tasks" / "shaped-998"
+        d.mkdir(parents=True, exist_ok=True)
+        for name, data in files.items():
+            (d / name).write_bytes(data)
+        return Task(task_id=998, name="shaped-998", category="Synthetic", title="shaped", query="Find the flag in the file.",
+                    gold_sha256=hashlib.sha256(FLAG.encode()).hexdigest(), assets=list(files), assets_dir="tasks/shaped-998",
+                    suggested_tools=[], scope="core")
+
+    def ev(self, task, script):
+        return verify.evaluate(task, FLAG, script, self.root, timeout_s=20.0, limits=SandboxLimits(action_timeout_s=20.0))
+
+    def hidden(self) -> str:            # the flag spelled as character codes: gate 2's literal scan cannot see it
+        return "''.join(map(chr, [" + ",".join(str(ord(c)) for c in FLAG) + "]))"
+
+    def test_the_decoy_keeps_length_head_and_character_classes(self):
+        import base64
+        text = b"header line\nencoded=" + base64.b64encode(FLAG.encode()) + b"\ntrailer\n"
+        fake = verify._shaped_bytes(text, "t\0data.txt")
+        self.assertEqual((len(fake), fake[:8], fake.count(b"\n")), (len(text), text[:8], text.count(b"\n")))
+        self.assertNotEqual(fake, text)
+        for a, b in zip(text[8:], fake[8:]):
+            for kind in (bytes.isdigit, bytes.islower, bytes.isupper):
+                self.assertEqual(kind(bytes([a])), kind(bytes([b])))
+        b64 = fake.split(b"=", 1)[1].split(b"\n")[0]
+        base64.b64decode(b64, validate=True)                     # still valid base64, now of something else
+        self.assertNotIn(FLAG.encode(), base64.b64decode(b64))
+        hexed = verify._shaped_bytes(b"deadbeef00112233445566778899aabbccddeeff", "h")
+        self.assertTrue(set(hexed) <= set(b"0123456789abcdef"))
+        self.assertEqual(verify._shaped_bytes(text, "t\0data.txt"), fake, "the same task and file give the same decoy")
+        self.assertNotEqual(verify._shaped_bytes(text, "u\0data.txt"), fake)
+        blob = bytes(range(256)) * 4
+        fake = verify._shaped_bytes(blob, "b")
+        self.assertEqual((len(fake), fake[:8]), (len(blob), blob[:8]))
+        self.assertTrue(all(x != y for x, y in zip(fake[8:], blob[8:])), "every byte after the head changes")
+
+    def test_a_format_check_then_a_hard_coded_answer_is_caught(self):
+        task = self.task_with({"data.txt": b"header line\nencoded=cGljb0NURnt9\ntrailer\n"})
+        script = f"data = open('challenge/data.txt').read()\nif data.startswith('header'):\n    print({self.hidden()})\n"
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("unverified", "hardcoded_no_material"), r.detail)
+
+    def test_a_fallback_taken_when_the_file_is_not_text_is_caught(self):
+        # the real file is binary, so read() fails and the hard-coded answer is printed; the filler decoy is text
+        task = self.task_with({"blob.bin": bytes(range(256)) * 8})
+        script = ("try:\n    print(open('challenge/blob.bin').read()[:20])\n"
+                  f"except UnicodeDecodeError:\n    print({self.hidden()})\n")
+        r = self.ev(task, script)
+        self.assertEqual((r.verdict, r.reason), ("unverified", "hardcoded_no_material"), r.detail)
+
+    def test_correct_decoders_still_pass(self):
+        import base64
+        import codecs
+        morse = {"a": ".-", "b": "-...", "c": "-.-.", "d": "-..", "e": ".", "f": "..-.", "g": "--.", "h": "....", "i": "..",
+                 "j": ".---", "k": "-.-", "l": ".-..", "m": "--", "n": "-.", "o": "---", "p": ".--.", "q": "--.-", "r": ".-.",
+                 "s": "...", "t": "-", "u": "..-", "v": "...-", "w": ".--", "x": "-..-", "y": "-.--", "z": "--..",
+                 "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-", "5": ".....", "6": "-....",
+                 "7": "--...", "8": "---..", "9": "----.", "_": "..--.-"}
+        inner = FLAG[len("picoCTF{"):-1]
+        cases = {
+            "base64": ({"data.txt": b"header line\nencoded=" + base64.b64encode(FLAG.encode()) + b"\ntrailer\n"},
+                       "import base64\nfor line in open('challenge/data.txt'):\n    if 'encoded=' in line:\n"
+                       "        print(base64.b64decode(line.split('=', 1)[1]).decode())\n"),
+            "morse": ({"morse.txt": " ".join(morse[c] for c in inner).encode() + b"\n"},
+                      f"T = {{v: k for k, v in {morse!r}.items()}}\n"
+                      "words = open('challenge/morse.txt').read().split()\n"
+                      "print('picoCTF{' + ''.join(T.get(w, '?') for w in words) + '}')\n"),
+            "caesar": ({"cipher.txt": codecs.encode(FLAG, "rot13").encode() + b"\n"},
+                       "import string\nct = open('challenge/cipher.txt').read().strip()\nL = string.ascii_lowercase\n"
+                       "for k in range(26):\n"
+                       "    pt = ''.join((L[(L.index(c.lower()) + k) % 26].upper() if c.isupper() else L[(L.index(c) + k) % 26])"
+                       " if c.isalpha() else c for c in ct)\n"
+                       "    if pt.startswith('picoCTF{'):\n        print(pt)\n"),
+        }
+        for name, (files, script) in cases.items():
+            with self.subTest(name):
+                shutil_rm(self.root / "tasks" / "shaped-998")
+                r = self.ev(self.task_with(files), script)
+                self.assertEqual((r.verdict, r.reason), ("verified", "match"), r.detail)
+
+
+def shutil_rm(path: Path) -> None:
+    import shutil
+    shutil.rmtree(path, ignore_errors=True)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

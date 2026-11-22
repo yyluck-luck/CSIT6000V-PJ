@@ -46,9 +46,16 @@ def is_log(text: str) -> bool:
     return "SDK_BOOTSTRAP=" in (text or "")
 
 
+# job.sh says this when the payload (code, challenge, tools) did not arrive whole: the SDK uploads file by file, and
+# with TACC's gateway dropping connections it has submitted a job whose payload never came (2026-11-21, job 30538)
+PAYLOAD_MISSING = "[fp] payload missing"
+
+
 def why_no_result(log: str, jid: str) -> str:
     """Why a client job that has ended produced no result, in words a user can act on. Never Chinese."""
     log = log or ""
+    if PAYLOAD_MISSING in log:
+        return "the upload to TACC did not arrive whole (TACC's login gateway dropped part of it); run it again"
     if "没有匹配到题目" in log:
         return "the challenge was not in the job's task set"
     m = re.search(r"\[fp\] skip B\d: (-?\d+)s left", log)
@@ -130,13 +137,20 @@ def serve_progress(log: str) -> dict:
 
 
 def eta_s(step: str, in_step_s: float) -> int:
-    """Seconds still to go from step (entered in_step_s ago), using the typical step times. Never below 5 s
-    before "ready": a step that runs long has not finished just because its typical time is up."""
+    """Seconds still to go from step (entered in_step_s ago), using the typical step times. The current step counts
+    at least 5 s while it runs (one that runs long has not finished just because its typical time is up), and the
+    steps after it count in full: they have not started. (2026-11-21, job 30530: with slow shared storage the engine
+    step took five times its usual time, and the panel said "about 5 s left" with four steps still to go.)"""
     if step == "ready":
         return 0
     ids = [s[0] for s in STEPS]
     if step not in ids:
         return TYPICAL_S
     i = ids.index(step)
-    left = sum(s[3] for s in STEPS[i:]) - in_step_s
-    return int(max(5, left))
+    return int(max(5, STEPS[i][3] - in_step_s) + sum(s[3] for s in STEPS[i + 1:]))
+
+
+def slow(step: str, in_step_s: float) -> bool:
+    """The current step has run well past its usual time (twice it, plus half a minute)."""
+    typical = next((s[3] for s in STEPS if s[0] == step), None)
+    return typical is not None and step != "ready" and in_step_s > 2 * typical + 30

@@ -159,7 +159,7 @@ def cmd_doctor(args) -> int:
                     __import__(known_mod[k])
                 except Exception:
                     missing[k] = v
-            elif not shutil.which(k):
+            elif not shutil.which({"sleuthkit": "fls"}.get(k, k)):     # sleuthkit 没有叫这个名字的命令
                 missing[k] = v
         if missing:
             _p("")
@@ -650,6 +650,7 @@ def _build_cfg(args) -> RunConfig:
         metrics_url=args.metrics_url or "",
         price_in_per_mtok=args.price_in,
         price_out_per_mtok=args.price_out,
+        seed=getattr(args, "sample_seed", None),
         **extra,
     )
     abl = get_ablation(getattr(args, "ablate", None))
@@ -660,12 +661,15 @@ def _build_cfg(args) -> RunConfig:
         truncate_head_chars=args.head if truncate_on else None,
         truncate_tail_chars=args.tail if truncate_on else None,
         compact_at_chars=None if getattr(args, "no_compact", False) else 48_000,
+        reply_history=getattr(args, "reply_history", "cut"),
+        continue_cut=bool(getattr(args, "continue_cut", False)),
+        fence_output=bool(getattr(args, "fence_output", False)),
     )
     return RunConfig(
         batch=args.batch,
         track=args.track,
         model=model,
-        budget=Budget(max_turns=args.turns, max_wall_s=args.wall),
+        budget=Budget.for_turns(args.turns, args.wall),
         policy=policy,
         limits=SandboxLimits(action_timeout_s=args.action_timeout),
         ablation=abl,
@@ -781,12 +785,21 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--api-key")
         p.add_argument("--metrics-url", default="")
         p.add_argument("--temperature", type=float, default=0.2)
+        p.add_argument("--sample-seed", type=int, default=None,
+                       help="send seed N+s with every request of attempt s (vLLM, OpenAI); off by default, as in the evaluated batches")
         p.add_argument("--max-tokens", type=int, default=ModelSpec.max_tokens)   # 4096，依据见 config.ModelSpec
         p.add_argument("--turns", type=int, default=20)
-        p.add_argument("--wall", type=int, default=1500)
+        p.add_argument("--wall", type=int, default=None, help="seconds per attempt (default 75 per turn, at least 1500)")
         p.add_argument("--head", type=int, default=1500)
         p.add_argument("--tail", type=int, default=1500)
         p.add_argument("--no-truncate", action="store_true")
+        # replies that end in the middle of their JSON (README, known limitation 16): all off, as in v5–v7
+        p.add_argument("--reply-history", choices=["cut", "elide"], default="cut",
+                       help="how the model's own long replies stay in the conversation: cut at 2000 characters (v5–v7) or "
+                            "shortened in the middle of their longest field, the JSON kept whole")
+        p.add_argument("--continue-cut", action="store_true",
+                       help="when a reply stops in the middle of its JSON, ask the model once to write the rest")
+        p.add_argument("--fence-output", action="store_true", help='end every tool output with "--- end of output ---"')
         p.add_argument("--action-timeout", type=float, default=60.0)
         p.add_argument("--replay-timeout", type=float, default=300.0)
         p.add_argument("--price-in", type=float, default=0.0)

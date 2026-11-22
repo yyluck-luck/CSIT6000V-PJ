@@ -16,6 +16,8 @@
 #   FP_DEADLINE_EPOCH（服务作业的结束时刻；pipeline.sh 自动给，客户端据此决定下一档还来不来得及）
 #   FP_VENDOR=0（不随包带 pycryptodome / gmpy2；默认带，见下）
 #   FP_MAX_TOKENS（每轮输出上限；不给就用 CLI 默认 4096。2048 时 dev 上有截断，依据见 flagpilot/config.py 的 ModelSpec）
+#   FP_SAMPLE_SEED（采样种子：第 s 次尝试的每个请求带 seed=N+s，vLLM 照此采样；不给就不发，v5–v7 都没发）
+#   FP_REPLY_HISTORY=elide  FP_CONTINUE_CUT=1  FP_FENCE_OUTPUT=1（回复中途结束的三个对策，默认都关，见 README 已知局限 16）
 # 任一模式都可加 FP_EXCLUDE=节点[,节点]：课程 serve.sh 写死 8000 端口，某节点的 8000 被占时
 # 服务会 "Address already in use" 秒退（作业 29239），用它换节点。
 # 结果留在 TACC 的 USERDIR/flagpilot-runs/<batch>/，取回：
@@ -154,6 +156,17 @@ PY
       [[ "$FP_MAX_TOKENS" =~ ^[0-9]{3,5}$ ]] || { echo "FP_MAX_TOKENS must be a number such as 4096" >&2; exit 1; }
       ARGS="$ARGS --max-tokens ${FP_MAX_TOKENS}"
     fi
+    if [[ -n "${FP_SAMPLE_SEED:-}" ]]; then
+      [[ "$FP_SAMPLE_SEED" =~ ^[0-9]{1,9}$ ]] || { echo "FP_SAMPLE_SEED must be a whole number such as 1234" >&2; exit 1; }
+      ARGS="$ARGS --sample-seed ${FP_SAMPLE_SEED}"
+    fi
+    case "${FP_REPLY_HISTORY:-cut}" in
+      cut) ;;
+      elide) ARGS="$ARGS --reply-history elide" ;;
+      *) echo "FP_REPLY_HISTORY must be cut or elide" >&2; exit 1 ;;
+    esac
+    if [[ "${FP_CONTINUE_CUT:-0}" == "1" ]]; then ARGS="$ARGS --continue-cut"; fi
+    if [[ "${FP_FENCE_OUTPUT:-0}" == "1" ]]; then ARGS="$ARGS --fence-output"; fi
     ABL="${FP_ABLATIONS:-}"
     ABL="${ABL// /,}"
     if [[ -n "$ABL" && ! "$ABL" =~ ^B[0-3](,B[0-3])*$ ]]; then
@@ -189,7 +202,8 @@ PY
     cp "$HERE"/cleanup/job.sh "$STAGE"/job.sh
     [[ -z "${FP_DROP:-}" || "$FP_DROP" =~ ^[A-Za-z0-9._-]+([[:space:]]+[A-Za-z0-9._-]+)*$ ]] \
       || { echo "FP_DROP: batch names separated by spaces" >&2; exit 1; }
-    printf 'FP_MODE=cleanup\nFP_DROP=%q\n' "${FP_DROP:-}" > "$STAGE/run.env"
+    [[ "${FP_PRUNE_LOGS:-0}" =~ ^[01]$ ]] || { echo "FP_PRUNE_LOGS: 0 or 1" >&2; exit 1; }
+    printf 'FP_MODE=cleanup\nFP_DROP=%q\nFP_PRUNE_LOGS=%s\n' "${FP_DROP:-}" "${FP_PRUNE_LOGS:-0}" > "$STAGE/run.env"
     perl -pi -e "s/time=00:45:00/time=00:10:00/" "$STAGE/tuxiv.conf"
     ;;
   *)
@@ -209,6 +223,8 @@ if [[ "$MODE" != serve && "$MODE" != cleanup ]]; then
   # 除了 SDK 自己要读的 tuxiv.conf、作业入口 job.sh 和 run.env，其余打成一个 payload.tgz，job.sh 开头解开。
   # COPYFILE_DISABLE：macOS 的 tar 默认给每个文件附一份 ._* 扩展属性，解到 Linux 上全是垃圾（GNU tar 忽略这个变量）
   (cd "$STAGE" && set -- $(ls -A | grep -v -x -e tuxiv.conf -e job.sh -e run.env) && COPYFILE_DISABLE=1 tar -czf payload.tgz "$@" && rm -rf -- "$@")
+  # job.sh 先核对包到齐了没有（SDK 交上来过包没到的作业，2026-11-21 作业 30538）
+  printf 'FP_PAYLOAD=%s\n' "$( (sha256sum "$STAGE/payload.tgz" 2>/dev/null || shasum -a 256 "$STAGE/payload.tgz") | cut -d' ' -f1)" >> "$STAGE/run.env"
 fi
 echo "[tcloud] 暂存目录 ${STAGE}，提交中…"
 cd "$STAGE"
@@ -221,7 +237,9 @@ for (( i = 1; i <= TRIES; i++ )); do
   rc=0; out=$("$TC" submit 2>&1) || rc=$?
   printf '%s\n' "$out"
   grep -q 'Submitted batch job' <<<"$out" && exit "$rc"      # submitted: report tcloud's own status, as before
-  if (( i < TRIES )) && grep -q -e 'Failed to create remote session' -e 'ssh: handshake failed' <<<"$out"; then
+  # 上传途中断线（"Failed to upload env repository"）同样还没交上去；卷满了（No space left on device）重试没用
+  if (( i < TRIES )) && grep -q -e 'Failed to create remote session' -e 'ssh: handshake failed' -e 'Failed to upload' <<<"$out" \
+     && ! grep -q -e 'No space left on device' -e 'Disk quota exceeded' <<<"$out"; then
     wait_s=$(( i * i * ${FP_SUBMIT_WAIT:-5} ))
     echo "[tcloud] TACC's login gateway dropped the connection; trying again in ${wait_s} s ($(( i + 1 ))/${TRIES})" >&2
     sleep "$wait_s"

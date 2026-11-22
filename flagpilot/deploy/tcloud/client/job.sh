@@ -16,6 +16,16 @@ trap 'rc=$?; if [[ -n "${QWEN_RUN_DIR:-}" && -d "$QWEN_RUN_DIR" ]]; then chmod -
 trap 'exit 143' TERM
 trap 'exit 130' INT
 cd "$TACC_WORKDIR"
+# >>> payload check
+# 包到齐了吗？SDK 逐个文件上传；TACC 的登录网关丢连接时，它交上来过一个包根本没到的作业（2026-11-21，作业 30538：
+# 没有代码、没有工具、没有题目，最后只剩 "srun: error ... exit code 1"）。submit.sh 把包的 sha256 写进 run.env：
+# 对不上就直说上传没完成并退出，网页看到这句会重交一次。
+want=$(sed -n 's/^FP_PAYLOAD=//p' run.env 2>/dev/null || true)
+if [[ -n "$want" ]] && { [[ ! -f payload.tgz ]] || [[ "$( (sha256sum payload.tgz 2>/dev/null || shasum -a 256 payload.tgz) | cut -d' ' -f1)" != "$want" ]]; }; then
+  echo "[fp] payload missing: the upload to TACC did not complete"
+  exit 3
+fi
+# <<< payload check
 # submit.sh 把代码、题目、随包库打成一个 payload.tgz（SDK 逐个文件上传，散着传要几十秒到两分钟）：先解开
 if [[ -f payload.tgz ]]; then tar -xzf payload.tgz && rm -f payload.tgz; fi
 # shellcheck disable=SC1091

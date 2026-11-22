@@ -1,0 +1,687 @@
+SDK_BOOTSTRAP=/mnt/home/public/course-envs/CSIT6000V/assignment1/mpi-gemm-v1
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+[fp] job=30505 node=10-0-1-10 mode=batch batch=tacc-dev-v7
+[fp] python 3.12.14 /mnt/home/public/course-envs/CSIT6000V/project/qwen3.8-27b-v1/vllm-env/bin/python
+[fp] sandbox python3: /tmp/csit6000v-qwen-20716-30505.FO0mr8/fp-bin/python3 -> 3.12.14
+[fp] shims: xxd=/mnt/home/yliutz/WORKDIR/flagpilot-client/bin/xxd exiftool=/mnt/home/yliutz/WORKDIR/flagpilot-client/bin/exiftool
+[fp] vendored: pycryptodome 4.5.0 gmpy2 2.3.2
+[fp] doctor
+FlagPilot 0.1.0
+python           3.12.14  (/mnt/home/public/course-envs/CSIT6000V/project/qwen3.8-27b-v1/vllm-env/bin/python)
+题库             /mnt/home/yliutz/WORKDIR/flagpilot-client/tasks
+运行产物         /mnt/home/yliutz/USERDIR/flagpilot-runs
+
+题目数           53  Cryptography=16, Forensics=12, General Skills=25
+题库一致性       通过（53 题的目录与附件齐全）
+泄漏检查         通过（无明文 gold、无题解目录）
+
+网络隔离         proxy-only  ← 不可作为强隔离证据
+资源上限         可用
+隔离等级         process  ← 非容器，报告里必须如实说明
+容器             none
+SMT (z3)         可用
+反汇编           /usr/bin/objdump
+调试器           未找到  ← 只能靠 shell 调其它调试器
+  · 网络隔离：无可用 namespace，退化为代理屏蔽（不可作为强隔离的证据）
+  · 隔离：无可用容器运行时，退化为进程级 + rlimit（非容器）
+
+⚠ 题目声明需要、但本机没有的工具：
+  - binwalk        影响 6 题（如 forensics-065）
+  - zsteg          影响 5 题（如 forensics-008）
+  - tshark         影响 2 题（如 forensics-002）
+  - sleuthkit      影响 1 题（如 forensics-065）
+  → 这些题要在报告里单独说明，否则会被读成模型能力问题
+
+python3          /tmp/csit6000v-qwen-20716-30505.FO0mr8/fp-bin/python3
+java             缺失
+javap            缺失
+objdump          /usr/bin/objdump
+gcc              /mnt/home/public/course-envs/CSIT6000V/assignment1/mpi-gemm-v1/bin/gcc
+unshare          /usr/bin/unshare
+nvidia-smi       缺失
+
+Slurm 作业       30505  分区=tacc  节点=10-0-1-10
+模型端点         未设置（用 --base-url 或 FLAGPILOT_BASE_URL）
+
+结论：可以开始跑
+[fp] service=http://10.0.3.10:8000/v1 (10-0-3-10)
+[fp] models: ['qwen3.8-27b']
+[fp] tier B1 -> tacc-dev-v7-B1 (2580s left)
+[split] dev：27 题（/mnt/home/yliutz/WORKDIR/flagpilot-client/tasks/index/splits.json）
+[batch] tacc-dev-v7-B1: 20 题 × 2 seeds, model=qwen3.8-27b, ablation=B1（截断 + 仅 shell/python + 最小 prompt）
+[runner] 待跑 40 个 attempt，并发 4，调度：最长预计优先（LPT，参考 86 条历史）
+[1/40] crypto-079-s1          VERIFIED   turns=3 29.39s
+[2/40] crypto-092-s1          wrong      turns=7 94.62s
+[3/40] crypto-092-s0          wrong      turns=15 191.79s
+[4/40] forensics-059-s0       budget     turns=19 182.27s
+[5/40] forensics-059-s1       budget     turns=17 148.85s
+[6/40] forensics-003-s0       VERIFIED   turns=6 52.7s
+[7/40] forensics-003-s1       VERIFIED   turns=5 36.52s
+[8/40] crypto-093-s0          VERIFIED   turns=5 49.73s
+[9/40] crypto-093-s1          VERIFIED   turns=5 53.74s
+[10/40] crypto-079-s0          budget     turns=7 308.35s
+[11/40] forensics-008-s0       VERIFIED   turns=11 61.97s
+[12/40] forensics-008-s1       VERIFIED   turns=9 38.5s
+[13/40] forensics-071-s0       VERIFIED   turns=7 28.84s
+[14/40] forensics-065-s1       VERIFIED   turns=8 43.77s
+[15/40] crypto-074-s0          VERIFIED   turns=3 12.17s
+[16/40] forensics-071-s1       VERIFIED   turns=6 28.35s
+[17/40] crypto-074-s1          VERIFIED   turns=3 14.83s
+[18/40] crypto-058-s0          VERIFIED   turns=4 19.08s
+[19/40] crypto-058-s1          VERIFIED   turns=5 20.82s
+[20/40] forensics-065-s0       VERIFIED   turns=7 92.91s
+[21/40] general-025-s1         VERIFIED   turns=4 32.62s
+[22/40] crypto-072-s0          VERIFIED   turns=4 31.56s
+[23/40] general-025-s0         VERIFIED   turns=6 49.29s
+[24/40] crypto-097-s0          VERIFIED   turns=4 22.04s
+[25/40] forensics-094-s0       VERIFIED   turns=4 16.45s
+[26/40] crypto-097-s1          VERIFIED   turns=4 22.49s
+[27/40] forensics-094-s1       VERIFIED   turns=4 20.36s
+[28/40] general-024-s0         VERIFIED   turns=4 29.59s
+[29/40] general-037-s0         VERIFIED   turns=5 17.8s
+[30/40] general-022-s0         VERIFIED   turns=2 6.82s
+[31/40] general-024-s1         VERIFIED   turns=5 43.34s
+[32/40] general-037-s1         VERIFIED   turns=5 16.75s
+[33/40] general-022-s1         VERIFIED   turns=2 5.65s
+[34/40] crypto-005-s1          VERIFIED   turns=2 7.96s
+[35/40] crypto-005-s0          VERIFIED   turns=3 11.1s
+[36/40] general-004-s0         VERIFIED   turns=3 12.24s
+[37/40] general-019-s0         VERIFIED   turns=2 6.06s
+[38/40] general-004-s1         VERIFIED   turns=3 10.23s
+[39/40] general-019-s1         unverified turns=2 5.11s
+[40/40] crypto-072-s1          budget     turns=11 141.24s
+[runner] 完成 40 个，用时 539.5s
+
+attempts        40   ablation=B1
+verified        33  (82.5%, 95% CI 68.0%–91.2%)
+raw (flag ok)   34  (85.0%, 95% CI 70.9%–92.9%)
+gap             2.5%
+wrong / budget / error  2 / 4 / 0
+mean turns      5.78
+mean wall       50.45 s
+mean tokens     20375
+TTFT p50        524 ms（各题中位数之均值）
+wall p50/p95    29.1 / 182.7 s（n=40）
+solve p50/p95   23.8 / 58.2 s（verified 端到端，n=33）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 78.1%（585648/749351 token；服务只被本批使用时成立）
+reasons         match=33, wrong_flag=5, invalid_action=1, literal_flag=1
+by category:
+  Cryptography       n=16  verified=12  raw=12  v_rate=75% r_rate=75%
+  Forensics          n=12  verified=10  raw=10  v_rate=83% r_rate=83%
+  General Skills     n=12  verified=11  raw=12  v_rate=92% r_rate=100%
+
+失败归因（7 条失败，共 9 个标签，同一条可命中多个）：
+  不守 JSON 协议                    5  (71%)
+  答案错误                          2  (29%)
+  环境缺工具                        1  (14%)
+  脚本硬编码答案                    1  (14%)
+  （成功的 attempt 途中还碰到：环境缺工具×13、工具/沙箱超时×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 7 条）：
+  crypto-092-s1           答案错误                        
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  forensics-059-s0        环境缺工具                      ls -la ./challenge/ && file ./challenge/email-export.eml /bin/sh: 1: file: not found
+  forensics-059-s1        不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-019-s1          脚本硬编码答案                  literal_flag: 脚本含 flag 的 exact 形态
+  crypto-072-s1           不守 JSON 协议                  没有解析到合法的 JSON 动作
+attempts        40   ablation=B1
+verified        33  (82.5%, 95% CI 68.0%–91.2%)
+raw (flag ok)   34  (85.0%, 95% CI 70.9%–92.9%)
+gap             2.5%
+wrong / budget / error  2 / 4 / 0
+mean turns      5.78
+mean wall       50.45 s
+mean tokens     20375
+TTFT p50        524 ms（各题中位数之均值）
+wall p50/p95    29.1 / 182.7 s（n=40）
+solve p50/p95   23.8 / 58.2 s（verified 端到端，n=33）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 78.1%（585648/749351 token；服务只被本批使用时成立）
+reasons         match=33, wrong_flag=5, invalid_action=1, literal_flag=1
+by category:
+  Cryptography       n=16  verified=12  raw=12  v_rate=75% r_rate=75%
+  Forensics          n=12  verified=10  raw=10  v_rate=83% r_rate=83%
+  General Skills     n=12  verified=11  raw=12  v_rate=92% r_rate=100%
+
+失败归因（7 条失败，共 9 个标签，同一条可命中多个）：
+  不守 JSON 协议                    5  (71%)
+  答案错误                          2  (29%)
+  环境缺工具                        1  (14%)
+  脚本硬编码答案                    1  (14%)
+  （成功的 attempt 途中还碰到：环境缺工具×13、工具/沙箱超时×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 7 条）：
+  crypto-092-s1           答案错误                        
+  crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  forensics-059-s0        环境缺工具                      ls -la ./challenge/ && file ./challenge/email-export.eml /bin/sh: 1: file: not found
+  forensics-059-s1        不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-019-s1          脚本硬编码答案                  literal_flag: 脚本含 flag 的 exact 形态
+  crypto-072-s1           不守 JSON 协议                  没有解析到合法的 JSON 动作
+
+Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v7-B1.md
+[fp] tier-done tacc-dev-v7-B1 591s
+[fp] tier B2 -> tacc-dev-v7-B2 (1989s left)
+[split] dev：27 题（/mnt/home/yliutz/WORKDIR/flagpilot-client/tasks/index/splits.json）
+[batch] tacc-dev-v7-B2: 20 题 × 2 seeds, model=qwen3.8-27b, ablation=B2（截断 + 结构化工具 + 最小 prompt）
+[runner] 待跑 40 个 attempt，并发 4，调度：最长预计优先（LPT，参考 126 条历史）
+[1/40] forensics-059-s0       budget     turns=15 128.57s
+[2/40] forensics-059-s1       budget     turns=19 132.79s
+[3/40] crypto-092-s1          VERIFIED   turns=9 62.2s
+[4/40] crypto-092-s0          wrong      turns=9 114.5s
+[5/40] forensics-003-s0       VERIFIED   turns=8 71.33s
+[6/40] crypto-079-s1          budget     turns=8 276.69s
+[7/40] forensics-003-s1       VERIFIED   turns=6 40.18s
+[8/40] crypto-093-s0          VERIFIED   turns=5 31.95s
+[9/40] crypto-079-s0          budget     turns=10 312.14s
+[10/40] forensics-065-s0       VERIFIED   turns=7 29.25s
+[11/40] crypto-093-s1          VERIFIED   turns=7 41.87s
+[12/40] forensics-065-s1       VERIFIED   turns=6 43.75s
+[13/40] general-025-s0         VERIFIED   turns=5 41.47s
+[14/40] forensics-008-s1       VERIFIED   turns=10 53.65s
+[15/40] forensics-008-s0       VERIFIED   turns=10 59.77s
+[16/40] general-025-s1         VERIFIED   turns=5 37.22s
+[17/40] crypto-072-s0          VERIFIED   turns=4 27.7s
+[18/40] crypto-072-s1          VERIFIED   turns=4 33.33s
+[19/40] forensics-071-s0       VERIFIED   turns=8 29.94s
+[20/40] forensics-071-s1       VERIFIED   turns=8 29.84s
+[21/40] crypto-074-s0          VERIFIED   turns=4 23.29s
+[22/40] crypto-058-s0          VERIFIED   turns=5 21.95s
+[23/40] crypto-074-s1          VERIFIED   turns=4 23.55s
+[24/40] crypto-058-s1          VERIFIED   turns=5 23.2s
+[25/40] crypto-097-s0          VERIFIED   turns=6 31.56s
+[26/40] crypto-097-s1          VERIFIED   turns=5 26.48s
+[27/40] general-024-s0         unverified turns=6 27.68s
+[28/40] forensics-094-s0       VERIFIED   turns=4 21.26s
+[29/40] general-024-s1         VERIFIED   turns=5 33.79s
+[30/40] forensics-094-s1       VERIFIED   turns=4 19.98s
+[31/40] general-037-s0         VERIFIED   turns=4 22.88s
+[32/40] general-004-s0         VERIFIED   turns=4 14.42s
+[33/40] crypto-005-s0          VERIFIED   turns=2 5.8s
+[34/40] general-037-s1         VERIFIED   turns=5 21.92s
+[35/40] general-004-s1         VERIFIED   turns=4 15.04s
+[36/40] crypto-005-s1          VERIFIED   turns=2 6.21s
+[37/40] general-022-s0         VERIFIED   turns=3 9.38s
+[38/40] general-019-s0         unverified turns=2 5.75s
+[39/40] general-019-s1         VERIFIED   turns=2 7.14s
+[40/40] general-022-s1         VERIFIED   turns=3 10.7s
+[runner] 完成 40 个，用时 511.1s
+
+attempts        40   ablation=B2
+verified        33  (82.5%, 95% CI 68.0%–91.2%)
+raw (flag ok)   35  (87.5%, 95% CI 73.9%–94.5%)
+gap             5.0%
+wrong / budget / error  1 / 4 / 0
+mean turns      6.05
+mean wall       49.25 s
+mean tokens     18739
+TTFT p50        602 ms（各题中位数之均值）
+wall p50/p95    29.5 / 140.0 s（n=40）
+solve p50/p95   28.4 / 62.9 s（verified 端到端，n=33）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 72.9%（505680/694135 token；服务只被本批使用时成立）
+reasons         match=33, invalid_action=3, script_error=2, wrong_flag=1, literal_flag=1
+by category:
+  Cryptography       n=16  verified=13  raw=13  v_rate=81% r_rate=81%
+  Forensics          n=12  verified=10  raw=10  v_rate=83% r_rate=83%
+  General Skills     n=12  verified=10  raw=12  v_rate=83% r_rate=100%
+
+失败归因（7 条失败，共 9 个标签，同一条可命中多个）：
+  不守 JSON 协议                    4  (57%)
+  答案对但不可复现                  2  (29%)
+  回复原样重复（客户端截停）        1  (14%)
+  答案错误                          1  (14%)
+  脚本硬编码答案                    1  (14%)
+  （成功的 attempt 途中还碰到：环境缺工具×11、不守 JSON 协议×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 7 条）：
+  forensics-059-s0        不守 JSON 协议                  没有解析到合法的 JSON 动作
+  forensics-059-s1        不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-092-s0           答案错误                        
+  crypto-079-s1           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-024-s0          答案对但不可复现                script_error: 重放无输出（exit=1）；stderr: Traceback (most recent call last):
+  File "<replay>/so
+  general-019-s0          脚本硬编码答案                  literal_flag: 脚本含 flag 的 exact 形态
+attempts        40   ablation=B2
+verified        33  (82.5%, 95% CI 68.0%–91.2%)
+raw (flag ok)   35  (87.5%, 95% CI 73.9%–94.5%)
+gap             5.0%
+wrong / budget / error  1 / 4 / 0
+mean turns      6.05
+mean wall       49.25 s
+mean tokens     18739
+TTFT p50        602 ms（各题中位数之均值）
+wall p50/p95    29.5 / 140.0 s（n=40）
+solve p50/p95   28.4 / 62.9 s（verified 端到端，n=33）
+prefix cache    — （并发>1：服务端计数器被多个 attempt 分摊，不报命中率/prefill 占比）
+prefix cache    整批 72.9%（505680/694135 token；服务只被本批使用时成立）
+reasons         match=33, invalid_action=3, script_error=2, wrong_flag=1, literal_flag=1
+by category:
+  Cryptography       n=16  verified=13  raw=13  v_rate=81% r_rate=81%
+  Forensics          n=12  verified=10  raw=10  v_rate=83% r_rate=83%
+  General Skills     n=12  verified=10  raw=12  v_rate=83% r_rate=100%
+
+失败归因（7 条失败，共 9 个标签，同一条可命中多个）：
+  不守 JSON 协议                    4  (57%)
+  答案对但不可复现                  2  (29%)
+  回复原样重复（客户端截停）        1  (14%)
+  答案错误                          1  (14%)
+  脚本硬编码答案                    1  (14%)
+  （成功的 attempt 途中还碰到：环境缺工具×11、不守 JSON 协议×1——不计入失败，但说明环境有缺口）
+
+逐条（取前 7 条）：
+  forensics-059-s0        不守 JSON 协议                  没有解析到合法的 JSON 动作
+  forensics-059-s1        不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-092-s0           答案错误                        
+  crypto-079-s1           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  crypto-079-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+  general-024-s0          答案对但不可复现                script_error: 重放无输出（exit=1）；stderr: Traceback (most recent call last):
+  File "<replay>/so
+  general-019-s0          脚本硬编码答案                  literal_flag: 脚本含 flag 的 exact 形态
+
+Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v7-B2.md
+[fp] tier-done tacc-dev-v7-B2 562s
+[fp] done: /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v7

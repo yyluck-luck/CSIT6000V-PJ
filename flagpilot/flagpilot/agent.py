@@ -16,21 +16,22 @@ E1 的消融通过 RunConfig.ablation 控制，只改三处：prompt 内容、�
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from statistics import median
 from typing import Callable
 
 from . import context, pricing, verify, storage, writeup
 from .client import build_client
-from .config import (Ablation, ModelSpec, RunConfig, TRACK_H,
+from .config import (Ablation, Budget, ModelSpec, RunConfig, TRACK_H,
                      make_model_spec, track_h_api_key)
 from .memory import MemoryStore
 from .sandbox import Sandbox, probe_capabilities
 from .tasks import Task
-from .tools import Action, ToolBox, parse_action
+from .tools import Action, ToolBox, json_cut, json_object, parse_action
 from .trace import Trace
 
 _SCHEMA_BASE = '''  {"thought": "<short reasoning>", "action": "shell", "cmd": "<shell command>"}
@@ -233,6 +234,52 @@ def turn_max_tokens(client, cfg: RunConfig) -> int:
     return int(getattr(spec, "max_tokens", 0) or 0) or cfg.model.max_tokens
 
 
+# ---- 回复中途结束（README 已知局限 16）：三个对策，默认都关（config.Policy） ----
+
+REPLY_HISTORY_CHARS = 2000        # 模型自己的每条回复在历史里最多留这么多字（v5–v7 一直如此）
+OUTPUT_FENCE = "--- end of output ---"
+CONTINUE_CUT = ("Your last reply stopped in the middle of its JSON object. It ends with:\n{tail}\n"
+                "Write only the rest of that reply, starting with the very next character, so that your last reply followed "
+                "by this one is one complete JSON object. Do not repeat anything and do not start a new object.")
+
+
+def history_reply(text: str, mode: str = "cut", cap: int = REPLY_HISTORY_CHARS) -> str:
+    """模型自己的回复以什么样子留在对话里。
+
+    cut（v5–v7）：前 2000 字。抄 RSA 模数这类长回复在历史里就成了一段没写完的 JSON。v7 的 51 条协议错误里 47 条出现在
+    同一次尝试里已有这样一条被截短的回复之后（v6：85 条里 81 条）：模型看着自己"写到一半就停"的回复，自己也在 JSON
+    中间停下。elide：同样的长度，但把最长的字符串字段从中间省略并标出省了多少字，JSON 保持完整；不是 JSON 的照旧截断。
+    """
+    if len(text) <= cap or mode != "elide":
+        return text[:cap]
+    obj = json_object(text)
+    return text[:cap] if obj is None else elide_json(obj, cap)
+
+
+def elide_json(obj: dict, cap: int) -> str:
+    """把最长的字符串字段从中间省略（留头三分之二、尾三分之一），直到整个对象不超过 cap 字或省无可省。"""
+    out = dict(obj)
+
+    def size() -> int:
+        return len(json.dumps(out, ensure_ascii=False))
+
+    for _ in range(len(out) * 3):
+        if size() <= cap:
+            break
+        strs = [k for k, v in out.items() if isinstance(v, str) and len(v) > 160]
+        if not strs:
+            break
+        k = max(strs, key=lambda key: len(out[key]))
+        v = out[k]
+        keep = max(120, len(v) - (size() - cap) - 48)
+        head, tail = v[: keep * 2 // 3], v[len(v) - keep // 3:]
+        shorter = f"{head} …[{len(v) - len(head) - len(tail)} characters not shown]… {tail}"
+        if len(shorter) >= len(v):
+            break
+        out[k] = shorter
+    return json.dumps(out, ensure_ascii=False)
+
+
 def correction_message(kind: str, reason: str, max_tokens: int) -> str:
     """按失败种类选纠正语。kind 为空即普通协议错误。"""
     if kind == "truncated":
@@ -426,7 +473,9 @@ def run_attempt(
     workdir.mkdir(parents=True, exist_ok=True)
 
     caps = probe_capabilities()
-    client = build_client(cfg.model)
+    # 采样种子（给了才有）：第 s 次尝试用 seed + s，重复的几次仍是不同的样本，同一次尝试重跑能采出同样的回复
+    sample_seed = None if cfg.model.seed is None else int(cfg.model.seed) + int(seed)
+    client = build_client(cfg.model if sample_seed is None else replace(cfg.model, seed=sample_seed))
     sandbox = Sandbox(workdir, limits=cfg.limits, caps=caps, tasks_root=cfg.tasks_root)
     challenge_dir = sandbox.stage(task)
     n_assets = sum(1 for p in challenge_dir.rglob("*") if p.is_file())
@@ -440,6 +489,7 @@ def run_attempt(
         "n_assets": n_assets,
         "caps": caps.as_dict(),
         **cfg.fingerprint(),
+        **({"sample_seed": sample_seed} if sample_seed is not None else {}),
     }
     tr = Trace(run_dir / "trace.jsonl", meta, hook=hook)
     tr.event("start", brief=task.brief)
@@ -528,7 +578,19 @@ def run_attempt(
     last_switch: dict | None = None
     fallback_turn = None
 
-    while turns < cfg.budget.max_turns + bonus_turns:
+    def take_more_turns() -> None:
+        # 看着运行的人加了轮数（Solve 上的 "+20 turns"）：只增不减，输出 token 和时间预算跟着放大（Budget.for_turns）。
+        # 必须在判断轮数 / 时间 / token 是否用完之前取：停在最后一轮等批准时加的轮数，以前会被循环条件先判成用完。
+        more = control.take_turns() if control is not None else None
+        if more and more > cfg.budget.max_turns:
+            was = cfg.budget.max_turns
+            cfg.budget = replace(Budget.for_turns(more), max_prompt_tokens=cfg.budget.max_prompt_tokens)
+            tr.event("budget", turn=turns + 1, max_turns=more, was=was)
+
+    while True:
+        take_more_turns()
+        if turns >= cfg.budget.max_turns + bonus_turns:
+            break                          # reason 仍是开头的 "max_turns"
         if time.monotonic() - t0 > cfg.budget.max_wall_s:
             reason = "wall_time"
             break
@@ -647,10 +709,36 @@ def run_attempt(
                        f"（{'JSON 未闭合' if started else '还没开始写 JSON，预算全花在推理上'}）")
             else:
                 kind = "protocol"
+        if act is None and kind == "protocol" and cfg.policy.continue_cut and comp.finish_reason == "stop" and json_cut(comp.text):
+            # 停在 JSON 中间：请模型从断处接着写一次（同一轮，不算新的一轮；token 照记）
+            more = active.complete(messages + [
+                {"role": "assistant", "content": comp.text},
+                {"role": "user", "content": CONTINUE_CUT.format(tail=comp.text[-160:]) + NT}])
+            sum_prompt += more.prompt_tokens
+            sum_completion += more.completion_tokens
+            sum_model_ms += more.latency_ms or 0
+            if hosted_client is not None and active is hosted_client:
+                hosted_prompt += more.prompt_tokens
+                hosted_completion += more.completion_tokens
+                hosted_cost += pricing.turn_cost(hosted_spec(cfg), more)
+            else:
+                cost += pricing.turn_cost(cfg.model, more)
+            joined = comp.text + (more.text or "")
+            act2, _ = parse_action(joined, toolbox.allowed)
+            used = joined
+            if act2 is None and not more.error:          # 有的模型不接着写，而是从头重写了一遍
+                act2, _ = parse_action(more.text or "", toolbox.allowed)
+                used = more.text or ""
+            tr.event("continued", turn=turns, ok=act2 is not None, prompt_tokens=more.prompt_tokens,
+                     completion_tokens=more.completion_tokens, finish_reason=more.finish_reason,
+                     error=more.error, text=(more.text or "")[:4000])
+            if act2 is not None:
+                act, err, kind = act2, None, ""
+                comp.text = used
         if act is None:
             invalids += 1
             tr.event("invalid_action", turn=turns, kind=kind, reason=err)
-            messages.append({"role": "assistant", "content": comp.text[:2000]})
+            messages.append({"role": "assistant", "content": history_reply(comp.text, cfg.policy.reply_history)})
             messages.append({"role": "user", "content": correction_message(
                 kind, err, turn_max) + NT})
             # 协议错误不产生观测，等于这一轮没有新证据
@@ -714,7 +802,7 @@ def run_attempt(
                              flag_retries=submit_retries,
                              script_repairs=script_repairs,
                              bonus_turns=bonus_turns)
-                    messages.append({"role": "assistant", "content": comp.text[:2000]})
+                    messages.append({"role": "assistant", "content": history_reply(comp.text, cfg.policy.reply_history)})
                     # 末尾补 NT：这条反馈原先漏了 /no_think，Qwen3 在重试那一轮
                     # 会把思维链重新打开，和其他 user 消息的行为不一致。
                     messages.append({"role": "user", "content": message + NT})
@@ -737,7 +825,7 @@ def run_attempt(
                 verdict, reason = "error", "stopped by the user"
                 break
             if op == "skip":
-                messages.append({"role": "assistant", "content": comp.text[:2000]})
+                messages.append({"role": "assistant", "content": history_reply(comp.text, cfg.policy.reply_history)})
                 messages.append({"role": "user", "content": "OBSERVATION\nSKIPPED: the person watching chose not to run this step. Take a different step." + NT})
                 continue
             if op == "edit" and field and edited:
@@ -752,6 +840,8 @@ def run_attempt(
 
         obs_raw = format_observation(turns, act, res)
         obs, was_trunc = truncate(obs_raw, cfg.policy)
+        if cfg.policy.fence_output:
+            obs = obs.rstrip("\n") + "\n" + OUTPUT_FENCE
         tr.event("tool", turn=turns, action=act.action, cmd=act.cmd[:400],
                  exit_code=res.exit_code, timed_out=res.timed_out,
                  duration_ms=res.duration_ms, truncated=was_trunc,
@@ -761,7 +851,7 @@ def run_attempt(
                  # 失败归因要用：环境类证据（缺工具 / 权限）只出现在 stderr 里
                  stderr_head=res.stderr[:400])
 
-        messages.append({"role": "assistant", "content": comp.text[:2000]})
+        messages.append({"role": "assistant", "content": history_reply(comp.text, cfg.policy.reply_history)})
         messages.append({"role": "user", "content": "OBSERVATION\n" + obs + NT})
 
         # ---- stall 检测 ----

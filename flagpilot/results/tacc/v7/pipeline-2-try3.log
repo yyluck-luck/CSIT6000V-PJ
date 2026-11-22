@@ -1,0 +1,6 @@
+[11:36:10] serve submission failed:
+rsync(98927): error: io_read_flush
+rsync(98927): error: rsync_sender
+rsync(98927): warning: child 98928 exited with status 11
+[Tcloud Error] 2026/11/21 tcloudcli.go:356: Failed to upload repo to  yliutz@gw.turing.ust.hk:/mnt/home/yliutz/WORKDIR
+[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository

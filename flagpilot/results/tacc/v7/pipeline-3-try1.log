@@ -1,0 +1,55 @@
+[16:41:38] serve job 30502 submitted (attempt 1, exclude=10-0-1-10,10-0-1-11,10-0-4-10,10-0-4-11)
+[16:42:48] waiting for serve 30502
+[16:43:49] waiting for serve 30502 @10-0-3-10
+[16:44:51] waiting for serve 30502 @10-0-3-10
+[16:45:52] waiting for serve 30502 @10-0-3-10
+[16:47:02] waiting for serve 30502
+[16:48:03] serve ready: http://10-0-3-10:8000/v1 (job 30502, node 10-0-3-10)
+[16:48:22] client job 30505 submitted
+[16:49:23] waiting for batch 30505: [fp] tier B1 -> tacc-dev-v7-B1 (2580s left)
+[16:50:25] waiting for batch 30505: [1/40] crypto-079-s1          VERIFIED   turns=3 29.39s
+[16:51:26] waiting for batch 30505: [2/40] crypto-092-s1          wrong      turns=7 94.62s
+[16:52:28] waiting for batch 30505: [2/40] crypto-092-s1          wrong      turns=7 94.62s
+[16:53:29] waiting for batch 30505: [7/40] forensics-003-s1       VERIFIED   turns=5 36.52s
+[16:54:31] waiting for batch 30505: [8/40] crypto-093-s0          VERIFIED   turns=5 49.73s
+[16:55:33] waiting for batch 30505: [17/40] crypto-074-s1          VERIFIED   turns=3 14.83s
+[16:56:34] waiting for batch 30505: [24/40] crypto-097-s0          VERIFIED   turns=4 22.04s
+[16:57:36] waiting for batch 30505: [33/40] general-022-s1         VERIFIED   turns=2 5.65s
+[16:58:37] waiting for batch 30505: [40/40] crypto-072-s1          budget     turns=11 141.24s
+[16:59:39] waiting for batch 30505: [fp] tier B2 -> tacc-dev-v7-B2 (1989s left)
+[17:00:41] waiting for batch 30505: [fp] tier B2 -> tacc-dev-v7-B2 (1989s left)
+[17:01:42] waiting for batch 30505: [2/40] forensics-059-s1       budget     turns=19 132.79s
+[17:02:44] waiting for batch 30505: [3/40] crypto-092-s1          VERIFIED   turns=9 62.2s
+[17:03:46] waiting for batch 30505: [5/40] forensics-003-s0       VERIFIED   turns=8 71.33s
+[17:04:48] waiting for batch 30505: [11/40] crypto-093-s1          VERIFIED   turns=7 41.87s
+[17:05:49] waiting for batch 30505: [17/40] crypto-072-s0          VERIFIED   turns=4 27.7s
+[17:06:51] waiting for batch 30505: [26/40] crypto-097-s1          VERIFIED   turns=5 26.48s
+[17:07:53] waiting for batch 30505: [40/40] general-022-s1         VERIFIED   turns=3 10.7s
+[17:08:53] batch finished (ok=1); client log tail:
+      Cryptography       n=16  verified=13  raw=13  v_rate=81% r_rate=81%
+      Forensics          n=12  verified=10  raw=10  v_rate=83% r_rate=83%
+      General Skills     n=12  verified=10  raw=12  v_rate=83% r_rate=100%
+    
+    失败归因（7 条失败，共 9 个标签，同一条可命中多个）：
+      不守 JSON 协议                    4  (57%)
+      答案对但不可复现                  2  (29%)
+      回复原样重复（客户端截停）        1  (14%)
+      答案错误                          1  (14%)
+      脚本硬编码答案                    1  (14%)
+      （成功的 attempt 途中还碰到：环境缺工具×11、不守 JSON 协议×1——不计入失败，但说明环境有缺口）
+    
+    逐条（取前 7 条）：
+      forensics-059-s0        不守 JSON 协议                  没有解析到合法的 JSON 动作
+      forensics-059-s1        不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-092-s0           答案错误                        
+      crypto-079-s1           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-079-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      general-024-s0          答案对但不可复现                script_error: 重放无输出（exit=1）；stderr: Traceback (most recent call last):
+      File "<replay>/so
+      general-019-s0          脚本硬编码答案                  literal_flag: 脚本含 flag 的 exact 形态
+    
+    Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v7-B2.md
+    [fp] tier-done tacc-dev-v7-B2 562s
+    [fp] done: /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v7
+[17:09:16] local: client-30472.log client-30475.log client-30505.log client-live.log pipeline-1-try1.log pipeline-2-try1.log pipeline-2-try2.log pipeline-2-try3.log pipeline-3-try1.log serve-30469.log serve-30474.log serve-30502.log serve-live.log tacc-dev-v7-B0 tacc-dev-v7-B0.md tacc-dev-v7-B1 tacc-dev-v7-B1.md tacc-dev-v7-B2 tacc-dev-v7-B2.md tacc-dev-v7-B3 tacc-dev-v7-B3.md 
+[17:09:16] cancel serve job 30502

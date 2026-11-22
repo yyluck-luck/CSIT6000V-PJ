@@ -196,6 +196,108 @@ def recalled_turns(rows: list[dict]) -> set:
     return {r.get("turn") for r in rows if r.get("type") == "recall"}
 
 
+# ---------- 上下文：之前的哪些问答交给模型（2026-11-22，"Ask 里要有上下文管理"） ----------
+# 只交问答本身：上一轮命令的原始输出不再带（一轮最多 3 条命令 × 3 段 × 4000 字，两轮就能把 Qwen 的 32k 撑满），
+# 本机和 TACC 两条路一样（TACC 一直只带问答）。
+
+CONTEXT_SHARE = 0.6          # 历史问答最多占模型窗口的这么多；再早的自动不带，并告诉模型
+SYSTEM_TOKENS = 1500         # 系统提示 + 题面，粗估
+REPLY_TOKENS = 4096          # 给回答留的位置
+CHARS_PER_TOKEN = 3.5        # 没有 tokenizer：按字数估，宁可估多
+
+
+def context_window(model: str) -> int:
+    """模型的上下文窗口（token），按名字粗分；不认识的按 32k 算（课程的 Qwen 在 vLLM 上就是 32768）。"""
+    m = (model or "").lower()
+    if "gemini" in m:
+        return 1_000_000
+    if any(k in m for k in ("deepseek", "gpt", "claude", "kimi", "glm", "minimax")):
+        return 128_000
+    return 32_768
+
+
+def est_tokens(text: str) -> int:
+    return int(len(text or "") / CHARS_PER_TOKEN) + 4
+
+
+def context_plan(rows: list[dict], window: int) -> dict:
+    """从会话日志算出下一问带哪些之前的问答。
+
+    撤回的轮次从不带。用户"不带"的轮次（context / exclude，可 include 收回）、"从这里重新开始"之前的轮次
+    （context / fresh，reset 全部恢复）不带。剩下的从最新往回装，装满 CONTEXT_SHARE 份窗口（扣掉系统提示和回答的位置）
+    为止，更早的连续一段自动不带；最新的一问一答总是带上。
+    """
+    gone = recalled_turns(rows)
+    excluded: set[int] = set()
+    fresh = 0
+    for r in rows:
+        if r.get("type") != "context":
+            continue
+        op, t = r.get("op"), int(r.get("turn") or 0)
+        if op == "exclude":
+            excluded.add(t)
+        elif op == "include":
+            excluded.discard(t)
+        elif op == "fresh":
+            fresh = t
+        elif op == "reset":
+            excluded, fresh = set(), 0
+    pairs: list[dict] = []
+    pending: dict = {}
+    for r in rows:
+        t = r.get("turn")
+        if t in gone:
+            continue
+        if r.get("type") == "user":
+            pending[t] = str(r.get("text") or "")
+        elif r.get("type") == "reply" and t in pending and str(r.get("answer") or "").strip():
+            pairs.append({"turn": int(t), "user": pending.pop(t), "answer": str(r["answer"])})
+    budget = max(0, int(window * CONTEXT_SHARE) - SYSTEM_TOKENS - REPLY_TOKENS)
+    state: dict[int, str] = {}
+    chosen: list[dict] = []
+    used, full = 0, False
+    for p in reversed(pairs):
+        t = p["turn"]
+        if t in excluded:
+            state[t] = "excluded"
+            continue
+        if fresh and t < fresh:
+            state[t] = "before_fresh"
+            continue
+        cost = est_tokens(p["user"]) + est_tokens(p["answer"])
+        if full or (chosen and used + cost > budget):
+            full = True
+            state[t] = "auto"
+            continue
+        chosen.append(p)
+        used += cost
+        state[t] = "in"
+    chosen.reverse()
+    return {"pairs": chosen, "window": window, "budget": budget, "tokens": SYSTEM_TOKENS + used, "fresh": fresh,
+            "turns": [{"turn": p["turn"], "state": state[p["turn"]]} for p in pairs]}
+
+
+def context_note(plan: dict) -> str:
+    """给模型的一句说明：之前有几段问答没带、为什么。什么都没少就是空串。"""
+    left = [t for t in plan.get("turns", []) if t["state"] != "in"]
+    if not left:
+        return ""
+    why = []
+    n_user = sum(t["state"] in ("excluded", "before_fresh") for t in left)
+    n_auto = sum(t["state"] == "auto" for t in left)
+    if n_user:
+        why.append(f"{n_user} left out by the user")
+    if n_auto:
+        why.append(f"{n_auto} of the oldest left out to fit your context window")
+    return (f"Note: {len(left)} earlier exchange(s) of this conversation are not shown ({'; '.join(why)}). "
+            "If the question depends on them, say so and ask the user to repeat what you need.")
+
+
+def context_summary(plan: dict) -> dict:
+    """页面用的：每一轮在不在上下文里、估计用了多少 token（不含问答原文）。"""
+    return {k: plan[k] for k in ("window", "budget", "tokens", "fresh", "turns")}
+
+
 def read_log(path: Path) -> list[dict]:
     """读会话日志。半行（进程被杀/磁盘满）跳过，不让整段历史失效。
 
@@ -314,18 +416,27 @@ class ChatSession:
         if not any(r.get("type") in ("user", "reply") for r in rows):
             return None
         sess = cls(cfg, task=task, workdir=workdir, use_tools=use_tools)
-        sess.messages = [{"role": "system", "content": sess._system()}]
         gone = recalled_turns(rows)          # 撤回的轮次：模型不再看到它们
         for r in rows:
             sess.turns = max(sess.turns, int(r.get("turn") or 0))      # 轮次号只增不重用：撤回之后也不会撞号
-            if r.get("turn") in gone:
-                continue
-            if r.get("type") == "user" and str(r.get("text") or "").strip():
-                sess.messages.append({"role": "user", "content": str(r["text"])})
-            elif r.get("type") == "reply" and str(r.get("answer") or "").strip():
-                sess.messages.append({"role": "assistant", "content": str(r["answer"])})
+            if r.get("turn") not in gone and r.get("type") == "reply" and str(r.get("answer") or "").strip():
                 sess.total_steps += len(r.get("steps") or [])
+        sess.load_context(rows)
         return sess
+
+    def load_context(self, rows: list[dict] | None = None) -> dict:
+        """按会话日志重建交给模型的上下文（context_plan）：每一问之前都做一次，"不带" / "重新开始" / 自动省略随即生效。"""
+        plan = context_plan(self.history() if rows is None else rows, context_window(self.cfg.model.name))
+        self.set_context(plan["pairs"], context_note(plan))
+        return plan
+
+    def set_context(self, pairs: list[dict], note: str = "") -> None:
+        """上下文 = 系统提示（有省略就附一句说明）+ 这些问答。"""
+        system = self._system() + (f"\n\n{note}" if note else "")
+        self.messages = [{"role": "system", "content": system}]
+        for p in pairs:
+            self.messages.append({"role": "user", "content": str(p["user"])})
+            self.messages.append({"role": "assistant", "content": str(p["answer"])})
 
     def _system(self) -> str:
         parts = [SYSTEM]

@@ -1,0 +1,153 @@
+16:15:45 session before: idle | our jobs: []
+16:15:45 start: (200, {'ok': True, 'phase': 'starting'})
+16:15:45   step 'queue' after 0 s | eta None | queue '' ahead 0 | detail {}
+16:16:09   step 'node' after 24 s | eta 304 | queue '' ahead 0 | detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each'}
+16:17:17   step 'vllm' after 92 s | eta 207 | queue '' ahead 0 | detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'vllm': '0.26.0'}
+16:18:33   step 'engine' after 168 s | eta 137 | queue '' ahead 0 | detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'vllm': '0.26.0'}
+16:19:41   step 'weights' after 236 s | eta 71 | queue '' ahead 0 | detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'weights_gib': 19.57, 'weights_pct': 60, 'vllm': '0.26.0'}
+16:19:50   step 'compile' after 244 s | eta 62 | queue '' ahead 0 | detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'weights_gib': 19.57, 'weights_pct': 100, 'vllm': '0.26.0'}
+16:20:46   step 'server' after 301 s | eta 5 | queue '' ahead 0 | detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'weights_gib': 19.57, 'weights_pct': 100, 'compile_s': 46.09, 'kv_tokens': 320170, 'vllm': '0.26.0'}
+16:20:54   step 'ready' after 309 s | eta 0 | queue '' ahead 0 | detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'weights_gib': 19.57, 'weights_pct': 100, 'compile_s': 46.09, 'kv_tokens': 320170, 'vllm': '0.26.0'}
+16:20:54 CHECK PASS Qwen session becomes ready | phase=ready after 309 s; error=''
+16:20:54 step times: [('queue', 20), ('node', 72), ('vllm', 74), ('engine', 67), ('weights', 10), ('compile', 55), ('warmup', 0), ('server', 9), ('ready', 0)]
+16:20:54 CHECK PASS start-up progress walks through every step | ['queue', 'node', 'vllm', 'engine', 'weights', 'compile', 'warmup', 'server', 'ready']
+16:20:54 CHECK PASS start-up progress offered an ETA while starting | 72 readings, first [304, 300, 296]
+16:20:54 CHECK PASS the harmless vLLM Traceback was in the log and did not stop the session | serve 30492, Tracebacks in log: 2
+16:20:54   [crypto-072] tacc uploading {}
+16:23:31   [crypto-072] tacc retrying {'message': "TACC's login gateway dropped the connection; trying again in 5 s (2/6)"}
+16:23:47   [crypto-072] tacc queued {'job': '30493'}
+16:26:22   [crypto-072] tacc running {'job': '30493', 'node': '10-0-1-10'}
+16:26:22   [crypto-072] model 
+16:26:22   [crypto-072] tool 
+16:26:22   [crypto-072] model 
+16:26:22   [crypto-072] tool cat challenge/new_caesar.py
+16:26:22   [crypto-072] model 
+16:26:22   [crypto-072] tool 
+16:26:22   [crypto-072] model 
+16:26:22   [crypto-072] tool 
+16:26:22   [crypto-072] model 
+16:26:22   [crypto-072] tool 
+16:26:22   [crypto-072] model 
+16:26:22   [crypto-072] submit 
+16:26:22   [crypto-072] replay verified
+16:26:23 run crypto-072 B3 -> verified | match | 329s | 21 events
+16:26:23 CHECK PASS core challenge crypto-072 solved on TACC | verified in 329 s
+16:26:23 CHECK PASS the page saw the model's output while the job ran | ['done', 'meta', 'model', 'replay', 'start', 'submit', 'summary', 'tacc', 'tool']
+16:26:23 CHECK PASS upload accepted | 200 {'task': {'name': 'custom-20261121-162623-e2e-upload-check-bf88', 'title': 'e2e upload check', 'category': 'Cryptography', 'has_gold': True, 'n_assets': 1, 'custom': True}, 'warning': ''}
+16:26:23   [custom-20261121-162623-e2e-upload-check-bf88] tacc uploading {}
+16:26:39   [custom-20261121-162623-e2e-upload-check-bf88] tacc queued {'job': '30494'}
+16:27:10   [custom-20261121-162623-e2e-upload-check-bf88] tacc running {'job': '30494', 'node': '10-0-1-10'}
+16:27:10   [custom-20261121-162623-e2e-upload-check-bf88] model 
+16:27:10   [custom-20261121-162623-e2e-upload-check-bf88] tool 
+16:27:15   [custom-20261121-162623-e2e-upload-check-bf88] model 
+16:27:15   [custom-20261121-162623-e2e-upload-check-bf88] tool cat ./challenge/secret.txt
+16:27:15   [custom-20261121-162623-e2e-upload-check-bf88] model 
+16:27:15   [custom-20261121-162623-e2e-upload-check-bf88] tool 
+16:27:15   [custom-20261121-162623-e2e-upload-check-bf88] model 
+16:27:15   [custom-20261121-162623-e2e-upload-check-bf88] tool 
+16:27:22   [custom-20261121-162623-e2e-upload-check-bf88] model 
+16:27:22   [custom-20261121-162623-e2e-upload-check-bf88] submit 
+16:27:22   [custom-20261121-162623-e2e-upload-check-bf88] replay verified
+16:27:23 run custom-20261121-162623-e2e-upload-check-bf88 B3 -> verified | match | 60s | 19 events
+16:27:23 CHECK PASS uploaded challenge runs on TACC (no 'no result') | verified | match
+16:27:23 CHECK PASS uploaded challenge solved and verified | verified in 60 s
+16:27:23 delete upload: (200, {'deleted': True})
+16:27:23   [general-026] tacc uploading {}
+16:29:59   [general-026] tacc retrying {'message': "TACC's login gateway dropped the connection; trying again in 5 s (2/6)"}
+16:30:16   [general-026] tacc queued {'job': '30495'}
+16:32:51   [general-026] tacc running {'job': '30495', 'node': '10-0-1-10'}
+16:32:51   [general-026] model 
+16:32:51   [general-026] tool 
+16:32:51   [general-026] model 
+16:32:51   [general-026] tool cat challenge/fixme1.py
+16:32:51   [general-026] model 
+16:32:51   [general-026] tool 
+16:32:51   [general-026] model 
+16:32:51   [general-026] tool 
+16:32:51   [general-026] model 
+16:32:51   [general-026] submit 
+16:32:51   [general-026] replay verified
+16:32:52 run general-026 B3 -> verified | match | 329s | 19 events
+16:32:52 CHECK PASS extra-gs challenge general-026 runs on TACC (not dropped by the job's scope) | verified | match | 329 s
+16:32:52   [crypto-005] tacc uploading {}
+16:33:08   [crypto-005] tacc queued {'job': '30496'}
+16:35:32   [crypto-005] tacc running {'job': '30496', 'node': '10-0-1-10'}
+16:35:32   [crypto-005] model 
+16:35:32   [crypto-005] tool 
+16:35:32   [crypto-005] model 
+16:35:32   [crypto-005] tool 
+16:35:32   [crypto-005] model 
+16:35:32   [crypto-005] tool 
+16:35:32   [crypto-005] model 
+16:35:32   [crypto-005] tool 
+16:35:32   [crypto-005] model 
+16:35:32   [crypto-005] tool 
+16:35:32   [crypto-005] model 
+16:35:32   [crypto-005] submit 
+16:35:32   [crypto-005] replay verified
+16:35:33 run crypto-005 B3 -> verified | match | 161s | 20 events
+16:35:33 CHECK PASS rerun with a hint: the hint reaches the model | verified; traces ['/Users/rocket/Desktop/CSIT6000V-PJ/flagpilot/runs/tacc/web-crypto-005-26429/web-crypto-005-26429-B3/runs.jsonl', '/Users/rocket/Desktop/CSIT6000V-PJ/flagpilot/runs/tacc/web-crypto-005-26429/web-crypto-005-26429-B3/crypto-005-s0/writeup.md', '/Users/rocket/Desktop/CSIT6000V-PJ/flagpilot/runs/tacc/web-crypto-005-26429/web-crypto-005-26429-B3/crypto-005-s0/trace.jsonl']
+16:35:33   [crypto-092] tacc uploading {}
+16:35:49   [crypto-092] tacc queued {'job': '30497'}
+16:38:17   [crypto-092] tacc running {'job': '30497', 'node': '10-0-1-10'}
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] Finish pressed -> 200 {'ok': True}
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool cat challenge/message.txt
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] submit 
+16:38:17   [crypto-092] replay wrong
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool xxd challenge/message.txt | head -20
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] tool 
+16:38:17   [crypto-092] model 
+16:38:17   [crypto-092] submit 
+16:38:17   [crypto-092] replay wrong
+16:38:17 run crypto-092 B3 -> stopped | finished by you | 164s | 39 events
+16:38:17 CHECK PASS Finish on a TACC run ends it at once with 'stopped' | stopped | finished by you | lag 0.0 s
+16:38:18 CHECK PASS Finish cancels the client job and keeps the Qwen session | jobs [['30492', 'run.slur', 'R']], 1 s
+16:38:44 ask zh -> 26 s | 因为加密是 $c \equiv m^e \pmod n$，解密是 $m \equiv c^d \pmod n$，要还原 $m$ 就必须满足 $m^{ed} \equiv m \pmod n$；而 $ed \equiv 1 \pmod{\varphi(n)}$ 正是保证该同余式对任意 $m$ 成立（依据欧拉定理/中国剩余定理）的最小充分条件。
+16:38:44 CHECK PASS Ask answers in the language of the question (Chinese) | 49 CJK chars
+16:39:10 CHECK PASS Ask answers in English when asked in English | A nonce is a value, such as a number or string, that is used only once to ensure that a specific transaction or message is unique and cannot be replayed.
+16:41:19 CHECK PASS recall of an Ask question accepted | 200 {'ok': True, 'turn': 1}; chat job seen: [['30492', 'run.slur', 'R']]
+16:41:20 CHECK PASS recall cancels the question's TACC job | jobs [['30492', 'run.slur', 'R']], 1 s
+16:41:25 stop: (200, {'ok': True, 'cancelled': True})
+16:41:26 CHECK PASS stopping the session leaves no job of ours on TACC | jobs []
+16:41:26 SUMMARY 18/18 checks passed
+16:41:26    PASS Qwen session becomes ready
+16:41:26    PASS start-up progress walks through every step
+16:41:26    PASS start-up progress offered an ETA while starting
+16:41:26    PASS the harmless vLLM Traceback was in the log and did not stop the session
+16:41:26    PASS core challenge crypto-072 solved on TACC
+16:41:26    PASS the page saw the model's output while the job ran
+16:41:26    PASS upload accepted
+16:41:26    PASS uploaded challenge runs on TACC (no 'no result')
+16:41:26    PASS uploaded challenge solved and verified
+16:41:26    PASS extra-gs challenge general-026 runs on TACC (not dropped by the job's scope)
+16:41:26    PASS rerun with a hint: the hint reaches the model
+16:41:26    PASS Finish on a TACC run ends it at once with 'stopped'
+16:41:26    PASS Finish cancels the client job and keeps the Qwen session
+16:41:26    PASS Ask answers in the language of the question (Chinese)
+16:41:26    PASS Ask answers in English when asked in English
+16:41:26    PASS recall of an Ask question accepted
+16:41:26    PASS recall cancels the question's TACC job
+16:41:26    PASS stopping the session leaves no job of ours on TACC

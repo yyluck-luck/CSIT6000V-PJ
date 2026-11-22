@@ -119,6 +119,63 @@ class TestControlInTheLoop(unittest.TestCase):
         third = client.seen[2][-1]["content"]
         self.assertIn("SKIPPED", third)
 
+    def test_more_turns_given_during_a_run_are_used(self):
+        """2026-11-22: turns are set before a run; while it runs, the page can only add to them (Solve's "+20 turns")."""
+        tmp = Path(tempfile.mkdtemp(prefix="fp-ctl-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        cfg = RunConfig(model=ModelSpec(name="mock"), budget=Budget(max_turns=2, max_wall_s=120),
+                        limits=SandboxLimits(action_timeout_s=10), replay_timeout_s=20.0, tasks_root=tmp)
+        client = Scripted([json.dumps({"thought": "look", "action": "shell", "cmd": "cat challenge/data.txt"}),
+                           json.dumps({"thought": "list", "action": "shell", "cmd": "ls -la"}),
+                           json.dumps({"thought": "again", "action": "shell", "cmd": "cat challenge/data.txt"}),
+                           json.dumps({"thought": "decode", "action": "submit", "flag": FLAG, "script": SCRIPT})])
+        ctl = RunControl()
+        self.assertFalse(ctl.set("turns", 0))
+        self.assertFalse(ctl.set("turns", "many"))
+        self.assertFalse(ctl.set("turns", 500))
+        self.assertTrue(ctl.set("turns", 4))
+        original = agent.build_client
+        agent.build_client = lambda spec: client
+        try:
+            summary = agent.run_attempt(make_task(tmp), cfg, tmp, seed=0, control=ctl)
+        finally:
+            agent.build_client = original
+        self.assertEqual((summary["verdict"], summary["turns"]), ("verified", 4))
+        rows = [json.loads(x) for x in (tmp / "live-001-s0" / "trace.jsonl").read_text().splitlines() if x.strip()]
+        self.assertEqual([(r["max_turns"], r["was"]) for r in rows if r["type"] == "budget"], [(4, 2)])
+
+    def test_turns_given_while_the_last_turn_waits_for_approval_are_used(self):
+        """The run is on its last turn, waiting for an OK in step mode, when "+20 turns" is clicked: the loop used to test the
+        budget before taking the new turns, so the run ended out of turns although more had been given."""
+        tmp = Path(tempfile.mkdtemp(prefix="fp-ctl-"))
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        cfg = RunConfig(model=ModelSpec(name="mock"), budget=Budget(max_turns=1, max_wall_s=120),
+                        limits=SandboxLimits(action_timeout_s=10), replay_timeout_s=20.0, tasks_root=tmp)
+        client = Scripted([json.dumps({"thought": "look", "action": "shell", "cmd": "cat challenge/data.txt"}),
+                           json.dumps({"thought": "list", "action": "shell", "cmd": "ls -la"}),
+                           json.dumps({"thought": "decode", "action": "submit", "flag": FLAG, "script": SCRIPT})])
+        ctl = RunControl()
+        ctl.set("step", True)
+
+        def human():
+            while ctl.state()["waiting"] is None:
+                time.sleep(0.005)
+            self.assertTrue(ctl.set("turns", 3))
+            ctl.set("step", False)
+            ctl.set("approve", None, turn=ctl.state()["waiting"]["turn"])
+        t = threading.Thread(target=human, daemon=True)
+        t.start()
+        original = agent.build_client
+        agent.build_client = lambda spec: client
+        try:
+            summary = agent.run_attempt(make_task(tmp), cfg, tmp, seed=0, control=ctl)
+        finally:
+            agent.build_client = original
+        t.join(5)
+        self.assertEqual((summary["verdict"], summary["turns"]), ("verified", 3), summary)
+        rows = [json.loads(x) for x in (tmp / "live-001-s0" / "trace.jsonl").read_text().splitlines() if x.strip()]
+        self.assertEqual([(r["max_turns"], r["was"], r["turn"]) for r in rows if r["type"] == "budget"], [(3, 1, 2)])
+
 
 if __name__ == "__main__":
     unittest.main()

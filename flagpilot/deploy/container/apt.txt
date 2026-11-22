@@ -1,0 +1,17 @@
+# Debian packages in the sandbox image (one per line; read by Dockerfile and flagpilot.def)
+binutils
+binwalk
+bzip2
+file
+foremost
+gdb
+libimage-exiftool-perl
+p7zip-full
+ruby
+sleuthkit
+steghide
+tcpdump
+tshark
+unzip
+xxd
+xz-utils

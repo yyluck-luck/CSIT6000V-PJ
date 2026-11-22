@@ -177,7 +177,8 @@
   select.pillsel{appearance:none;-webkit-appearance:none;padding:10px 26px 10px 0;font:600 15px var(--mono);cursor:pointer;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23141414' stroke-width='1.6' fill='none'/%3E%3C/svg%3E") no-repeat right 4px center}
   .flabel{display:block;margin:30px 0 0;font:600 15px var(--font)}
   .segc{position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;border:1.5px solid var(--ink);user-select:none;background:var(--white)}
-  .segc .thumb{position:absolute;top:0;bottom:0;left:0;width:calc(100% / var(--n,4));background:var(--ink);transform:translateX(calc(var(--i,0) * 100%));transition:transform var(--t2) var(--ease)}
+  .segc .thumb{position:absolute;top:0;bottom:0;left:0;width:calc(100% / var(--n,4));background:var(--ink);transform:translateX(calc(var(--i,0) * 100%));transition:transform var(--t2) var(--ease),opacity var(--t2) var(--ease)}
+  .segc.none .thumb{opacity:0}
   .segc button{position:relative;z-index:1;border:0;background:transparent;padding:10px 18px;font:600 15px var(--font);cursor:pointer;white-space:nowrap;display:inline-flex;gap:7px;align-items:center;justify-content:center;transition:color var(--t1) ease}
   .segc button+button{border-left:1px solid var(--rule)}
   .segc button.on{color:#fff}
@@ -309,7 +310,9 @@
   /* ---------- solve: steps ---------- */
   #flow{border-top:1.5px solid var(--ink);margin-top:14px}
   #timeline.none{display:none}
-  .step{position:relative;border-bottom:1px solid var(--rule);content-visibility:auto;contain-intrinsic-size:auto 56px}
+  /* no content-visibility here: a step entering and leaving the viewport switched between its real height and the remembered one,
+     and at the bottom of a run the page bounced 32 px up and down (2026-11-22: "the whole page shakes with Add the answer") */
+  .step{position:relative;border-bottom:1px solid var(--rule)}
   .step.enter{animation:stepin .22s var(--ease) both}
   .step.flash{animation:flash .9s ease}
   @keyframes stepin{from{transform:translateX(-8px);background:var(--yellow-t)}}
@@ -563,6 +566,13 @@
   .row .src{margin-left:8px;font:700 15px var(--mono);color:var(--blue);text-decoration:none;padding:2px 6px} .row .src:hover{background:var(--blue-t)}
   /* watching a run: step mode, pause, hints; a waiting command can be edited, run or skipped */
   .runctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin:16px 0 0;padding:12px 14px;border:1.5px dashed var(--ink);background:var(--white)}
+  .runset{margin:18px 0 0;padding:14px 16px;border:1.5px solid var(--ink);background:var(--white)}
+  .runset .rs-edit{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 22px}
+  .runset .rs-f{display:flex;flex-direction:column;gap:6px} .runset .rs-l{font:600 15px var(--font);color:var(--ink2)}
+  .runset .pillsel{min-width:180px} .runset .segc button{padding:8px 16px}
+  .runset .rs-d{flex:1 1 100%;margin:2px 0 0}
+  .runset .rs-info{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px} .runset .rs-now{font:500 15px var(--mono);color:var(--ink)}
+  .runset .segc[aria-disabled="true"],.runset select:disabled{opacity:.5;pointer-events:none}
   .runctl .hintbox{display:flex;flex:1 1 320px;min-width:240px;border:1.5px solid var(--rule);transition:border-color var(--t1)} .runctl .hintbox:focus-within{border-color:var(--ink)}
   .runctl input{flex:1;min-width:0;border:0;padding:8px 12px;font:15px var(--font);background:transparent;outline:none}
   .await{margin:14px 0 0;border:1.5px solid var(--ink);background:var(--yellow-t);box-shadow:5px 5px 0 var(--ink);padding:14px 16px;animation:awaitIn .4s var(--spring)}
@@ -671,6 +681,10 @@
   .thread.on{background:var(--ink);color:#fff}
   .thread b{display:block;font:600 15px var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .thread span{display:block;font:13px var(--mono);color:var(--ink3);margin-top:3px}
+  .thread.replying span::before{content:'';display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--blue);margin-right:8px;vertical-align:1px;animation:thrBlink 1.1s steps(1, end) infinite}
+  .thread.on.replying span::before{background:#fff}
+  @keyframes thrBlink{50%{opacity:0}}
+  @media (prefers-reduced-motion: reduce){.thread.replying span::before{animation:none}}
   .thread.on span{color:rgba(255,255,255,.6)}
   .conv{position:relative;display:flex;flex-direction:column;min-height:0;padding:84px max(44px,calc((100% - 1040px) / 2)) 26px;overflow:hidden}
   #matrix{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:0}
@@ -754,6 +768,17 @@
   .bub.me .recall:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)} .bub.me .recall:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--ink)}
   .bub.me .recall:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
   @media (hover:none){.bub.me .acts{opacity:.85;pointer-events:auto}}
+  /* Ask's context: what the model sees of the conversation (left-out exchanges fade; the meter sits above the box) */
+  .bub.me .acts{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+  .bub.me .ctxbtn{border:1.5px solid var(--ink);background:var(--white);color:var(--ink);font:600 15px var(--mono);padding:4px 10px;cursor:pointer;box-shadow:3px 3px 0 var(--ink);transition:transform var(--t1) var(--ease),box-shadow var(--t1) ease}
+  .bub.me .ctxbtn:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)} .bub.me .ctxbtn:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+  .bub.me:not([data-ctx]) .ctxbtn{display:none}
+  .bub.ctx-out{opacity:.45} .bub.ctx-out:hover,.bub.ctx-out:focus-within{opacity:.8}
+  .bub.me .ctxtag{display:block;margin-top:8px;font:600 15px var(--mono);color:var(--yellow)}
+  .ctxbar{display:flex;align-items:center;gap:12px;margin:0 0 10px;font:500 15px var(--mono);color:var(--ink2)}
+  .ctxm{flex:none;width:120px;height:9px;border:1.5px solid var(--ink);background:var(--white);position:relative}
+  .ctxm i{position:absolute;left:0;top:0;bottom:0;width:var(--p,0%);background:var(--blue);transition:width var(--t2) var(--ease)}
+  .ctxbar.hot .ctxm i{background:var(--yellow)}
   .thread b .g{width:9px;height:9px;margin-right:9px;vertical-align:1px} .thread.on b .g.ink{background:#fff}
   .phl{position:absolute;left:20px;top:18px;right:20px;pointer-events:none;color:var(--ink3);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .phl span{display:inline-block;animation:phin .25s var(--ease) both}
@@ -816,7 +841,7 @@
     #navPill::before{width:auto;height:4px;right:0;bottom:auto} .navbtn .nt{left:auto;right:calc(50% - 30px);top:16px}
     #stage{bottom:60px} .stats{grid-template-columns:1fr} .arms{grid-template-columns:repeat(2,1fr)}
     .step .body{padding-left:8px} .step>summary{grid-template-columns:30px 70px minmax(0,1fr) 12px 16px} .step .tm{display:none}
-    .conv{padding:80px 16px 16px} .bub{max-width:92%} .bub.me{max-width:calc(100% - 64px)} .bub.me .recall .t{display:none}
+    .conv{padding:80px 16px 16px} .bub{max-width:92%} .bub.me{max-width:calc(100% - 64px)} .bub.me .recall .t,.bub.me .ctxbtn .t{display:none}
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
@@ -893,6 +918,21 @@
           <span class="grow"></span>
           <button class="ibtn" id="inspBtn" aria-label="Agent flow" data-tip="Agent flow · call chain · solve.py">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg></button>
+        </div>
+        <!-- Run settings: chosen before a run; a run on screen (running, finished or replayed) shows what it used -->
+        <div class="runset" id="runSet" hidden>
+          <div class="rs-edit" id="rsEdit">
+            <label class="rs-f"><span class="rs-l">Model</span><select id="modelSel" class="pillsel" title="Model for this run"></select></label>
+            <div class="rs-f"><span class="rs-l">Tier</span><div class="segc mono" id="ablSeg" style="--n:4"><span class="thumb"></span></div></div>
+            <div class="rs-f"><span class="rs-l">Turns</span><div class="segc mono" id="turnSeg" style="--n:4" aria-label="Turn budget"><span class="thumb"></span></div></div>
+            <p class="hint rs-d"><span id="ablDesc">—</span><br><span id="turnDesc">—</span></p>
+          </div>
+          <div class="rs-info" id="rsInfo" hidden>
+            <span class="rs-now" id="rsNow"></span><span class="grow"></span>
+            <button class="btn" id="rsMore" type="button" hidden data-tip="Give this run 20 more turns; it uses them if it needs them">+20 turns</button>
+            <button class="btn primary" id="rsAgain" type="button" hidden data-tip="Run this challenge again with the same model, tier and turns">Run again<span class="arr">→</span></button>
+            <button class="btn plain" id="rsChange" type="button" hidden>Change settings</button>
+          </div>
         </div>
         <div class="runctl" id="runCtl" hidden>
           <label class="chip toggle" data-tip="Each command waits for your OK before it runs"><input type="checkbox" id="ctlStep"><span class="tick"></span>Step mode</label>
@@ -1061,6 +1101,7 @@
         <canvas id="matrix" aria-hidden="true"></canvas>
         <div class="chat-hero"><h1 class="ltitle">Ask the tutor</h1><p class="lead">Concepts, hints and real command output. Never scored.</p></div>
         <div id="chatLog"></div>
+        <div class="ctxbar" id="ctxBar" hidden><span class="ctxm" aria-hidden="true"><i></i></span><span id="ctxText"></span><span class="grow"></span><button class="btn plain sm" id="ctxReset" type="button" hidden data-tip="Every exchange goes back into what the model sees">Bring all back</button></div>
         <div id="composer">
           <div class="phl" id="chatPh"></div>
           <textarea id="chatInput" rows="1" aria-label="Message"></textarea>
@@ -1084,10 +1125,6 @@
 <!-- ======================= Details drawer ======================= -->
 <aside id="insp" aria-label="Agent flow">
   <div class="ihd"><h2>Agent flow</h2><span class="grow"></span><button class="btn plain" id="inspClose">Done</button></div>
-  <div class="isec"><h3>Model and tier</h3>
-    <select id="modelSel" class="pillsel" title="Model for new runs and chats"></select>
-    <div class="segc mono" id="ablSeg" style="--n:4;width:100%;margin-top:14px"><span class="thumb"></span></div>
-    <p class="hint" id="ablDesc" style="margin-top:10px">—</p></div>
   <div class="isec"><h3>Call chain <span class="grow"></span><span class="stat" id="cTurn">turns <b>0</b></span><span class="stat" id="cTool">tools <b>0</b></span></h3>
     <div id="chainTrack"></div>
     <div style="display:flex;gap:6px;margin-top:8px"><button class="btn plain" id="expandAll">Expand all</button><button class="btn plain" id="collapseAll">Collapse</button></div></div>
@@ -1136,6 +1173,17 @@ const EASE = 'cubic-bezier(.16,1,.3,1)';
 
 let sel = null, selTask = null, ablation = 'B3', busy = false, run = null;
 let chatId = null, chatBusy = false, chatTurns = 0, chatSteps = 0, LOCALMODEL = 'mock';
+let askTask = null, askChosen = false;          // Ask's own challenge (see setAskTask); never Solve's sel
+/* Ask: the conversation on screen (curKey: its session id, or "new-N" before its first message has one) and the replies still
+   coming in, per conversation (LIVE). Switching conversations never waits for a reply: the reply goes on into its own
+   bubbles, off screen, and is put back when its conversation is opened again; its row in Threads blinks until it is done. */
+let curKey = 'new-0', draftN = 0;
+const LIVE = new Map();
+let turnBudget = 40, turnChoices = [20, 40, 60, 100], turnMax = 200;   // turns per run on Solve (the server sends the choices and the default)
+/* Solve's run settings (model, tier, turns) are chosen before a run and travel with it; a run on screen (running, finished,
+   replayed) shows what it used instead, with "Run again" and "Change settings" (rsEditing) */
+let runModel = '', rsEditing = false;
+const RUN_MODEL_KEY = 'fp.run.model', TIER_KEY = 'fp.tier';
 const SCRIPT_NOTE_DEFAULT = $('#scriptNote').innerHTML;
 const CHAT_KEY = 'fp.chat.sid';
 
@@ -1196,7 +1244,7 @@ const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({'&':'&am
 const stripRuns = s => String(s || '').replace(/<run>[\s\S]*?<\/run>/gi, '').replace(/<run>[\s\S]*$/i, '');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const pad2 = n => String(n).padStart(2, '0');
-function fresh(){ return {turns: [], byKey: new Map(), submit: null, replay: null, done: null, ctok: 0, ptok: 0, modelMs: 0, ttfts: [], maxTurns: 20}; }
+function fresh(){ return {turns: [], byKey: new Map(), submit: null, replay: null, done: null, ctok: 0, ptok: 0, modelMs: 0, ttfts: [], maxTurns: turnBudget}; }
 /* notifications go through the Dynamic Island at the top: it grows to show the message, then returns to its status (a tap closes it early) */
 let noteT = 0;
 function toast(msg, tone){
@@ -1479,7 +1527,7 @@ function railMark(p, st){ const b = document.querySelector(`.navbtn[data-page="$
   if (st === 'ok' || st === 'bad'){ if (p !== page){ b.classList.add('note'); b.classList.toggle('note-bad', st === 'bad'); } }
   const w = !!document.querySelector('.navbtn.working'), br = $('#brand'); if (br.classList.contains('working') === w) return;
   br.classList.toggle('working', w); logoTurn.kick(); }
-function setSeg(seg, idx){ seg.style.setProperty('--i', Math.max(0, idx)); [...seg.querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', i === idx)); }
+function setSeg(seg, idx){ seg.style.setProperty('--i', Math.max(0, idx)); seg.classList.toggle('none', idx < 0); [...seg.querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', i === idx)); }
 function showPage(p){
   qs('.page').forEach(s => { const on = s.dataset.page === p; s.inert = !on; s.classList.toggle('on', on); });
   qs('.navbtn').forEach(b => { const on = b.dataset.page === p; b.classList.toggle('on', on); on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'); if (on) b.classList.remove('note', 'note-bad'); });
@@ -1641,8 +1689,9 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 const ABL_NOTE = {B0: ['Bare model', 'no truncation, shell and python only, minimal prompt'], B1: ['+ trimming', 'long observations keep head, tail and flag-like lines, so the prefix stays cacheable'],
                   B2: ['+ structured tools', 'adds file, strings and decode actions'], B3: ['+ full rules', 'adds the solving and submission rules (default)']};
 let ablList = [];
-function setAblation(name){
-  ablation = name;
+function setAblation(name, keep = false){
+  if (!ABL_NOTE[name] && !(ablList || []).some(a => a.name === name)) return;   // only a tier the server offers
+  ablation = name; if (keep) try { localStorage.setItem(TIER_KEY, name); } catch(_){}
   setSeg($('#ablSeg'), [...$('#ablSeg').querySelectorAll('button')].findIndex(x => x.dataset.name === name));
   const [tag, why] = ABL_NOTE[name] || ['', ''];
   $('#ablDesc').innerHTML = `<b>${esc(name)}</b> ${esc(tag)} — ${esc(why)}`;
@@ -1652,33 +1701,49 @@ function renderAblations(list){
   seg.innerHTML = '<span class="thumb"></span>' + list.map(a => `<button data-name="${esc(a.name)}">${esc(a.name)}</button>`).join('');
   setAblation(ablation);
 }
-$('#ablSeg').addEventListener('click', e => { const b = e.target.closest('button[data-name]'); if (b) setAblation(b.dataset.name); });
+$('#ablSeg').addEventListener('click', e => { const b = e.target.closest('button[data-name]'); if (b) setAblation(b.dataset.name, true); });
+/* turns per run: 20 is the evaluation's budget (every batch in the README uses it); hard imported challenges need more.
+   Output tokens and time per run grow with the turns (1,600 tokens and 75 s a turn). Remembered in this browser. */
+const TURN_KEY = 'fp.turns';
+/* any multiple of 20 up to turnMax: a run given "+20 turns" can end past the four choices, and "Run again" keeps what it had */
+function setTurnBudget(n, keep = true){
+  if (!(Number.isInteger(n) && n >= 20 && n <= turnMax && n % 20 === 0)) return;
+  const choice = turnChoices.includes(n);
+  turnBudget = n; if (keep && choice) try { localStorage.setItem(TURN_KEY, String(n)); } catch(_){}
+  setSeg($('#turnSeg'), turnChoices.indexOf(n));
+  $('#turnDesc').innerHTML = `<b>${n} turns</b> per run — ${!choice ? 'what the run on screen ended with' : n === 20 ? "the evaluation's budget" : 'more room for hard challenges'}; up to ${(1600 * n).toLocaleString('en-US')} output tokens and ${Math.round(75 * n / 60)} min`;
+}
+function renderTurns(choices, def){
+  if (Array.isArray(choices) && choices.length) turnChoices = choices.map(Number);
+  const seg = $('#turnSeg'); seg.style.setProperty('--n', turnChoices.length);
+  seg.innerHTML = '<span class="thumb"></span>' + turnChoices.map(n => `<button data-turns="${n}">${n}</button>`).join('');
+  let saved = NaN; try { saved = Number(localStorage.getItem(TURN_KEY)); } catch(_){}
+  setTurnBudget(turnChoices.includes(saved) ? saved : (turnChoices.includes(Number(def)) ? Number(def) : turnChoices[0]), false);
+}
+$('#turnSeg').addEventListener('click', e => { const b = e.target.closest('button[data-turns]'); if (b) setTurnBudget(Number(b.dataset.turns)); });
 async function loadModels(){
   try {
     const m = await getJSON('/api/models', 'models'), s = $('#modelSel');
     PROVIDERS = (m.providers || []).filter(x => x && x.id); MODELS = PROVIDERS.map(x => x.id);
     const opts = MODELS.includes(m.current) ? MODELS : [m.current, ...MODELS];
-    s.innerHTML = opts.map(n => `<option value="${esc(n)}"${n === m.current ? ' selected' : ''}>${esc(prettyModel(n))}</option>`).join('');
-    s.onchange = async () => {
-      const d = await (await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: s.value})})).json();
-      if (d.error){ setStatus('Error', 'bad', d.error); return; }
-      $('#rcModel').textContent = d.model; toast(prettyModel(d.model) + ' answers new runs'); loadTasks();
-    };
+    let saved = ''; try { saved = localStorage.getItem(RUN_MODEL_KEY) || ''; } catch(_){}
+    runModel = opts.includes(saved) ? saved : m.current;
+    s.innerHTML = opts.map(n => `<option value="${esc(n)}"${n === runModel ? ' selected' : ''}>${esc(prettyModel(n))}</option>`).join('');
+    s.onchange = () => { runModel = s.value; try { localStorage.setItem(RUN_MODEL_KEY, runModel); } catch(_){} runLabel(); };
+    runLabel();
   } catch(e){ /* listing models is optional */ }
 }
 let TASKS = [], MINE = [];
 async function loadTasks(){
   const d = await getJSON('/api/tasks', 'tasks');
-  if ($('#modelSel').options.length === 0) $('#modelSel').innerHTML = `<option value="${esc(d.model)}" selected>${esc(d.model)}</option>`;
-  $('#rcModel').textContent = d.model; ablation = d.ablation || 'B3';
-  renderAblations(d.ablations || []);
+  if ($('#modelSel').options.length === 0){ $('#modelSel').innerHTML = `<option value="${esc(d.model)}" selected>${esc(d.model)}</option>`; runModel = runModel || d.model; }
+  $('#rcModel').textContent = d.model;
+  { let t = ''; try { t = localStorage.getItem(TIER_KEY) || ''; } catch(_){} ablation = (d.ablations || []).some(a => a.name === t) ? t : (ablation || d.ablation || 'B3'); }
+  renderAblations(d.ablations || []); if (Number(d.turn_max) >= 100) turnMax = Number(d.turn_max); renderTurns(d.turn_choices, d.turns);
   TASKS = d.tasks || []; MINE = d.custom_tasks || [];
   if (d.stale && !staleTold){ staleTold = true; setTimeout(() => toast('The server code changed since it started. Restart it (./start.sh) to use the newest features', 'bad'), 1200); }
   // with the offline mock model the local Run is only a demo; the real agent is Qwen on TACC
-  const mock = /^mock/i.test(d.model || ''), rb = $('#run'), tb = $('#runTacc'); LOCALMODEL = d.model || 'mock';
-  rb.classList.toggle('primary', !mock); tb.classList.toggle('primary', mock);
-  rb.lastChild.previousSibling && (rb.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = mock ? 'Demo run' : 'Run'; }));
-  rb.dataset.tip = mock ? 'Offline mock model: a demo of the pipeline, not a real agent' : 'Run with ' + prettyModel(d.model);
+  LOCALMODEL = d.model || 'mock'; runLabel();
   renderTaskList();
   if (sel){ const t = taskByName(sel); if (t) selTask = t; else pick(null); }
   showMount(); renderArms(); syncAskChip();
@@ -1727,9 +1792,11 @@ $('#tasks').addEventListener('click', async e => {
   }
   pickFromSheet(t, row);
 });
-/* the picker serves several pages: from Solve the choice opens the challenge there; from the Lab or Ask it only sets that page's challenge */
+/* the picker serves several pages: from Solve the choice opens the challenge there; from the Lab it sets the Lab's (which is Solve's);
+   from Ask it sets only the conversation's, never Solve's */
 let sheetFrom = 'solve';
 function pickFromSheet(t, row){
+  if (sheetFrom === 'chat'){ askSwitch(t); closeSheet(); return; }
   if (sheetFrom !== 'solve'){ pick(t); closeSheet(); return; }
   vtMorph(row.querySelector('.nm'), $('#sgTitle'), () => { pick(t); sheetShut(); go('solve', {quiet: true}); });
 }
@@ -1769,7 +1836,7 @@ function pick(t){
   if (sel) qs('#tasks .row').forEach(x => { if (x.dataset.name === sel) x.classList.add('sel'); });
   const g = t ? catOf(t.category)[1] : 'ring';
   qs('.taskpill').forEach(p => { p.querySelector('.g').className = 'g ' + g; p.querySelector('.tn').textContent = t ? taskLabel(t) : 'Choose a challenge'; });
-  $('#mountChip .g').className = 'g ' + g; $('#mountChip .tn').textContent = t ? taskLabel(t) : 'Attach a challenge';
+  if (askFollows()) setAskTask(t);
   const lk = $('#sgLink'); if (t && t.source){ lk.href = t.source; lk.dataset.tip = 'Open the challenge\'s page'; } else { lk.removeAttribute('href'); delete lk.dataset.tip; }
   $('#sgG').className = 'g ' + g;
   $('#sgId').textContent = t ? `${t.name} · ${t.category || ''} · ${t.has_gold ? 'gold flag known' : 'no gold flag'}` : '';
@@ -1778,12 +1845,30 @@ function pick(t){
   $('#run').hidden = !t; $('#runTacc').hidden = !t;
   ['#run', '#sweep', '#probeBtn'].forEach(q => $(q).disabled = !t || busy);
   if (!busy && !(run && run.turns.length)) renderFlow();
-  showMount(); loadMemory(t ? t.name : ''); viewMode(); labPlan();
+  showMount(); loadMemory(t ? t.name : ''); viewMode(); labPlan(); syncRunSet();
 }
 function showMount(){
-  const t = selTask;
+  const t = askTask;
   $('#rcTask').textContent = t ? t.name : '—'; $('#rcGold').textContent = t ? (t.has_gold ? 'yes' : 'no') : '—';
   $('#rcTools').textContent = $('#chatTools').checked ? 'yes' : 'no';
+}
+/* Ask has its own challenge. A new conversation starts with the one open in Solve (and follows Solve until it is sent or a
+   challenge is chosen here); choosing one in Ask never changes Solve's; an older thread brings back the challenge it is about. */
+const askFollows = () => !askChosen && !chatId && !chatTurns && !chatBusy;
+function setAskTask(t, chosen = false){
+  askTask = t || null; askChosen = !!chosen;
+  const g = t ? catOf(t.category)[1] : 'ring';
+  $('#mountChip .g').className = 'g ' + g; $('#mountChip .tn').textContent = t ? taskLabel(t) : 'Attach a challenge';
+  showMount();
+}
+/* a conversation stays with one challenge (the server starts a new one when it changes): choosing another one in Ask after
+   messages were sent opens a new conversation about it; the old one stays in the thread list */
+function askSwitch(t){
+  if (askTask && t && askTask.name === t.name) return;
+  if (chatId || chatTurns){
+    newChat(t, true); toast('New conversation about ' + taskLabel(t) + '; the last one is in Threads'); return;
+  }
+  setAskTask(t, true);
 }
 async function loadMemory(name){
   try { const d = await (await fetch('/api/memory?task=' + encodeURIComponent(name || ''))).json();
@@ -1882,7 +1967,7 @@ const sect = (title, inner, open, tip) => `<details class="sec"${open ? ' open' 
 
 /* ================================================================
    Solve view: incremental rendering batched per frame. One node per step; events only mark keys dirty;
-   bodies are built when opened; off-screen steps skip layout (content-visibility).
+   bodies are built when opened (no content-visibility on steps: at the page bottom it made the page bounce).
    ================================================================ */
 let openSteps = new Set();
 const R = {steps: new Map(), chips: new Map(), submitEl: null, submitChip: null, dirty: new Set(), raf: 0, bulk: false, figW: 0, bars: 0, chainEnd: false, figStale: false, live: null, liveText: '', liveTurn: 0, liveRaf: 0};
@@ -2104,7 +2189,8 @@ $('#flow').addEventListener('toggle', e => {
 function onEvent(ev){
   if (!run) run = fresh();
   switch (ev.type){
-    case 'meta': if (ev.budget && ev.budget.max_turns) run.maxTurns = ev.budget.max_turns; break;
+    case 'meta': run.meta = ev; if (ev.budget && ev.budget.max_turns) run.maxTurns = ev.budget.max_turns; if (!R.bulk) syncRunSet(); break;
+    case 'budget': run.maxTurns = Math.max(run.maxTurns || 0, ev.max_turns || 0); setTurns(run.turns.length, run.maxTurns); if (!R.bulk) syncRunSet(); break;
     case 'model_partial': if (!R.bulk && !run.byKey.has('t' + ev.turn)){ renderLive(ev.turn, ev.text || ''); run.liveTurn = ev.turn; } break;
     case 'tacc': { $('#runCtl').classList.add('tacc'); const msg = taccStage(ev); run.taccMsg = msg; run.taccStarted = ev.stage === 'running'; run.stageAt = Date.now();
       setStatus(ev.stage === 'hold' ? 'On hold' : 'Running', ev.stage === 'hold' ? 'warn' : '', `${sel || ''} · ${msg}`);
@@ -2169,8 +2255,10 @@ function showDone(ev){
   const f = ev.failure || {}, why = f.primary && f.primary !== 'ok' ? ` · ${FAIL[f.primary] || f.primary}` : '';
   /* turns and time already sit in the readouts on the right; the bar keeps only the tier and a reason that adds something */
   const said = [esc(ev.ablation || ablation)], rsn = ev.reason && ev.reason !== 'match' && ev.verdict !== 'error' ? ev.reason : '';
-  if (rsn) said.push(esc(STOPPED[rsn] || rsn.replace(/_/g, ' ')));
+  if (rsn) said.push(esc(rsn === 'max_turns' && run && run.maxTurns ? `all ${run.maxTurns} turns used` : (STOPPED[rsn] || rsn.replace(/_/g, ' '))));
+  const moreTurns = ev.reason === 'max_turns' ? turnChoices.find(n => n > ((run && run.maxTurns) || turnBudget)) : null;
   if (why) said.push('likely cause: ' + esc(why.replace(/^ · /, '')));
+  if (selTask && selTask.service && ev.verdict !== 'verified' && !R.bulk) said.push('expected: this challenge needs its original server');
   const bare = ev.verdict === 'error' && !(ev.turns > 0);          // nothing ran: the label already says why
   if (!(run && run.turns && run.turns.length)) $('#traceEmpty').innerHTML = '';
   $('#verdict').innerHTML = verdictHTML(code, label, tone, flag ? '<div class="vflag" id="vflag"></div>' : '')
@@ -2179,12 +2267,15 @@ function showDone(ev){
        ${selTask && selTask.custom ? `<button class="btn" id="addGold" type="button" data-tip="${selTask.has_gold ? 'Replace or remove the saved answer' : 'Paste the real flag once: later runs are judged right or wrong'}">${selTask.has_gold ? 'Change the answer' : 'Add the answer'}<span class="arr">→</span></button>` : ''}
        <button class="pixbtn" id="promptBtn" type="button"><canvas></canvas><span class="pl">Copy explainer prompt</span></button>
        ${ev.web_run_id ? `<a id="writeupDownload" class="btn sm" href="/api/writeup?id=${encodeURIComponent(ev.web_run_id)}" download>Writeup<span class="arr">↓</span></a>` : ''}
+       ${!R.bulk && sel && moreTurns ? `<button class="btn" id="turnsRerun" type="button" data-turns="${moreTurns}" data-tip="Run this challenge again with ${moreTurns} turns (also the setting for later runs)">Run again with ${moreTurns} turns<span class="arr">→</span></button>` : ''}
        ${!R.bulk && sel && ['wrong', 'budget', 'unverified', 'error', 'stopped'].includes(ev.verdict) ? '<button class="btn" id="hintRerun" type="button" data-tip="Run this challenge again with a hint the agent reads before its first step">Run again with a hint<span class="arr">→</span></button>' : ''}</div>`);
   const vd = $('#verdict .verdict');
   if (!R.bulk && !reduced()){ vd.classList.add('in'); ceremony(vd, tone); }
   flipText(vd.querySelector('.vcode'), code);
   if (flag) decrypt($('#vflag'), flag, 520);
   if ($('#promptBtn')) PixelButton($('#promptBtn'));
+  if ($('#turnsRerun')) $('#turnsRerun').onclick = () => { if (busy) return toast('A run is in progress');
+    setTurnBudget(Number($('#turnsRerun').dataset.turns)); return lastBackend === 'tacc' ? $('#runTacc').__go('') : runLocal(''); };
   if ($('#hintRerun')) $('#hintRerun').onclick = () => {
     const bar = $('#hintRerun').closest('.vbar'); if (bar.querySelector('.hintre')){ $('#hintReIn').focus(); return; }
     bar.insertAdjacentHTML('beforeend', '<div class="hintre"><input id="hintReIn" maxlength="500" placeholder="A hint for the next run, e.g. the key is hidden in the image metadata" aria-label="Hint for the next run" autocomplete="off"><button class="btn primary" id="hintReGo" type="button">Run again</button></div>');
@@ -2199,18 +2290,23 @@ function showDone(ev){
       + (had ? '<button class="btn" id="goldClear" type="button">Remove the answer</button>' : '') + '<span class="hint">Only its hash is kept.</span></div>');
     /* a flag this run could not back up is probably made up: saving it as the answer would make the next run that types it look right */
     const unproven = ev.verdict !== 'verified';
-    const save = async (confirm = false) => { const g = $('#goldIn').value.trim(); if (!g) return;
+    /* the warning is about one value: it goes as soon as the box changes, and "Save it anyway" saves that value, not whatever
+       the box holds by then (it used to stay up over an emptied box, where "Save it anyway" did nothing) */
+    const unwarn = () => { qs('.goldin .gwarn, .goldin #goldAnyway').forEach(el => el.remove()); };
+    const save = async (confirm = false, value = null) => { const g = (value ?? $('#goldIn').value).trim(); if (!g){ $('#goldIn').focus(); return; }
       try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, gold: g, flag: (run && run.submit && run.submit.flag) || flag || '', unverified: unproven, confirm})}); const d = await r.json();
         if (r.status === 409 && d.needs_confirm){
-          if (!$('.goldin .gwarn')) $('.goldin').insertAdjacentHTML('beforeend', `<p class="gwarn bad">${esc(d.error)}</p><button class="btn" id="goldAnyway" type="button">Save it anyway</button>`);
-          $('#goldAnyway').onclick = () => save(true); return; }
+          unwarn();
+          $('.goldin').insertAdjacentHTML('beforeend', `<p class="gwarn bad">“${esc(g)}”: ${esc(d.error)}</p><button class="btn" id="goldAnyway" type="button">Save it anyway</button>`);
+          $('#goldAnyway').onclick = () => save(true, g); return; }
         if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);
         if (selTask) selTask.has_gold = true; await loadTasks();
         $('.goldin').innerHTML = d.match === true ? '<span class="ok">Saved. The flag from this run matches the answer: it was right.</span>'
           : d.match === false ? '<span class="bad">Saved. The flag from this run does not match the answer: it was wrong.</span>' : '<span class="hint">Saved. Later runs are judged against it.</span>';
         $('#addGold').remove(); }
       catch(e){ toast(e.message); } };
-    $('#goldSave').onclick = () => save(); $('#goldIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } }); $('#goldIn').focus();
+    $('#goldSave').onclick = () => save(); $('#goldIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } });
+    $('#goldIn').addEventListener('input', unwarn); $('#goldIn').focus({preventScroll: true});
     if ($('#goldClear')) $('#goldClear').onclick = async () => {
       try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, clear: true})}); const d = await r.json();
         if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);
@@ -2218,7 +2314,7 @@ function showDone(ev){
         $('.goldin').innerHTML = '<span class="hint">Answer removed. Runs are no longer judged against it.</span>'; $('#addGold').remove(); }
       catch(e){ toast(e.message); } };
   };
-  if ($('#changeModel')) $('#changeModel').onclick = () => { toggleInsp(true); setTimeout(() => { const m = $('#modelSel'); if (m){ m.focus(); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } }, 260); };
+  if ($('#changeModel')) $('#changeModel').onclick = () => { adoptRunSettings(); rsEditing = true; syncRunSet(); const m = $('#modelSel'); if (m){ m.scrollIntoView({block: 'center', behavior: 'smooth'}); m.focus({preventScroll: true}); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } };
   const rb = $('#run'); if (tone === 'ok' && !reduced()){ rb.classList.add('done'); setTimeout(() => rb.classList.remove('done'), 1400); }
   if (!R.bulk && page === 'solve' && !reduced()) requestAnimationFrame(() => $('#verdict').scrollIntoView({behavior: 'smooth', block: 'nearest'}));
   $('#mState').textContent = 'final'; $('#mState').className = 'badge ' + (tone === 'ok' ? 'ok' : tone);
@@ -2308,7 +2404,7 @@ function runOne(task, ablate, onEvent, onReset, backend, hint){
   return new Promise(async (resolve, reject) => {
     let r;
     const step = backend !== 'tacc' && $('#ctlStep').checked;
-    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step, ...(hint ? {hint} : {})})}); } catch(e){ return reject(e); }
+    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step, turns: turnBudget, ...(runModel && backend !== 'tacc' ? {model: runModel} : {}), ...(hint ? {hint} : {})})}); } catch(e){ return reject(e); }
     if (!r.ok){ let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch(_){} return reject(new Error('Submission failed: ' + m)); }
     const {run_id} = await r.json(); if (!run_id) return reject(new Error('The server returned no run id'));
     if (onEvent === onEventRef) keepHere({sel: task, run: run_id});            // a reload picks this run up again
@@ -2377,6 +2473,7 @@ async function ctl(op, value, turn){ if (!ctlRid) return {ok: false};
   try { const r = await fetch('/api/run/control', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: ctlRid, op, value, turn})}); return await r.json(); }
   catch(_){ return {ok: false}; } }
 $('#ctlStep').addEventListener('change', e => { try { localStorage.setItem(STEP_KEY, e.target.checked ? '1' : '0'); } catch(_){} ctl('step', e.target.checked);
+  if (!e.target.checked && !$('#ctlPause').dataset.on) awaitHide();   // step mode off lets the waiting command run: its card goes
   toast(e.target.checked ? 'Step mode: each command waits for your OK' : 'Step mode off'); });
 $('#ctlPause').onclick = async () => { const b = $('#ctlPause'), on = !b.dataset.on; b.dataset.on = on ? '1' : ''; b.textContent = on ? 'Resume' : 'Pause'; await ctl(on ? 'pause' : 'resume');
   if (on) toast('Pausing before the next command'); };
@@ -2402,17 +2499,31 @@ function awaitShow(ev){
 function awaitHide(){ const c = $('#awaitCard'); if (c && !c.hidden){ c.hidden = true; c.innerHTML = ''; if (busy) setStatus('Running', '', sel || ''); } awaitTurn = null; }
 /* "Explain this step": the step's command and output go to Ask as a question about this challenge */
 document.addEventListener('click', e => { const b = e.target.closest('[data-explain]'); if (!b || !run) return; const t = run.byKey.get(b.dataset.explain); if (!t || !t.act) return;
-  if (chatBusy){ toast('A reply is still coming in Ask; try again in a moment'); return; }
   const a = t.act, what = a.cmd || a.code || a.path || [a.scheme, a.text].filter(Boolean).join(' ') || a.action, out = t.tool ? en(String(t.tool.obs || '')).slice(0, 700) : '';
   const msg = `Explain step ${t.n} of my run on ${sel || 'this challenge'}. The agent did a ${a.action} action:\n${String(what).slice(0, 600)}` + (out ? `\nIt got this output:\n${out}` : '') + '\nWhy was this a sensible step, and what does the output tell us?';
   chatRestored = true; go('chat'); $('#newChat').click(); const box = $('#chatInput'); box.value = msg; box.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); });
 let runPage = 'solve';
-function lockRun(on){ busy = on; if (on) runPage = page; railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); }
-function beginRun(label){ run = fresh(); openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); }
+function lockRun(on){ busy = on; if (on){ runPage = page; rsEditing = false; } railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); syncRunSet(); }
+/* a new run: the previous run of this challenge is no longer where a reload should go (until the server answers with the
+   new run's id, a reload comes back to the challenge alone) */
+function beginRun(label){ keepHere({run: null}); run = fresh(); run.tacc = lastBackend === 'tacc'; openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); syncRunSet(); }
 function clearRunParam(){ if (new URLSearchParams(location.search).has('run')) history.replaceState(null, '', location.pathname + '#/' + page); }
 let lastBackend = 'local';
+/* a challenge that ran as a network service in its CTF: its server cannot be reached from the offline sandbox and its real
+   flag never shipped with the files, so the agent can only study them and a flag it prints cannot be confirmed (2026-11-21,
+   "it still doesn't work with challenges found online"). Asked once per challenge before its first run. */
+const SVC_OK = new Set();
+async function svcConfirm(){
+  const t = selTask; if (!t || !t.service || SVC_OK.has(t.name)) return true;
+  const v = await choose({title: 'This challenge needs its original server',
+    body: 'In its CTF it ran as a network service (a host and port, or a Dockerfile). The sandbox here is offline, so the agent can only study the files, and a flag it prints cannot be confirmed: expect it to fail. Run it anyway?',
+    buttons: [{label: 'Run anyway', value: 'run', primary: true}, {label: 'Cancel', value: null}]});
+  if (v !== 'run') return false;
+  SVC_OK.add(t.name); return true;
+}
 async function runLocal(hint){
   if (!sel || busy) return;
+  if (!(await svcConfirm()) || busy) return;
   lastBackend = 'local'; clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation}`);
   setStatus('Running', '', `${sel} · 00/${run.maxTurns}`);
   try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, '', hint); }
@@ -2499,8 +2610,11 @@ function startReplay(rid, live = false){
   const end = () => { if (live){ ctlHide(); lockRun(false); } };
   recoverRun(rid, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, live ? 45 * 60000 : 20000)
     .then(sum => { run.done = sum; R.bulk = !live; try { showDone(sum); } finally { R.bulk = false; } openSteps.add('submit'); renderFlow();
-      const t = taskByName(String(sum.run_id || '').replace(/-s\d+$/, ''));
-      if (!live){ $('#sgId').textContent = 'replay · ' + rid; decrypt($('#sgTitle'), t ? (t.title || t.name) : (sum.run_id || rid)); } end(); })
+      // the replay's own challenge (from its trace; run ids such as "e9fe7801d4f3" are not challenge names)
+      const t = taskByName((run.meta && run.meta.task) || String(sum.run_id || '').replace(/-s\d+$/, ''));
+      if (!live && t && sel !== t.name){ pick(t); keepHere({run: rid}); }
+      if (!live){ $('#sgId').textContent = 'replay · ' + rid; decrypt($('#sgTitle'), t ? (t.title || t.name) : ((run.meta && run.meta.task) || sum.run_id || rid)); }
+      rsEditing = false; syncRunSet(); end(); })
     .catch(() => { setStatus('Run not found', 'bad', rid); $('#verdict').innerHTML = ''; run = null; renderFlow(); end(); });
 }
 /* after a reload: back to the challenge that was open; a run still going on the server is followed again, a finished one is shown */
@@ -2516,7 +2630,7 @@ async function comeBack(h){
 addEventListener('beforeunload', e => {
   const typed = ['#chatInput', '#upTitle', '#upQuery', '#upGold', '#impUrl', '#goldIn'].some(q => { const el = $(q); return !!(el && el.value && el.value.trim()); })
     || qs('.cust').some(b => b.dataset.dirty === '1');
-  if (busy || chatBusy || typed){ e.preventDefault(); e.returnValue = ''; }
+  if (busy || LIVE.size || typed){ e.preventDefault(); e.returnValue = ''; }   // a reply still coming in, in any conversation
 });
 
 /* ---------------- lab ---------------- */
@@ -2905,7 +3019,7 @@ function renderQwen(){
   let html;
   if (ph === 'starting' || ph === 'stopping'){
     const eta = p.eta != null ? Math.max(0, p.eta - since) : null, el = Math.max(p.elapsed || 0, QW.elapsed || 0) + since, pct = eta != null ? Math.min(99, el / Math.max(1, el + eta) * 100) : null;
-    const head = ph === 'stopping' ? 'Stopping' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B';
+    const head = (ph === 'stopping' ? 'Stopping' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B') + (p.slow && ph === 'starting' ? ' · slower than usual today' : '');
     html = `<p class="qline" aria-live="polite">${head} · ${clockS(el)} so far${eta != null ? ` · about ${clockS(eta)} left` : p.step === 'queue' ? ` · then about ${clockS(p.typical || 300)}` : ''}</p>`
       + `<div class="qbar${pct == null ? ' ind' : ''}" role="progressbar" aria-label="Start-up progress"${pct == null ? '' : ` aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"`}><i${pct == null ? '' : ` style="width:${pct.toFixed(1)}%"`}></i></div>`
       + `<ol class="qsteps">${steps}</ol>${log}<div class="actions"><button class="btn" type="button" data-qw="stop">Stop starting</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
@@ -3027,6 +3141,7 @@ async function runOnTacc(hint){
   finally { clearInterval(tick); lockRun(false); }
 }
 $('#runTacc').__go = async hint => { if (!sel) return;
+  if (!(await svcConfirm())) return;
   lastBackend = 'tacc';
   const late = QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_run_s || 420);
   if (QW.phase === 'ready' && !late) return runOnTacc(hint || '');
@@ -3152,14 +3267,14 @@ async function impImport(body, btn, host){
       host.innerHTML = `<div class="impcard"><h3>Already in your challenge list: ${esc(d.local.name)}</h3>${impFixed(d.corrected)}<p class="hint">${esc(d.local.title)}</p>`
         + `<div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
       $('#impSolve').onclick = () => { if (t) pick(t); go('solve'); };
-      $('#impAsk').onclick = () => { if (t) pick(t); go('chat'); };
+      $('#impAsk').onclick = () => { go('chat'); if (t) newChat(t, true); };
       return; }
     const all = await loadTasks(), nw = (all.custom_tasks || []).find(x => x.name === d.task.name);
     host.innerHTML = `<div class="impcard"><h3>Imported: ${d.task.source ? `<a class="srclink" data-task="${esc(d.task.name)}" href="${esc(d.task.source)}" target="_blank" rel="noopener noreferrer">${esc(d.task.title)}<span class="ext" aria-hidden="true">↗</span></a>` : esc(d.task.title)}</h3><p class="hint"><code>${esc(d.task.name)}</code> · ${plural(d.task.n_assets, 'attachment')} · ${d.gold ? 'gold flag known: a solve can be verified' : 'no gold flag: a solve cannot be confirmed correct'}${d.service ? ' · network service: likely unsolvable offline' : ''}`
       + `${d.skipped && d.skipped.length ? ' · left out ' + plural(d.skipped.length, 'file') : ''}</p>${impFixed(d.corrected)}<div class="actions"><button class="btn primary" id="impSolve">Solve it<span class="arr">→</span></button><button class="btn" id="impAsk">Ask about it</button></div></div>`;
     customEditor(host.querySelector('.impcard'), d.task.name);
     $('#impSolve').onclick = () => { if (nw) pick(nw); go('solve'); };
-    $('#impAsk').onclick = () => { if (nw) pick(nw); go('chat'); };
+    $('#impAsk').onclick = () => { go('chat'); if (nw) newChat(nw, true); };
     toast('Imported ' + d.task.title); railMark('upload', 'ok');
   } catch(e){ impFail(host, e); }
   finally { btn.disabled = false; btn.classList.remove('busy'); }
@@ -3424,7 +3539,10 @@ function started(on){ if (chatStarted === on) return; chatStarted = on; $('#chat
 function bubble(role, html, animate = true, after = null){
   started(true);
   const el = document.createElement('div'); el.className = 'bub ' + (role === 'user' ? 'me' : 'bot') + (animate && !reduced() ? ' in' : '');
-  el.innerHTML = html; if (after && after.isConnected) after.after(el); else $('#chatLog').appendChild(el); scrollChat(true); return el;
+  el.innerHTML = html;
+  if (after){ if (after.isConnected) after.after(el); }   // its conversation is not on screen: it is put back with it (openThread)
+  else $('#chatLog').appendChild(el);
+  scrollChat(true); return el;
 }
 function scrollChat(force){ const l = $('#chatLog'); if (force || nearBottom(l)) l.scrollTop = l.scrollHeight; }
 function saveChatId(id){ chatId = id || null; try { id ? localStorage.setItem(CHAT_KEY, id) : localStorage.removeItem(CHAT_KEY); } catch(_){} $('#rcStore').textContent = id ? ('runs/chat/' + id) : '—'; }
@@ -3432,17 +3550,26 @@ let THREADS = [];
 async function loadThreads(){
   if (!THREADS.length && !$('#threadList .thread')) $('#threadList').innerHTML = '<div style="padding:14px 22px"><div class="skel" style="height:15px;width:80%"></div><div class="skel" style="height:15px;width:60%;margin-top:18px"></div><div class="skel" style="height:15px;width:70%;margin-top:18px"></div></div>';
   try { THREADS = (await (await fetch('/api/chat/sessions', {cache: 'no-store'})).json()).sessions || []; } catch(_){ THREADS = []; }
-  $('#threadList').innerHTML = THREADS.length ? THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}" data-sid="${esc(t.id)}"${t.model ? ` data-tip="${esc(prettyModel(t.model))}"` : ''}><b>${t.model ? `<i class="g ${modelGlyph(t.model)}"></i>` : ''}${esc(t.title)}</b><span>${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}</span></button>`).join('')
+  /* a new conversation whose first message has not reached the server yet (waiting for Qwen to start, or being sent) has no
+     id there: it is listed from this page, blinking, and can be opened again while it waits */
+  const drafts = [...LIVE.values()].filter(it => String(it.key).startsWith('new-') && !THREADS.some(t => t.id === it.key));
+  const draftRow = it => `<button class="thread draft replying${it.key === curKey ? ' on' : ''}" data-key="${esc(it.key)}"><b>${esc(String(it.text || 'New conversation').slice(0, 80))}</b><span>${esc(it.waitNote || 'Sending…')}</span></button>`;
+  $('#threadList').innerHTML = (THREADS.length || drafts.length) ? drafts.map(draftRow).join('') + THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}${LIVE.has(t.id) ? ' replying' : ''}" data-sid="${esc(t.id)}"${t.model ? ` data-tip="${esc(prettyModel(t.model))}"` : ''}><b>${t.model ? `<i class="g ${modelGlyph(t.model)}"></i>` : ''}${esc(t.title)}</b><span>${LIVE.has(t.id) ? 'Replying…' : `${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}`}</span></button>`).join('')
     : '<p class="hint" style="padding:20px 22px">No threads yet.</p>';
-  $('#threadsShow .n').textContent = $('#threadsBtn .n').textContent = THREADS.length || '';
+  $('#threadsShow .n').textContent = $('#threadsBtn .n').textContent = (THREADS.length + drafts.length) || '';
 }
 async function openThread(sid){
-  if (chatBusy){ toast('A reply is still coming in; open another conversation when it is done'); return; }
+  curKey = sid; syncBusy();
   $('#chatLog').innerHTML = ''; chatTurns = 0; chatSteps = 0;
   try {
     const d = await (await fetch('/api/chat/history?id=' + encodeURIComponent(sid))).json();
-    const msgs = (d.messages || []).filter(m => m.type === 'user' || m.type === 'reply' || m.type === 'error');
-    if (!msgs.length){ started(false); saveChatId(null); loadThreads(); return; }
+    if (curKey !== sid) return;                              // another conversation was opened meanwhile
+    const live = LIVE.get(sid), queued = chatQ.filter(q => q.key === sid);
+    const back = it => { const log = $('#chatLog'); [it.me, it.state === 'replied' ? null : it.rc, it.bot].forEach(n => { if (n) log.appendChild(n); }); };
+    const msgs = (d.messages || []).filter(m => m.type === 'user' || m.type === 'reply' || m.type === 'error')
+      .filter(m => !(live && live.turn != null && m.turn === live.turn));   // the reply in flight is shown live, below
+    if (!msgs.length && !live && !queued.length){ started(false); saveChatId(null); loadThreads(); return; }
+    if (live || queued.length) started(true);
     let cur = null;
     for (let i = 0; i < msgs.length; i++){ const m = msgs[i], nx = msgs[i + 1];
       if (m.type === 'user'){ const b = bubble('user', esc(m.text || ''), false); let rc = null;
@@ -3453,14 +3580,75 @@ async function openThread(sid){
       else if (m.type === 'error'){ const eb = bubble('bot', `<span class="bad">${NOT_SENT.test(m.error || '') ? 'Not sent' : 'No reply'}: ${esc(en(m.error || 'the request failed'))}</span>`, false); if (cur && cur.turn === m.turn) cur.bot = eb; }
       else { const steps = (m.steps || []).map(s => termBlock(s[0], null, {exit: s[1], note: s[2] ? 'reused' : ''})).join('');
         const rb = bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + ((m.picked || m.model) ? `<p class="who">${esc(prettyModel(m.picked || m.model))}</p>` : ''), false);
-        if (cur && cur.turn === m.turn) cur.bot = rb; chatTurns++; chatSteps += (m.steps || []).length; }
+        rb.dataset.turn = m.turn; if (cur && cur.turn === m.turn) cur.bot = rb; chatTurns++; chatSteps += (m.steps || []).length; }
     }
-    saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true);
+    if (live) back(live);
+    queued.forEach(back);
+    saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true); paintContext(d.context || null);
+    setAskTask(d.task ? taskByName(d.task) : null, true);
+    if (d.task && !askTask) boot.then(() => { if (chatId === sid && !askTask) setAskTask(taskByName(d.task) || null, true); });   // opened before the list loaded
   } catch(_){}
   qs('#threadList .thread').forEach(b => b.classList.toggle('on', b.dataset.sid === chatId));
   $('#chatWrap').classList.remove('showthreads'); syncThreadsChip();
 }
-$('#threadList').addEventListener('click', e => { const b = e.target.closest('.thread[data-sid]'); if (b) openThread(b.dataset.sid); });
+$('#threadList').addEventListener('click', e => { const d = e.target.closest('.thread[data-key]'); if (d){ openDraft(d.dataset.key); return; }
+  const b = e.target.closest('.thread[data-sid]'); if (b) openThread(b.dataset.sid); });
+/* ---- Ask's context: which earlier exchanges the model sees (server: flagpilot.chat.context_plan). Leave one out or put it
+   back, start fresh from a message, bring all back; the oldest are left out by themselves past 60% of the model's window ---- */
+let CTX = null;
+const CTX_TAG = {excluded: 'Left out by you', before_fresh: 'Before the fresh start', auto: 'Left out to fit the model'};
+function paintContext(c){
+  CTX = c && Array.isArray(c.turns) && c.turns.length ? c : null;
+  const bar = $('#ctxBar'), st = new Map((CTX ? CTX.turns : []).map(t => [Number(t.turn), t.state]));
+  qs('#chatLog .bub[data-turn]').forEach(b => { const s = CTX && chatId ? st.get(Number(b.dataset.turn)) : null;
+    let tag = b.querySelector(':scope > .ctxtag');
+    if (!s){ b.removeAttribute('data-ctx'); b.classList.remove('ctx-out'); if (tag) tag.remove(); return; }
+    b.dataset.ctx = s; b.classList.toggle('ctx-out', s !== 'in');
+    if (!b.classList.contains('me')) return;
+    const tb = b.querySelector('.ctxbtn[data-op="toggle"]');
+    if (tb) tb.innerHTML = s === 'excluded' ? '⊕<span class="t"> Put back</span>' : '⊘<span class="t"> Leave out</span>';
+    if (s === 'in'){ if (tag) tag.remove(); return; }
+    if (!tag){ tag = document.createElement('span'); tag.className = 'ctxtag'; b.appendChild(tag); }
+    tag.textContent = CTX_TAG[s] || 'Left out'; });
+  if (!bar) return;
+  if (!CTX || !chatId){ bar.hidden = true; return; }
+  const n = CTX.turns.length, inN = CTX.turns.filter(t => t.state === 'in').length;
+  const mine = CTX.turns.filter(t => t.state === 'excluded' || t.state === 'before_fresh').length, auto = n - inN - mine;
+  const k = v => v >= 1e6 ? +(v / 1e6).toFixed(1) + 'M' : v >= 1024 && v % 1024 === 0 ? v / 1024 + 'k' : v >= 1000 ? +(v / 1000).toFixed(1) + 'k' : String(v);   // 32768 → 32k
+  $('#ctxText').textContent = `The model sees ${inN} of ${n} earlier ${n === 1 ? 'exchange' : 'exchanges'} · about ${k(CTX.tokens)} of ${k(CTX.window)} tokens`
+    + (auto ? ` · ${auto} oldest left out to fit` : '');
+  bar.style.setProperty('--p', Math.min(100, Math.round(100 * CTX.tokens / Math.max(1, CTX.window))) + '%');
+  bar.classList.toggle('hot', CTX.tokens > 0.6 * CTX.window);
+  $('#ctxReset').hidden = !mine; bar.hidden = false;
+}
+async function refreshContext(sid = chatId){
+  if (!sid){ paintContext(null); return; }
+  try { const d = await (await fetch('/api/chat/context?id=' + encodeURIComponent(sid), {cache: 'no-store'})).json(); if (chatId === sid) paintContext(d.turns ? d : null); } catch(_){}
+}
+async function contextOp(op, turn){
+  const sid = chatId; if (!sid) return;
+  try {
+    const r = await fetch('/api/chat/context', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: sid, op, ...(turn ? {turn} : {})})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){ toast('Could not change the context: ' + (d.error || ('HTTP ' + r.status))); return; }
+    if (chatId === sid) paintContext(d);
+    toast({exclude: 'Left out: the model no longer sees this exchange', include: 'Put back: the model sees this exchange again',
+           fresh: 'Fresh start: the model sees this exchange and later ones', reset: 'Every exchange is back in what the model sees'}[op]);
+  } catch(e){ toast('Could not change the context: ' + e.message); }
+}
+$('#chatLog').addEventListener('click', e => { const b = e.target.closest('.ctxbtn'); if (!b) return;
+  const me = b.closest('.bub.me'), turn = Number(me && me.dataset.turn); if (!turn) return;
+  if (b.dataset.op === 'fresh') contextOp('fresh', turn); else contextOp(me.dataset.ctx === 'excluded' ? 'include' : 'exclude', turn); });
+$('#ctxReset').onclick = () => contextOp('reset');
+/* back to a conversation that is still waiting for its first reply to go out: its message, receipt and reply are put back */
+function openDraft(key){
+  const it = LIVE.get(key); if (!it){ loadThreads(); return; }
+  curKey = key; chatTurns = 0; chatSteps = 0; saveChatId(null); syncBusy(); paintContext(null);
+  const log = $('#chatLog'); log.innerHTML = ''; started(true);
+  [it, ...chatQ.filter(q => q.key === key)].forEach(x => [x.me, x.state === 'replied' ? null : x.rc, x.bot].forEach(n => { if (n) log.appendChild(n); }));
+  if (it.pick) useThreadPick(it.pick);
+  setAskTask(it.task || null, true); scrollChat(true); loadThreads();
+}
 /* the thread list collapses (remembered); on narrow screens it slides over the conversation instead */
 const THR_KEY = 'fp.threads.hidden', LIVE_KEY = 'fp.chat.live';
 /* Slurm's reasons for a pending job, in words (and a short form for the chip) */
@@ -3469,7 +3657,7 @@ const QWHY = {QOSMaxJobsPerUserLimit: 'your two-job limit is in use', Resources:
 const QSHORT = {QOSMaxJobsPerUserLimit: 'job limit', Resources: 'no free GPUs', Priority: 'in queue'};
 const queueWhy = r => r ? (QWHY[r] || r) : '';
 /* errors that mean the message never reached the model ("Not sent"); any other failure means it went out but no reply came back */
-const NOT_SENT = /^(TACC submission failed|Qwen on TACC is not connected|Qwen on TACC did not start|TACC stayed busy|Request failed|HTTP \d|the TACC session ended before the job started)/i;
+const NOT_SENT = /^(TACC submission failed|Qwen on TACC is not connected|Qwen on TACC did not start|TACC stayed busy|Request failed|HTTP \d|the TACC session ended before the job started|the Qwen session ended before)/i;
 const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
 /* the tutor's flags, as checked by the server: badge the first mention, mark every mention */
 const FCHK = {correct: ['ok', '✓ correct flag'], wrong: ['bad', '✗ wrong flag'], derived: ['ok', '✓ from command output'], unverified: ['warn', '? not verified']};
@@ -3483,7 +3671,9 @@ function taccStage(ev){ const why = queueWhy(ev.reason);
     : ev.stage === 'uploading' ? 'uploading to TACC'
     : ev.stage === 'queued' ? `queued on TACC${ev.job ? ' · job ' + ev.job : ''}${why ? ' · ' + why : ''}`
     : ev.stage === 'running' ? `running on ${ev.node || 'TACC'}${ev.job ? ' · job ' + ev.job : ''}`
-    : ev.stage === 'retrying' ? (ev.message ? ev.message.charAt(0).toLowerCase() + ev.message.slice(1) : 'TACC is busy; trying again') : String(ev.stage || ''); }
+    : ev.stage === 'retrying' ? (ev.message ? lowerFirst(ev.message) : 'TACC is busy; trying again') : String(ev.stage || ''); }
+/* "The upload …" reads "the upload …" mid-sentence, but an acronym keeps its case ("TACC's …", not "tACC's …") */
+const lowerFirst = t => /^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t;
 function syncThreadsChip(){ const w = $('#chatWrap'), c = $('#threadsBtn'), shown = innerWidth <= 1100 ? w.classList.contains('showthreads') : !w.classList.contains('collapsed');
   c.setAttribute('aria-pressed', shown ? 'true' : 'false'); c.querySelector('.ar').textContent = shown ? '‹' : '›'; }
 function setThreads(show){ const w = $('#chatWrap'); if (innerWidth <= 1100){ w.classList.toggle('showthreads', show); syncThreadsChip(); return; }
@@ -3581,7 +3771,9 @@ function chatItem(me, text, o = {}){
   const it = {me, text, rc: o.rc || null, bot: o.bot || null, turn: o.turn ?? null, sid: o.sid || null, state: o.state || 'queued', recalled: false, abort: null, sentP: null};
   me._it = it; if (it.turn != null) me.dataset.turn = it.turn;
   const a = document.createElement('span'); a.className = 'acts';
-  a.innerHTML = '<button type="button" class="recall" aria-label="Recall this message" data-tip="Take this message and its reply back; the text returns to the box">↩<span class="t"> Recall</span></button>';
+  a.innerHTML = '<button type="button" class="recall" aria-label="Recall this message" data-tip="Take this message and its reply back; the text returns to the box">↩<span class="t"> Recall</span></button>'
+    + '<button type="button" class="ctxbtn" data-op="toggle" aria-label="Leave this exchange out of what the model sees" data-tip="The model stops seeing this question and its answer (you still do)">⊘<span class="t"> Leave out</span></button>'
+    + '<button type="button" class="ctxbtn" data-op="fresh" aria-label="Start fresh from this message" data-tip="The model sees this exchange and later ones only">⇤<span class="t"> Start fresh here</span></button>';
   me.appendChild(a);
   return it;
 }
@@ -3606,28 +3798,32 @@ async function recall(it){
   if (live && turn == null && it.sentP){ const d = await it.sentP; if (d){ turn = d.turn ?? null; sid = d.session_id || sid; } }
   if (turn != null && sid){ try { await fetch('/api/chat/recall', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: sid, turn})}); } catch(_){} }
   toast(it.state === 'queued' ? 'Taken back before it went out; the text is in the box' : 'Recalled: the message and its reply are gone; the text is in the box');
-  loadThreads();
-  if (live) pump();
+  loadThreads(); refreshContext();
+  if (live) pump(it.key);
 }
 $('#chatLog').addEventListener('click', e => { const b = e.target.closest('.recall'); if (b) recall((b.closest('.bub.me') || {})._it); });
-function pump(){ if (chatBusy) return; const nx = chatQ.shift(); if (nx) exchange(nx); }
+function pump(key){ if (LIVE.has(key)) return; const i = chatQ.findIndex(q => q.key === key); if (i >= 0) exchange(chatQ.splice(i, 1)[0]); }
 async function sendChat(){
   const box = $('#chatInput'), text = box.value.trim();
   if (!text) return;
   initChatFx(); vanish(text); box.value = ''; growInput();
   const me = bubble('user', esc(text)), rc = document.createElement('div'); me.classList.add('hold'); rc.className = 'rcpt'; me.after(rc);
   const it = chatItem(me, text, {rc});
-  if (chatBusy){ me.classList.add('queued'); rc.innerHTML = '<span class="dot"></span>Queued · goes out after the reply above'; chatQ.push(it); return; }
+  Object.assign(it, {key: curKey, sid: chatId, task: askTask, pick: threadPick});
+  if (LIVE.has(curKey)){ me.classList.add('queued'); rc.innerHTML = '<span class="dot"></span>Queued · goes out after the reply above'; chatQ.push(it); return; }
   exchange(it);
 }
 async function exchange(it){
-  const {text, me, rc} = it, sb = $('#sendChat');
-  chatBusy = true; it.state = 'live'; me.classList.remove('queued');
-  initChatFx(); sendPix.busy(true); pixLabel(sb, 'Queue ↵'); railMark('chat', 'working');
+  const {text, me, rc} = it;
+  /* this reply belongs to its own conversation (it.key): global state follows it only while that conversation is on screen */
+  const isCur = () => curKey === it.key, status = (...a) => { if (isCur()) setStatus(...a); };
+  it.state = 'live'; me.classList.remove('queued');
+  initChatFx(); LIVE.set(it.key, it); syncBusy(); loadThreads(); railMark('chat', 'working');
   let acc = '', shownTxt = '', closed = false, raf = 0, attached = false, es = null, over = false, fetching = false, resolveSent = () => {};
   it.sentP = new Promise(r => { resolveSent = r; });
   /* dashed until the reply is complete; the receipt under it says what the conversation is waiting for */
-  const onHold = t => { if (it.recalled) return; rc.className = 'rcpt'; rc.innerHTML = '<span class="dot"></span>On hold · ' + esc(t); };
+  const onHold = t => { if (it.recalled) return; rc.className = 'rcpt'; rc.innerHTML = '<span class="dot"></span>On hold · ' + esc(t);
+    const note = cap(String(t)) + '…'; if (it.waitNote !== note){ it.waitNote = note; if (String(it.key).startsWith('new-')) loadThreads(); } };
   let wentOut = false; const sent = () => { wentOut = true; };
   const settle = (ok, why) => { if (it.recalled) return;
     if (ok){ me.classList.remove('hold'); rc.remove(); it.state = 'replied'; return; }
@@ -3648,46 +3844,53 @@ async function exchange(it){
   const tick = setInterval(() => { const el = live.querySelector('.el'); if (el) el.textContent = ' · ' + Math.round((Date.now() - t0) / 1000) + ' s'; }, 1000);
   const finish = () => { clearInterval(tick); typing.remove(); const ls = live.querySelector('.lstat'); if (ls) ls.remove(); live.hidden = false; live.classList.add('done'); };
   const fail = (html, why) => { clearInterval(tick); bot.innerHTML = html; settle(false, why); };
-  setStatus('Thinking', '', sel || 'concept question');
+  status('Thinking', '', it.task ? it.task.name : 'concept question');
   const done = ok => { if (over) return; over = true; clearInterval(tick); if (!fetching) resolveSent(null);
-    chatBusy = false; ok ? sendPix.done() : sendPix.busy(false); pixLabel(sb, 'Send ↵'); railMark('chat', ok === false ? 'bad' : 'ok'); loadThreads();
-    if (!it.recalled) pump(); };
-  it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) setStatus('Ready'); };
+    LIVE.delete(it.key); syncBusy(); if (ok && isCur() && sendPix) sendPix.done(); railMark('chat', ok === false ? 'bad' : 'ok'); loadThreads();
+    if (isCur() && it.sid) refreshContext(it.sid);
+    if (ok && !isCur() && !it.recalled){ const t = THREADS.find(x => x.id === it.key); toast('The reply in “' + ((t && t.title) || 'another conversation') + '” is ready'); }
+    if (!it.recalled) pump(it.key); };
+  it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) status('Ready'); };
   let r;
   /* this conversation's pick decides who answers. Qwen still starting: hold the message until it is up, unless this conversation is switched to another model */
-  const pick = threadPick;
+  const pick = it.pick || threadPick;
   if (pick.route === 'tacc' && QW.phase !== 'ready' && QW.phase !== 'starting'){
     await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {}); await qwenPoll(); }
   if (it.recalled) return;
   if (askRouteOf(pick) === 'tacc' && QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_chat_s || 180)){
     if (!(await renewThen('chat'))){ fail('<span class="bad">Not sent: this Qwen session on TACC is about to end. Start a new one from the menu, or pick another model, and send again.</span>', 'Qwen session ending');
-      done(false); setStatus('Ready'); return; } }
+      done(false); status('Ready'); return; } }
   if (it.recalled) return;
   const waited = askRouteOf(pick) === 'tacc' && QW.phase === 'starting';
   stage(waited ? 'Waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
   onHold(waited ? 'waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'sending to Qwen 27B on TACC' : 'sending');
-  if (waited){ setStatus('Thinking', '', 'waiting for Qwen 27B on TACC to start');
+  if (waited){ status('Thinking', '', 'waiting for Qwen 27B on TACC to start');
     const now = document.createElement('button'); now.type = 'button'; now.className = 'now'; now.textContent = 'Use ' + prettyModel(pick.model || LOCALMODEL) + ' now';
-    now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(chatId, pick); if (pick === threadPick) syncAskChip(); };
+    now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(it.sid || chatId, pick); if (pick === threadPick) syncAskChip(); };
     rc.appendChild(now);
     await new Promise(res => { const tw = Date.now(), wait = () => (!it.recalled && QW.phase === 'starting' && askRouteOf(pick) === 'tacc' && Date.now() - tw < 47 * 60000) ? setTimeout(wait, 300) : res(); wait(); }); }
   if (it.recalled) return;
   const viaTacc = askRouteOf(pick) === 'tacc' && QW.phase === 'ready', switched = waited && pick.route === 'local';
-  if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); setStatus('Ready'); return; }
-  if (viaTacc){ setStatus('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
+  if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); status('Ready'); return; }
+  if (viaTacc){ status('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
   else if (switched){ stage('Sending to ' + prettyModel(modelOf(pick))); onHold('sending to ' + prettyModel(modelOf(pick))); }
   fetching = true;
-  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: sel || '', session_id: chatId, tools: $('#chatTools').checked,
+  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: it.task ? it.task.name : '', session_id: it.sid, tools: $('#chatTools').checked,
     backend: viaTacc ? 'tacc' : '', ...(viaTacc ? {} : {model: modelOf(pick)})})}); }
-  catch(e){ fetching = false; resolveSent(null); if (it.recalled) return; fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); setStatus('Ready'); return; }
+  catch(e){ fetching = false; resolveSent(null); if (it.recalled) return; fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); status('Ready'); return; }
   const d = await r.json().catch(() => ({}));
   fetching = false; resolveSent(r.ok ? d : null);
   if (it.recalled) return;                                  // recall() takes it from here: it now knows which turn to drop
-  if (!r.ok){ fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); setStatus('Ready'); return; }
-  it.turn = d.turn ?? null; it.sid = d.session_id || null; if (it.turn != null) me.dataset.turn = it.turn;
-  saveChatId(d.session_id); if (pick.route !== 'auto') rememberPick(d.session_id, pick);
+  if (!r.ok){ fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); status('Ready'); return; }
+  it.turn = d.turn ?? null; if (it.turn != null){ me.dataset.turn = it.turn; bot.dataset.turn = it.turn; }
+  /* the conversation's id from the server: a new conversation gets one now (and so do its queued messages) */
+  const sidNow = d.session_id || it.sid;
+  if (sidNow && it.key !== sidNow){ const old = it.key; LIVE.delete(old); it.key = sidNow; LIVE.set(sidNow, it);
+    chatQ.forEach(q => { if (q.key === old){ q.key = sidNow; q.sid = sidNow; } }); if (curKey === old) curKey = sidNow; }
+  it.sid = sidNow;
+  if (isCur()) saveChatId(sidNow); if (pick.route !== 'auto') rememberPick(sidNow, pick); loadThreads();
   if (viaTacc) onHold('uploading to TACC'); else { sent(); onHold('replying'); }
-  es = new EventSource('/api/stream?id=' + chatId);
+  es = new EventSource('/api/stream?id=' + it.sid);
   const attach = () => { if (attached) return; attached = true; live.appendChild(body); };
   /* Markdown as it streams; Text Generate (Aceternity): only the newly arrived characters fade in */
   const paint = () => { raf = 0; if (closed) return; attach(); const stick = nearBottom($('#chatLog')); shownTxt = mdPaint(body, stripRuns(acc), shownTxt); if (stick) scrollChat(true); };
@@ -3701,17 +3904,17 @@ async function exchange(it){
       stage('That flag did not check out; deriving it'); onHold('checking the flag'); }
     else if (ev.type === 'chat_tool'){ const holder = document.createElement('div'); holder.className = 'toolcall';
       holder.innerHTML = termBlock(ev.cmd, en(ev.output || '(no output)'), ev.cached ? {note: 'reused'} : {exit: ev.exit_code, ms: ev.duration_ms, note: ev.timed_out ? 'timed out' : ''});
-      live.insertBefore(holder, attached ? body : null); stage('Ran ' + String(ev.cmd || '').slice(0, 48)); sent(); onHold('running commands'); chatSteps += 1; scrollChat(); }
+      live.insertBefore(holder, attached ? body : null); stage('Ran ' + String(ev.cmd || '').slice(0, 48)); sent(); onHold('running commands'); if (isCur()) chatSteps += 1; scrollChat(); }
     else if (ev.type === 'chat_done'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = markFlags(mdLite(ev.answer || '(no content)'), ev.flag_checks); if (ev.model) body.insertAdjacentHTML('afterend', `<p class="who">${esc(prettyModel(ev.model))}</p>`); finish(); settle(true);
-      chatTurns = ev.turns || (chatTurns + 1); chatSteps = ev.total_steps || chatSteps; if (ev.session_id) saveChatId(ev.session_id);
-      setStatus('Ready'); closed = true; es.close(); done(true); scrollChat(); }
+      if (isCur()){ chatTurns = ev.turns || (chatTurns + 1); chatSteps = ev.total_steps || chatSteps; if (ev.session_id) saveChatId(ev.session_id); }
+      status('Ready'); closed = true; es.close(); done(true); scrollChat(); }
     else if (ev.type === 'error'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = `<span class="bad">${esc(en(ev.message))}</span>`; finish(); settle(false, ev.message);
-      setStatus('Error', 'bad', en(ev.message)); closed = true; es.close(); done(false); }
+      status('Error', 'bad', en(ev.message)); closed = true; es.close(); done(false); }
   };
   /* the stream dropped: the server keeps going and writes the reply into the thread, so pick it up from there instead of giving up */
   es.onerror = () => { if (closed) return; es.close(); stage('Connection dropped; picking the reply up again'); onHold('reconnecting'); resume(); };
   const resume = async () => {
-    const t0r = Date.now(), sid = chatId, turn = it.turn;
+    const t0r = Date.now(), sid = it.sid, turn = it.turn;
     while (!closed && Date.now() - t0r < 12 * 60000){
       await sleep(2000);
       let d; try { d = await (await fetch('/api/chat/history?id=' + encodeURIComponent(sid), {cache: 'no-store'})).json(); } catch(_){ continue; }
@@ -3719,17 +3922,63 @@ async function exchange(it){
       const r = ms.find(m => (m.type === 'reply' || m.type === 'error') && m.turn === want); if (!r || closed) continue;
       closed = true; if (raf){ cancelAnimationFrame(raf); raf = 0; }
       if (r.type === 'reply'){ attach(); body.innerHTML = markFlags(mdLite(r.answer || '(no content)'), r.flag_checks) + ((r.picked || r.model) ? `<p class="who">${esc(prettyModel(r.picked || r.model))}</p>` : '');
-        finish(); settle(true); chatTurns += 1; done(true); }
+        finish(); settle(true); if (isCur()) chatTurns += 1; done(true); }
       else { attach(); body.innerHTML = `<span class="bad">${esc(en(r.error || 'the request failed'))}</span>`; finish(); settle(false, r.error); done(false); }
-      setStatus('Ready'); scrollChat(); return;
+      status('Ready'); scrollChat(); return;
     }
     if (!closed){ closed = true; done(false); if (!acc){ attach(); body.innerHTML = '<span class="bad">The connection dropped and the reply did not come back in time. Reopen this conversation later to see it.</span>'; }
-      finish(); settle(false, 'stream interrupted'); setStatus('Ready'); }
+      finish(); settle(false, 'stream interrupted'); status('Ready'); }
   };
 }
 $('#sendChat').onclick = sendChat;
 $('#chatTools').onchange = showMount;
-$('#newChat').onclick = () => { if (chatBusy){ toast('A reply is still coming in; start a new conversation when it is done'); return; } chatId = null; chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); $('#chatLog').innerHTML = ''; started(false); loadThreads(); $('#chatInput').focus(); };
+function newChat(t = selTask, chosen = false){
+  curKey = 'new-' + (++draftN); chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); setAskTask(t, chosen); paintContext(null);
+  $('#chatLog').innerHTML = ''; started(false); syncBusy(); loadThreads(); $('#chatInput').focus(); return true; }
+/* ---- Solve's run settings ---- */
+/* "Demo run" while the chosen model is the offline mock; with a real model, Run is the main button */
+function runLabel(){ const mock = /^mock/i.test(runModel || LOCALMODEL || ''), rb = $('#run'), tb = $('#runTacc'); if (!rb) return;
+  rb.classList.toggle('primary', !mock); tb.classList.toggle('primary', mock);
+  rb.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = mock ? 'Demo run' : 'Run'; });
+  rb.dataset.tip = mock ? 'Offline mock model: a demo of the pipeline, not a real agent' : 'Run with ' + prettyModel(runModel || LOCALMODEL); }
+/* what the run on screen used: from its trace (a replay shows its own model, tier and turns, not the ones for the next run) */
+function runSettingsOf(r){ const m = (r && r.meta) || {}, model = (m.model && (m.model.name || m.model)) || '';
+  // the trace's meta holds the tier as {name: "B1", truncate: ...}; a run's summary holds the name
+  const tier = (m.ablation && (m.ablation.name || (typeof m.ablation === 'string' ? m.ablation : ''))) || (r && r.done && r.done.ablation) || '';
+  return {model: String(model), tier: String(tier), turns: (r && r.maxTurns) || ((m.budget || {}).max_turns) || 0,
+          tacc: !!(r && (r.tacc || /tacc|qwen3\.8-27b/i.test(String(model))))}; }
+const againTask = () => { const name = (run && run.meta && run.meta.task) || sel; return name ? taskByName(name) : null; };
+function syncRunSet(){
+  const box = $('#runSet'); if (!box) return;
+  box.hidden = !(sel || run);
+  const shown = !!(run && (busy || run.done || (run.turns && run.turns.length) || run.meta)), info = shown && !rsEditing;
+  $('#rsEdit').hidden = info; $('#rsInfo').hidden = !info;
+  if (!info) return;
+  const st = runSettingsOf(run);
+  $('#rsNow').textContent = (busy ? 'This run: ' : 'This run used: ') + [st.model ? prettyModel(st.model) + (st.tacc ? ' on TACC' : '') : '—', st.tier || '—', st.turns ? st.turns + ' turns' : '—'].join(' · ')
+    + (busy && st.tacc ? ' (fixed when it was sent to TACC)' : '');
+  $('#rsMore').hidden = !(busy && !st.tacc && ctlRid && st.turns < turnMax);
+  $('#rsAgain').hidden = busy || !againTask(); $('#rsChange').hidden = busy;
+}
+/* set the editors to the settings of the run on screen ("Run again" and "Change settings" start from them) */
+function adoptRunSettings(){ const st = runSettingsOf(run);
+  if (st.tier) setAblation(st.tier);
+  if (st.turns) setTurnBudget(st.turns, false);
+  if (st.model && !st.tacc){ const s = $('#modelSel'); if ([...s.options].some(o => o.value === st.model)){ s.value = st.model; runModel = st.model; runLabel(); } }
+  return st; }
+/* +20 turns: the run takes them before its next turn (even when it is waiting on its last one); shown at once */
+$('#rsMore').onclick = async () => { if (!run) return; const want = Math.min(turnMax, (run.maxTurns || turnBudget) + 20), r0 = run;
+  const d = await ctl('turns', want);
+  if (!(d && d.ok)){ toast('Could not add turns: ' + ((d && d.error) || 'the run has ended')); return; }
+  if (run === r0 && want > (run.maxTurns || 0)){ run.maxTurns = want; setTurns(run.turns.length, run.maxTurns); syncRunSet(); }
+  toast(`This run may now take ${want} turns`); };
+$('#rsChange').onclick = () => { adoptRunSettings(); rsEditing = true; syncRunSet(); $('#modelSel').focus(); };
+$('#rsAgain').onclick = () => { if (busy) return; const t = againTask(); if (!t) return; const st = adoptRunSettings();
+  if (sel !== t.name) pick(t);
+  return st.tacc ? $('#runTacc').__go('') : runLocal(''); };
+/* the conversation on screen has a reply coming in: new messages queue under it, and Send says so */
+function syncBusy(){ chatBusy = LIVE.has(curKey); if (sendPix) sendPix.busy(chatBusy); pixLabel($('#sendChat'), chatBusy ? 'Queue ↵' : 'Send ↵'); }
+$('#newChat').onclick = () => newChat();
 
 /* ---------------- keyboard: / to search, Enter to run or send, Esc to close ---------------- */
 /* ---------------- Cmd/Ctrl+K: search and commands ---------------- */

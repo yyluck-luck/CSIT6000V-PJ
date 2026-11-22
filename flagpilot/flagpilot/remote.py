@@ -73,18 +73,20 @@ class DeltaPrinter:
                 self._flush()
 
 
+HISTORY_MAX = 40         # 只是包大小的保险：带多少问答由网页服务按模型的窗口定
+
+
 def chat_once(cfg, message: str, history: list[dict], task=None, use_tools: bool = True,
               workdir: Path | None = None) -> dict:
     """答一句：先把历史问答恢复成上下文，再走 ChatSession.ask（命令照常在本作业的沙箱里执行）。"""
     from .chat import ChatSession
 
     sess = ChatSession(cfg, task=task, workdir=workdir, use_tools=use_tools)
-    for h in history[-12:]:
-        q, a = str(h.get("user") or ""), str(h.get("answer") or "")
-        if q and a:
-            sess.messages.append({"role": "user", "content": q})
-            sess.messages.append({"role": "assistant", "content": a})
-            sess.turns += 1
+    # 带哪些问答由网页服务按 context_plan 定好了（"不带" / "重新开始" / 按窗口省略）；{"note": ...} 是给模型的说明
+    note = next((str(h["note"]) for h in history if h.get("note")), "")
+    pairs = [h for h in history[-HISTORY_MAX:] if str(h.get("user") or "") and str(h.get("answer") or "")]
+    sess.set_context(pairs, note)
+    sess.turns = len(pairs)
     reply = sess.ask(message, on_delta=lambda d: _emit("@@delta", d),
                      hook=lambda ev: _emit("@@ev", _compact(ev)) if ev.get("type") in ("chat_tool", "chat_check") else None)
     out = reply.as_dict()

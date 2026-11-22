@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import threading
 import unittest
@@ -425,9 +426,10 @@ class GlitchStub(Stub):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Connection", "close")
         self.end_headers()
-        if GLITCH["left"] > 0:
+        other = GLITCH["mode"] == "gemini-only" and not str(REQUESTS[-1].get("model", "")).startswith("gemini")
+        if GLITCH["left"] > 0 and not other:
             GLITCH["left"] -= 1
-            chunk = ({"choices": [{"delta": {}, "finish_reason": "function_call_filter: MALFORMED_FUNCTION_CALL"}]} if GLITCH["mode"] == "malformed"
+            chunk = ({"choices": [{"delta": {}, "finish_reason": "function_call_filter: MALFORMED_FUNCTION_CALL"}]} if GLITCH["mode"] in ("malformed", "gemini-only")
                      else {"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}]} if GLITCH["mode"] == "ok"
                      else {"choices": [{"delta": {"content": "岨"}, "finish_reason": "stop"}]})
         else:
@@ -481,7 +483,46 @@ class TestGeminiGlitches(unittest.TestCase):
         comp = self.client.complete([{"role": "user", "content": "hi"}])
         self.assertEqual(comp.text, "")
         self.assertEqual(len(REQUESTS), 3)
+        self.assertTrue(comp.glitch, "the chain can tell this provider kept failing to answer")
 
+    # 2026-11-21 (an imported Chromium challenge): each malformed turn had been retried twice, and all three requests
+    # came back MALFORMED_FUNCTION_CALL again: the same request gets the same answer. A retry now asks for plain JSON
+    # and samples a little more freely; after that, the chain gives the turn to the next provider.
+    def test_a_retry_after_a_malformed_call_asks_for_plain_json(self):
+        GLITCH.update(left=1, mode="malformed")
+        comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(comp.text, '{"action":"shell","cmd":"ls"}')
+        self.assertEqual(len(REQUESTS[0]["messages"]), 1)
+        nudge = REQUESTS[1]["messages"][-1]
+        self.assertEqual(nudge["role"], "user")
+        self.assertIn("plain text", nudge["content"])
+        self.assertGreaterEqual(REQUESTS[1]["temperature"], 0.7)
+        self.assertFalse(comp.glitch)
+
+    def test_after_the_retries_the_chain_moves_on(self):
+        from flagpilot import client as client_mod
+        GLITCH.update(left=99, mode="gemini-only")
+        url = f"http://127.0.0.1:{self.port}/v1"
+        old = client_mod.FALLBACK_RESOLVER
+        client_mod.FALLBACK_RESOLVER = lambda name: ModelSpec(name=name, provider="openai-compatible", base_url=url)
+        self.addCleanup(setattr, client_mod, "FALLBACK_RESOLVER", old)
+        fc = client_mod.build_client(ModelSpec(name="gemini-flash-lite-latest", provider="gemini", base_url=url,
+                                               enable_thinking=False, fallback="backup-model"))
+        comp = fc.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(comp.text, '{"action":"shell","cmd":"ls"}')
+        self.assertEqual([r["model"] for r in REQUESTS], ["gemini-flash-lite-latest"] * 3 + ["backup-model"])
+        self.assertEqual((fc.switched or {}).get("to"), "backup-model")
+
+
+    # 2026-11-21: a server started with HTTPS_PROXY pointing at a local proxy that had stopped answered every Ask message
+    # with "URLError: [Errno 61] Connection refused", for every provider. A refused proxy now falls back to a direct call.
+    def test_a_proxy_that_refuses_falls_back_to_a_direct_call(self):
+        GLITCH.update(left=0, mode="ok")
+        env = {"HTTP_PROXY": "http://127.0.0.1:9", "HTTPS_PROXY": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9",
+               "https_proxy": "http://127.0.0.1:9", "NO_PROXY": "", "no_proxy": ""}
+        with mock.patch.dict(os.environ, env):
+            comp = self.client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual((comp.text, comp.error), ('{"action":"shell","cmd":"ls"}', ""))
 
 
 class TestInlineThought(unittest.TestCase):

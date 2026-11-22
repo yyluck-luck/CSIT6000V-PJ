@@ -16,6 +16,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable
@@ -119,6 +120,8 @@ class Completion:
     retries: int = 0
     # Ollama 等运行时会单独返回思维链，正文可能为空。留档用于诊断。
     reasoning: str = ""
+    # 重试完了还是接口的毛病（MALFORMED_FUNCTION_CALL、空正文、乱码）：备援链据此把这一轮交给下一家
+    glitch: bool = False
     # 服务端回报的前缀缓存命中 / 未命中 prompt token（DeepSeek：prompt_cache_hit_tokens /
     # prompt_cache_miss_tokens；OpenAI 风格：prompt_tokens_details.cached_tokens）。
     # 没回报就是 None——Track H 的缓存命中率只能从这里来，不能从 /metrics 来。
@@ -178,6 +181,7 @@ class ChatClient:
         # 有些运行时（Ollama / llama.cpp / 老版本 vLLM）不认识 chat_template_kwargs，
         # 会直接 400。第一次撞上就永久降级，避免每次请求都白撞一遍。
         self._no_template_kwargs = spec.provider in ("openai-compatible", "gemini")
+        self._no_seed = False           # 服务端拒绝过 seed 字段：之后不再发
 
     # 退化重复的守卫（见模块级 looping()）。FLAGPILOT_LOOP_GUARD=0 关掉，复现旧行为用。
     loop_guard = os.environ.get("FLAGPILOT_LOOP_GUARD", "1") != "0"
@@ -192,6 +196,7 @@ class ChatClient:
         *,
         _fit_retries: int = 0,
         _busy_retries: int = 0,
+        _temperature: float | None = None,
     ) -> Completion:
         """发一轮请求。
 
@@ -200,7 +205,7 @@ class ChatClient:
         payload = {
             "model": self.spec.name,
             "messages": messages,
-            "temperature": self.spec.temperature,
+            "temperature": self.spec.temperature if _temperature is None else _temperature,
             "max_tokens": max_tokens or self.spec.max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
@@ -218,6 +223,8 @@ class ChatClient:
                 # Ollama 的 Qwen3 模板认这个字段，vLLM 也支持；不支持会 400 后降级。
                 # 实测只有它真能关掉思维链（/no_think 与 think:false 在 Ollama 上都被忽略）。
                 payload["reasoning_effort"] = "none"
+        if self.spec.seed is not None and not self._no_seed:
+            payload["seed"] = int(self.spec.seed)
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self._url,
@@ -239,7 +246,7 @@ class ChatClient:
         stream_err: dict = {}
         since_check, looped = 0, False
         try:
-            with urllib.request.urlopen(req, timeout=self.spec.request_timeout_s) as resp:
+            with open_url(req, self.spec.request_timeout_s) as resp:
                 for raw in resp:
                     line = raw.decode("utf-8", "replace").strip()
                     if not line or not line.startswith("data:"):
@@ -318,6 +325,13 @@ class ChatClient:
                     return retry
                 return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
                                   error=f"HTTP {e.code}: {detail}", max_tokens=payload["max_tokens"])
+            if e.code in (400, 422) and "seed" in payload and "seed" in body.lower():
+                # 这个服务端不认采样种子：不再发，这一轮重试一次（轨迹里 note 记下，复现性比不过发了的）
+                self._no_seed = True
+                retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
+                                      _temperature=_temperature)
+                retry.note = (retry.note + " " if retry.note else "") + "服务端不接受 seed，已不再发送"
+                return retry
             if e.code == 400 and not self._no_template_kwargs and self.spec.provider != "deepseek":
                 # 大概率是 chat_template_kwargs 不被接受：降级后重试一次
                 self._no_template_kwargs = True
@@ -347,8 +361,13 @@ class ChatClient:
         if (empty or glitch or int(stream_err.get("code") or 0) in BUSY_CODES) and self.spec.provider in ("gemini", "openai-compatible", "deepseek") \
                 and _busy_retries < BUSY_RETRIES:
             time.sleep(busy_wait_s(json.dumps(stream_err), None, _busy_retries) if not glitch else 0.5)
-            retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
-                                  _busy_retries=_busy_retries + 1)
+            # 同一个请求会得到同一个畸形回复（2026-11-21：一轮的三次请求全是 MALFORMED_FUNCTION_CALL）：
+            # 重试时提醒它只用纯文本回 JSON，并放开一点采样
+            again = messages if not (glitch or empty) or (messages and messages[-1].get("content") == GLITCH_NUDGE) \
+                else messages + [{"role": "user", "content": GLITCH_NUDGE}]
+            retry = self.complete(again, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
+                                  _busy_retries=_busy_retries + 1,
+                                  _temperature=max(self.spec.temperature, 0.7) if (glitch or empty) else _temperature)
             retry.note = (retry.note + " " if retry.note else "") + (
                 f"接口返回 {str(finish)[:60] or '乱码'}，重试后成功" if glitch else "流提前结束（无正文），重试后成功")
             retry.retries += 1
@@ -393,6 +412,7 @@ class ChatClient:
             note=note,
             max_tokens=payload["max_tokens"],
             reasoning=reasoning[:2000],
+            glitch=bool((glitch or empty) and not text.strip()) or "MALFORMED_FUNCTION_CALL" in str(finish or ""),
             cache_hit_tokens=hit,
             cache_miss_tokens=miss,
             reasoning_tokens=int(r_tok) if r_tok is not None else None,
@@ -530,6 +550,28 @@ _FAILOVER = re.compile(r"^(HTTP (401|403|404|408|429|5\d\d)|URLError|TimeoutErro
 DOWN: dict[str, tuple[float, str]] = {}
 
 
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def open_url(req: urllib.request.Request, timeout: float):
+    """urlopen, but a proxy from the environment that refuses the connection (HTTP(S)_PROXY pointing at a local proxy
+    that has stopped) is skipped: the request goes out directly instead of failing. 2026-11-21: a web server started
+    from a shell with such a proxy answered every Ask message, for every provider, with "Connection refused"."""
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.URLError as e:
+        parts = urllib.parse.urlsplit(req.full_url)
+        via_proxy = urllib.request.getproxies().get(parts.scheme) and not urllib.request.proxy_bypass(parts.hostname or "")
+        if not (via_proxy and isinstance(getattr(e, "reason", None), ConnectionRefusedError)):
+            raise
+        print(f"[model] the proxy for {parts.scheme} refused the connection; calling {parts.hostname} directly", flush=True)
+        return _DIRECT.open(req, timeout=timeout)
+
+
+GLITCH_NUDGE = ("Your last reply came back empty or as a malformed function call. Reply with exactly one JSON object "
+                "as plain text, as the protocol above says. Do not call any function or tool.")
+
+
 def failover_reason(err: str) -> str:
     """该不该换备援；该换就给一句给人看的原因，否则空串。"""
     e = err or ""
@@ -595,6 +637,9 @@ class FallbackClient:
                 continue
             c.busy_retries = None if last else 0      # 还有下一家时别在这儿干等：429 / 503 立刻换
             comp = c.complete(messages, max_tokens, on_delta=on_delta)
+            if comp.glitch and not last:              # 重试完了还是空回复 / 畸形函数调用：这一轮（和之后）交给下一家
+                self._next("its replies kept coming back empty or malformed")
+                continue
             why = failover_reason(comp.error) if comp.error else ""
             if not why or last:
                 self.last_model = name
