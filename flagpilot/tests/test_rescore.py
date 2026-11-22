@@ -94,10 +94,27 @@ class TestRescore(unittest.TestCase):
         self.task.assets.append("data.gz")
         old = os.environ.get("PATH", "")
         self.addCleanup(os.environ.__setitem__, "PATH", old)
-        rescore.zcat_like_linux(self.tmp)
+        rescore.tools_like_linux(self.tmp)
         script = "import subprocess\nprint(subprocess.run(['zcat', 'challenge/data.gz'], capture_output=True, text=True).stdout.split('=', 1)[1].strip())\n"
         a = self.attempt([script], saved=script, verdict="verified", reason="match")
         self.assertEqual(self.recheck(a)["new"], "verified")
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS only")
+    def test_on_macos_strings_prints_ascii_as_on_the_cluster(self):
+        # v7 B1 forensics-065: zcat ... | strings, then .decode(): macOS strings passes bytes >= 0x80 through
+        import os
+        d = self.tmp / "tasks" / "synthetic-777"
+        (d / "disk.img").write_bytes(b"\xc0\xff\xfe" + b"junk\x00\x01" + f"label {FLAG}".encode() + b"\x00\xe9\xe9\xe9\xe9tail")
+        self.task.assets.append("disk.img")
+        old = os.environ.get("PATH", "")
+        self.addCleanup(os.environ.__setitem__, "PATH", old)
+        rescore.tools_like_linux(self.tmp)
+        script = ("import subprocess\nout = subprocess.run(['strings'], input=open('challenge/disk.img', 'rb').read(), capture_output=True)\n"
+                  "print([l for l in out.stdout.decode().splitlines() if 'picoCTF' in l][0].split()[-1])\n")
+        a = self.attempt([script], saved=script, verdict="verified", reason="match")
+        self.assertEqual(self.recheck(a)["new"], "verified")
+        r = __import__("subprocess").run(["strings", "-n", "6", str(d / "disk.img")], capture_output=True)
+        self.assertEqual(r.stdout.decode().splitlines(), [f"label {FLAG}"], "-n and file operands work as in GNU strings")
 
 
 if __name__ == "__main__":

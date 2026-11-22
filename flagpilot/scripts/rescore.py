@@ -8,7 +8,8 @@ intervals. Use it after a verifier fix to see what the fix changes.
 
 Until 2026-11-21 this paired the last flag with replay/solve.py, which holds the last script that reached the replay,
 not the last one submitted (a typed-in flag is rejected before the replay). On macOS, zcat reads only .Z files while the
-TACC jobs ran GNU zcat: a zcat that reads gzip goes first on the PATH the replays inherit.
+TACC jobs ran GNU zcat, and macOS's strings passes non-ASCII bytes through: GNU-like ones go first on the PATH the
+replays inherit.
 
   python3 scripts/rescore.py runs/tacc/v6                # every batch under the folder
   python3 scripts/rescore.py runs/tacc/v6 --only hardcoded_no_material
@@ -83,16 +84,40 @@ def recheck(attempt: Path, tasks: dict, tasks_root: Path, keep: Path, only: str)
     return row
 
 
-def zcat_like_linux(tmp: Path) -> bool:
-    """macOS's zcat reads only .Z files; GNU zcat, which the TACC jobs ran, reads gzip. Put a zcat that reads gzip
-    first on the PATH (the sandbox passes the PATH on), so a replay calling zcat behaves as it did on the cluster."""
+# GNU strings' defaults: the whole file, runs of at least 4 printable ASCII characters or tabs (macOS's strings also
+# passes bytes >= 0x80 through, so a script that decodes its output as UTF-8 fails there: v7 B1 forensics-065)
+STRINGS = r"""#!/usr/bin/env python3
+import re, sys
+args, files, n, radix, i = sys.argv[1:], [], 4, None, 0
+while i < len(args):
+    a = args[i]
+    if a == "-n" or a == "-t":
+        i += 1
+        if a == "-n": n = int(args[i])
+        else: radix = args[i]
+    elif a.startswith("--bytes="): n = int(a.split("=", 1)[1])
+    elif re.fullmatch(r"-n\d+|-\d+", a): n = int(a.lstrip("-n"))
+    elif re.fullmatch(r"-t[odx]", a): radix = a[2]
+    elif not a.startswith("-") or a == "-": files.append(a) if a != "-" else None
+    i += 1
+pat, out = re.compile(rb"[\x20-\x7e\t]{%d,}" % n), sys.stdout.buffer
+for data in ([open(f, "rb").read() for f in files] if files else [sys.stdin.buffer.read()]):
+    for m in pat.finditer(data):
+        out.write((({"o": b"%7o ", "d": b"%7d ", "x": b"%7x "}[radix] % m.start()) if radix else b"") + m.group() + b"\n")
+"""
+
+
+def tools_like_linux(tmp: Path) -> bool:
+    """The TACC jobs ran GNU tools; on macOS two that the recorded scripts call behave differently: zcat reads only .Z
+    files (GNU zcat reads gzip) and strings passes non-ASCII bytes through. Put GNU-like ones first on the PATH (the
+    sandbox passes the PATH on), so the replays behave as they did on the cluster."""
     if sys.platform != "darwin" or not shutil.which("gzip"):
         return False
     d = Path(tmp) / "linux-bin"
     d.mkdir(parents=True, exist_ok=True)
-    z = d / "zcat"
-    z.write_text('#!/bin/sh\nexec gzip -dc "$@"\n')
-    z.chmod(0o755)
+    for name, body in (("zcat", '#!/bin/sh\nexec gzip -dc "$@"\n'), ("strings", STRINGS)):
+        (d / name).write_text(body)
+        (d / name).chmod(0o755)
     os.environ["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
     return True
 
@@ -112,8 +137,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     out: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="fp-rescore-") as keep:
-        if zcat_like_linux(Path(keep)):
-            print("macOS: zcat reads gzip here, as GNU zcat did on the cluster")
+        if tools_like_linux(Path(keep)):
+            print("macOS: zcat and strings behave as the GNU ones on the cluster did")
         for a in attempts:
             r = recheck(a, tasks, tasks_root, Path(keep), args.only)
             if r is None:
