@@ -1,8 +1,14 @@
 """Re-check finished runs with today's verifier, without touching the records.
 
-Every attempt keeps its final submission (the flag in its trace, the script in replay/solve.py). This replays that
-submission through flagpilot.verify.evaluate again and compares the verdict with the one recorded at the time, per
-batch (tier), with Wilson 95% intervals. Use it after a verifier fix to see what the fix changes.
+Every attempt's trace keeps each submission it made (flag and script). This replays them through
+flagpilot.verify.evaluate in order, as the agent made them: the first one today's verifier accepts is where the attempt
+would have ended; with none accepted, the attempt is judged on its last submission, or keeps the ending it had when it
+went on to its budget. The verdicts are compared with the ones recorded at the time, per batch (tier), with Wilson 95%
+intervals. Use it after a verifier fix to see what the fix changes.
+
+Until 2026-11-21 this paired the last flag with replay/solve.py, which holds the last script that reached the replay,
+not the last one submitted (a typed-in flag is rejected before the replay). On macOS, zcat reads only .Z files while the
+TACC jobs ran GNU zcat: a zcat that reads gzip goes first on the PATH the replays inherit.
 
   python3 scripts/rescore.py runs/tacc/v6                # every batch under the folder
   python3 scripts/rescore.py runs/tacc/v6 --only hardcoded_no_material
@@ -16,6 +22,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -38,6 +46,9 @@ def rows_of(trace: Path) -> list[dict]:
     return out
 
 
+SUBMISSION_ENDED = ("verified", "unverified", "wrong", "reproduced")     # verdicts an attempt gets from its last submission
+
+
 def recheck(attempt: Path, tasks: dict, tasks_root: Path, keep: Path, only: str) -> dict | None:
     rows = rows_of(attempt / "trace.jsonl")
     summ = next((r for r in rows if r.get("type") == "summary"), None)
@@ -47,18 +58,43 @@ def recheck(attempt: Path, tasks: dict, tasks_root: Path, keep: Path, only: str)
     old_r = summ.get("reason") or (summ.get("replay") or {}).get("reason") or ""
     name = attempt.name.rsplit("-s", 1)[0]
     subs = [r for r in rows if r.get("type") == "submit"]
-    script = attempt / "replay" / "solve.py"
+    saved = attempt / "replay" / "solve.py"
     row = {"batch": attempt.parent.name, "attempt": attempt.name, "old": old_v, "old_reason": old_r,
-           "new": old_v, "new_reason": old_r}
+           "new": old_v, "new_reason": old_r, "submit": ""}
     if only and old_r != only:
         return row
-    if not subs or not script.is_file() or name not in tasks:
+    if not subs or name not in tasks:
         return row
-    res = verify.evaluate(tasks[name], subs[-1].get("flag") or "", script.read_text(encoding="utf-8", errors="replace"),
-                          tasks_root, timeout_s=60, limits=SandboxLimits(action_timeout_s=60),
-                          keep_dir=keep / attempt.parent.name / attempt.name / "replay")
-    row.update(new=res.verdict, new_reason=res.reason)
+    last = None
+    for i, sub in enumerate(subs, 1):
+        script = sub.get("script")
+        if script is None:                 # a trace without scripts: only the last one, kept next to it, can be judged
+            if i < len(subs) or not saved.is_file():
+                continue
+            script = saved.read_text(encoding="utf-8", errors="replace")
+        last = verify.evaluate(tasks[name], sub.get("flag") or "", script, tasks_root, timeout_s=60,
+                               limits=SandboxLimits(action_timeout_s=60),
+                               keep_dir=keep / attempt.parent.name / attempt.name / f"replay-{i}")
+        if last.verdict == "verified":     # the attempt would have ended here
+            row.update(new="verified", new_reason=last.reason, submit=i)
+            return row
+    if last is not None and old_v in SUBMISSION_ENDED:
+        row.update(new=last.verdict, new_reason=last.reason, submit=len(subs))
     return row
+
+
+def zcat_like_linux(tmp: Path) -> bool:
+    """macOS's zcat reads only .Z files; GNU zcat, which the TACC jobs ran, reads gzip. Put a zcat that reads gzip
+    first on the PATH (the sandbox passes the PATH on), so a replay calling zcat behaves as it did on the cluster."""
+    if sys.platform != "darwin" or not shutil.which("gzip"):
+        return False
+    d = Path(tmp) / "linux-bin"
+    d.mkdir(parents=True, exist_ok=True)
+    z = d / "zcat"
+    z.write_text('#!/bin/sh\nexec gzip -dc "$@"\n')
+    z.chmod(0o755)
+    os.environ["PATH"] = f"{d}{os.pathsep}{os.environ.get('PATH', '')}"
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -76,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     out: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="fp-rescore-") as keep:
+        if zcat_like_linux(Path(keep)):
+            print("macOS: zcat reads gzip here, as GNU zcat did on the cluster")
         for a in attempts:
             r = recheck(a, tasks, tasks_root, Path(keep), args.only)
             if r is None:
