@@ -3231,27 +3231,30 @@ const prettyModel = m => !m ? '' : isTaccName(m) ? 'Qwen 27B on TACC' : /^mock/i
 const modelKind = m => isTaccName(m) ? 'tacc' : /^mock/i.test(m || '') ? 'demo' : providerOf(m) ? 'provider' : 'local';
 const modelGlyph = m => isTaccName(m) ? 'c blue' : /^mock/i.test(m || '') ? 'ring'
   : ({gemini: 'c blue', deepseek: 'ink', glm: 't yellow', qwen: 'red', gpt: 'd ink'})[providerOf(m)] || 'ring';
-/* Ask answers with the hosted models only (2026-11-22: "the discussion section should not support TACC"): a reply on TACC is
-   a Slurm job of half a minute to minutes and holds one of the account's two job slots. Qwen on TACC runs challenges from Solve */
-const askRouteOf = () => 'local';
+/* 'auto' = never picked: Qwen while its session is up or starting, otherwise the local model (the behaviour before picks) */
+const askRouteOf = pk => pk.route === 'auto' ? ((QW.phase === 'ready' || QW.phase === 'starting') ? 'tacc' : 'local') : pk.route;
 const modelOf = pk => pk.route === 'local' && pk.model ? pk.model : LOCALMODEL;
 function readPicks(){ try { return JSON.parse(localStorage.getItem(PICKS_KEY) || '{}') || {}; } catch(_){ return {}; } }
 function rememberPick(sid, pk){ const v = {route: pk.route, model: pk.model || ''};
   try { localStorage.setItem(PICK_KEY, JSON.stringify(v)); if (sid){ const m = readPicks(); delete m[sid]; m[sid] = v; const ks = Object.keys(m); while (ks.length > 300) delete m[ks.shift()]; localStorage.setItem(PICKS_KEY, JSON.stringify(m)); } } catch(_){} }
-/* a pick remembered as "Qwen on TACC" (before 2026-11-22) falls back to the default hosted model */
-function newPick(){ try { const d = JSON.parse(localStorage.getItem(PICK_KEY) || 'null'); if (d && d.route === 'local') return {route: 'local', model: d.model || ''}; } catch(_){} return {route: 'local', model: ''}; }
-function pickForThread(sid, serverModel){ const m = readPicks()[sid]; if (m && m.route === 'local') return {route: 'local', model: m.model || ''};
-  return serverModel && !isTaccName(serverModel) ? {route: 'local', model: serverModel} : newPick(); }
+function newPick(){ try { const d = JSON.parse(localStorage.getItem(PICK_KEY) || 'null'); if (d && (d.route === 'local' || d.route === 'tacc')) return {route: d.route, model: d.model || ''}; } catch(_){} return {route: 'auto', model: ''}; }
+function pickForThread(sid, serverModel){ const m = readPicks()[sid]; if (m && (m.route === 'local' || m.route === 'tacc')) return {route: m.route, model: m.model || ''};
+  return serverModel ? (isTaccName(serverModel) ? {route: 'tacc', model: ''} : {route: 'local', model: serverModel}) : newPick(); }
 let threadPick = newPick();
 function useThreadPick(pk){ threadPick = pk; syncAskChip(); }
-function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; c.classList.remove('on', 'wait');
-  c.querySelector('.g').className = 'g ' + modelGlyph(modelOf(threadPick)); c.querySelector('.tn').textContent = prettyModel(modelOf(threadPick)); }
+function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; const ph = QW.phase, r = askRouteOf(threadPick), mins = Math.ceil((QW.remaining || 0) / 60);
+  c.classList.toggle('on', r === 'tacc' && ph === 'ready'); c.classList.toggle('wait', r === 'tacc' && ph === 'starting');
+  c.querySelector('.g').className = 'g ' + (r === 'tacc' ? (ph === 'ready' ? 'c blue' : ph === 'starting' ? 'spin' : 'ring') : modelGlyph(modelOf(threadPick)));
+  c.querySelector('.tn').textContent = r === 'tacc' ? (ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}` : 'Qwen on TACC · starts when you send')
+    : prettyModel(modelOf(threadPick)); }
 function openModelMenu(anchor){
-  closeModelMenu(); if (typeof closeSelMenu === 'function') closeSelMenu(); const r = askRouteOf(threadPick), cur = modelOf(threadPick);
+  closeModelMenu(); const ph = QW.phase, r = askRouteOf(threadPick), cur = modelOf(threadPick), mins = Math.ceil((QW.remaining || 0) / 60);
   const list = [...new Set([...MODELS, ...(/^mock/i.test(LOCALMODEL) ? [LOCALMODEL] : [])].filter(Boolean))];
   const row = (act, name, sub, on, cls) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-act="${esc(act)}"${cls ? ` class="${cls}"` : ''}><span class="ck">✓</span><span class="nm">${esc(name)}</span><span class="sub">${esc(sub)}</span></button>`;
   const m = document.createElement('div'); m.className = 'mmenu'; m.id = 'modelMenu'; m.setAttribute('role', 'menu'); m.setAttribute('aria-label', 'Who answers this conversation');
-  m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), n === LOCALMODEL ? 'default' : '', r === 'local' && (n === cur || providerOf(n) === providerOf(cur)))).join('');
+  m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), n === LOCALMODEL ? 'default' : '', r === 'local' && (n === cur || providerOf(n) === providerOf(cur)))).join('')
+    + '<hr>' + row('tacc', 'Qwen 27B on TACC', ph === 'ready' ? `connected · ${mins} min left` : ph === 'starting' ? `starting · ${fmtClock(QW.elapsed)}` : 'starts in about 5 min', r === 'tacc')
+    + (ph === 'starting' ? row('progress', 'Show start-up progress', 'step by step', false) + row('stop', 'Stop starting Qwen', '', false, 'danger') : ph === 'ready' ? row('stop', 'Disconnect TACC', 'frees the GPUs', false, 'danger') : '');
   document.body.appendChild(m);
   const a = anchor.getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth, up = a.top - h - 10 >= 8;
   m.style.top = (up ? a.top - h - 10 : Math.min(innerHeight - h - 8, a.bottom + 10)) + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - w - 8, a.left)) + 'px';
@@ -3269,8 +3272,14 @@ function closeModelMenu(refocus){ document.removeEventListener('pointerdown', me
   const c = $('#qwenChipAsk'); c.setAttribute('aria-expanded', 'false'); if (refocus) c.focus({preventScroll: true}); }
 /* the pick is changed in place, so a message on hold in this conversation follows the switch at once */
 async function pickModel(act){
-  closeModelMenu(true); const pk = threadPick;
-  if (!String(act).startsWith('local:')) return;
+  closeModelMenu(true); const pk = threadPick, post = path => fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {});
+  if (act === 'progress') return openQwenPanel();
+  if (act === 'stop'){ const was = QW.phase; if (was === 'ready' && !confirm('Disconnect and free the TACC GPUs?')) return;
+    if (askRouteOf(pk) === 'tacc'){ pk.route = 'local'; pk.model = pk.model || LOCALMODEL; rememberPick(chatId, pk); }
+    await post('/api/tacc/session/stop'); toast(was === 'starting' ? 'Stopped starting Qwen; ' + prettyModel(modelOf(pk)) + ' answers here' : 'Disconnected from TACC'); qwenPoll(); syncAskChip(); return; }
+  if (act === 'tacc'){ pk.route = 'tacc'; pk.model = ''; rememberPick(chatId, pk); syncAskChip();
+    if (QW.phase !== 'ready' && QW.phase !== 'starting'){ await post('/api/tacc/session/start'); toast('Starting Qwen 27B on TACC (about 5 minutes); messages here wait for it'); }
+    qwenPoll(); return; }
   pk.route = 'local'; pk.model = act.slice(6); rememberPick(chatId, pk); syncAskChip(); toast(prettyModel(pk.model) + ' answers in this conversation');
 }
 $('#qwenChipAsk').addEventListener('click', e => { $('#modelMenu') ? closeModelMenu() : openModelMenu(e.currentTarget); });
@@ -4009,13 +4018,31 @@ async function exchange(it){
     if (!it.recalled) pump(it.key); };
   it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) status('Ready'); };
   let r;
-  /* this conversation's pick decides who answers: one of the hosted models (Ask does not run on TACC) */
+  /* this conversation's pick decides who answers. Qwen still starting: hold the message until it is up, unless this conversation is switched to another model */
   const pick = it.pick || threadPick;
+  if (pick.route === 'tacc' && QW.phase !== 'ready' && QW.phase !== 'starting'){
+    await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {}); await qwenPoll(); }
   if (it.recalled) return;
-  stage('Thinking'); onHold('sending');
+  if (askRouteOf(pick) === 'tacc' && QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_chat_s || 180)){
+    if (!(await renewThen('chat'))){ fail('<span class="bad">Not sent: this Qwen session on TACC is about to end. Start a new one from the menu, or pick another model, and send again.</span>', 'Qwen session ending');
+      done(false); status('Ready'); return; } }
+  if (it.recalled) return;
+  const waited = askRouteOf(pick) === 'tacc' && QW.phase === 'starting';
+  stage(waited ? 'Waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
+  onHold(waited ? 'waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'sending to Qwen 27B on TACC' : 'sending');
+  if (waited){ status('Thinking', '', 'waiting for Qwen 27B on TACC to start');
+    const now = document.createElement('button'); now.type = 'button'; now.className = 'now'; now.textContent = 'Use ' + prettyModel(pick.model || LOCALMODEL) + ' now';
+    now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(it.sid || chatId, pick); if (pick === threadPick) syncAskChip(); };
+    rc.appendChild(now);
+    await new Promise(res => { const tw = Date.now(), wait = () => (!it.recalled && QW.phase === 'starting' && askRouteOf(pick) === 'tacc' && Date.now() - tw < 47 * 60000) ? setTimeout(wait, 300) : res(); wait(); }); }
+  if (it.recalled) return;
+  const viaTacc = askRouteOf(pick) === 'tacc' && QW.phase === 'ready', switched = waited && pick.route === 'local';
+  if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); status('Ready'); return; }
+  if (viaTacc){ status('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
+  else if (switched){ stage('Sending to ' + prettyModel(modelOf(pick))); onHold('sending to ' + prettyModel(modelOf(pick))); }
   fetching = true;
   try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: it.task ? it.task.name : '', session_id: it.sid, tools: $('#chatTools').checked,
-    model: modelOf(pick)})}); }
+    backend: viaTacc ? 'tacc' : '', ...(viaTacc ? {} : {model: modelOf(pick)})})}); }
   catch(e){ fetching = false; resolveSent(null); if (it.recalled) return; fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); status('Ready'); return; }
   const d = await r.json().catch(() => ({}));
   fetching = false; resolveSent(r.ok ? d : null);
@@ -4028,7 +4055,7 @@ async function exchange(it){
     chatQ.forEach(q => { if (q.key === old){ q.key = sidNow; q.sid = sidNow; } }); if (curKey === old) curKey = sidNow; }
   it.sid = sidNow;
   if (isCur()) saveChatId(sidNow); if (pick.route !== 'auto') rememberPick(sidNow, pick); loadThreads();
-  sent(); onHold('replying');
+  if (viaTacc) onHold('uploading to TACC'); else { sent(); onHold('replying'); }
   es = new EventSource('/api/stream?id=' + it.sid);
   const attach = () => { if (attached) return; attached = true; live.appendChild(body); };
   /* Markdown as it streams; Text Generate (Aceternity): only the newly arrived characters fade in */
@@ -4037,6 +4064,7 @@ async function exchange(it){
     if (closed) return;
     let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
     if (ev.type === 'chat_delta'){ if (!acc){ stage('Writing'); sent(); onHold('replying'); } acc += ev.text || ''; if (!raf) raf = requestAnimationFrame(paint); }
+    else if (ev.type === 'chat_stage'){ const msg = taccStage(ev); stage(cap(msg)); onHold(msg); if (ev.stage === 'queued' || ev.stage === 'running') sent(); }
     else if (ev.type === 'chat_coach'){ if (ev.on) bot.insertAdjacentHTML('afterbegin', '<p class="note">Hint mode: flags are hidden in this reply.</p>'); }
     else if (ev.type === 'chat_check'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } acc = ''; shownTxt = ''; body.innerHTML = '';
       stage('That flag did not check out; deriving it'); onHold('checking the flag'); }
