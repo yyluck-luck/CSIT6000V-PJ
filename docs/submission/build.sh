@@ -18,10 +18,11 @@ count() {   # commits and lines added by the given author names (no merges, data
           | awk 'NF==3 && $1 != "-" {s+=$1} END {printf "%d", s}')
   printf '%s %s' "$commits" "$lines"
 }
-span() {    # the dates of an author's first and last commit
+span() {    # the dates of an author's first and last commit, in the timezone this document is dated in (so a commit
+            # made at 11:12 -0800 reads as the next day here, which is when it landed for everyone else)
   local args=() a
   for a in "$@"; do args+=(--author="^$a <"); done
-  git -C "$ROOT" log "$REF" --no-merges "${args[@]}" --format=%ad --date=short | sort | sed -n '1p;$p' | paste -sd' ' - \
+  TZ="${SUBMIT_TZ:-Asia/Shanghai}" git -C "$ROOT" log "$REF" --no-merges "${args[@]}" --format=%ad --date=format-local:%Y-%m-%d | sort | sed -n '1p;$p' | paste -sd' ' - \
     | awk '{print ($2 == "" || $1 == $2) ? $1 : $1 "\\newline to " $2}'
 }
 read -r LC LL <<< "$(count "Liu Yiyang" "yyluck")"
