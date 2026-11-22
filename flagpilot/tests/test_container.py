@@ -46,6 +46,34 @@ class TestContainerArgv(unittest.TestCase):
         # 镜像之后的才是真正的命令，不能被参数解析吃掉
         self.assertEqual(argv[argv.index("python:3.11-slim") + 1:], ["/bin/sh", "-c", "echo hi"])
 
+    def test_no_capabilities_no_privilege_gain_and_not_root(self):
+        """2026-11-22, with the sandbox image (deploy/container): docker drops every capability, forbids setuid gains and
+        runs as the host user; rootless podman keeps the host user's id instead (--user would lose the bind's write access)."""
+        argv = self.sb(container_caps("docker"))._container_argv(["true"])
+        self.assertEqual(argv[argv.index("--cap-drop") + 1], "ALL")
+        self.assertEqual(argv[argv.index("--security-opt") + 1], "no-new-privileges")
+        if hasattr(os, "getuid"):
+            self.assertEqual(argv[argv.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
+        argv = self.sb(container_caps("podman"))._container_argv(["true"])
+        self.assertEqual(argv[argv.index("--userns") + 1], "keep-id")
+        self.assertNotIn("--user", argv)
+
+    def test_the_sandbox_image_definitions_agree(self):
+        """Dockerfile and flagpilot.def install the same lists, and those cover the tools doctor checks for."""
+        d = Path(__file__).resolve().parent.parent / "deploy" / "container"
+        for f in ("Dockerfile", "flagpilot.def"):
+            text = (d / f).read_text(encoding="utf-8")
+            self.assertIn("apt.txt", text)
+            self.assertIn("pip.txt", text)
+            self.assertIn("gem install --no-document zsteg", text)
+            self.assertIn("python:3.12-slim-bookworm", text)
+        apt = {ln.strip() for ln in (d / "apt.txt").read_text().splitlines() if ln.strip() and not ln.startswith("#")}
+        pip = {ln.strip() for ln in (d / "pip.txt").read_text().splitlines() if ln.strip() and not ln.startswith("#")}
+        for pkg in ("binwalk", "libimage-exiftool-perl", "tshark", "gdb", "sleuthkit", "foremost", "steghide", "binutils"):
+            self.assertIn(pkg, apt)
+        for mod in ("pycryptodome", "gmpy2", "z3-solver"):
+            self.assertIn(mod, pip)
+
     def test_workdir_binds_at_same_absolute_path(self):
         """路径映射会让 solve.py 里的绝对路径失效，必须原路径 bind。"""
         sb = self.sb(container_caps("docker"))

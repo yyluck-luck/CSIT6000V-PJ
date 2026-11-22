@@ -1,0 +1,20 @@
+# Apptainer definition of the same image as the Dockerfile next to it (same package lists).
+#   apptainer build flagpilot-sandbox.sif deploy/container/flagpilot.def
+Bootstrap: docker
+From: python:3.12-slim-bookworm
+
+%files
+    apt.txt /opt/flagpilot/apt.txt
+    pip.txt /opt/flagpilot/pip.txt
+
+%post
+    export DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+    echo "wireshark-common wireshark-common/install-setuid boolean false" | debconf-set-selections
+    apt-get update
+    grep -v '^#' /opt/flagpilot/apt.txt | xargs apt-get install -y --no-install-recommends
+    gem install --no-document zsteg
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+    grep -v '^#' /opt/flagpilot/pip.txt | xargs pip install
+
+%labels
+    org.flagpilot.purpose challenge sandbox

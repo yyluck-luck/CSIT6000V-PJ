@@ -340,8 +340,15 @@ class Sandbox:
         if self.caps.container in ("apptainer", "singularity"):
             return [binary, "exec", "--containall", "--no-home",
                     "--bind", f"{wd}:{wd}", "--pwd", wd, image, *argv]
-        cmd = [binary, "run", "--rm", "-i", "--network", "none",
+        # 不联网、不给任何 capability、不许提权（setuid 程序也提不了）；不以 root 跑：docker 用宿主的 uid:gid，
+        # rootless podman 用 keep-id（它的容器 root 本来就映射到宿主用户，--user 反而会丢掉工作目录的写权限）
+        cmd = [binary, "run", "--rm", "-i", "--network", "none", "--cap-drop", "ALL",
+               "--security-opt", "no-new-privileges",
                "-v", f"{wd}:{wd}", "-w", wd, "--name", self._container_name()]
+        if self.caps.container == "podman":
+            cmd += ["--userns", "keep-id"]
+        elif hasattr(os, "getuid"):
+            cmd += ["--user", f"{os.getuid()}:{os.getgid()}"]
         if self.limits.memory_mb:
             cmd += ["--memory", f"{self.limits.memory_mb}m"]
         if self.limits.max_procs:

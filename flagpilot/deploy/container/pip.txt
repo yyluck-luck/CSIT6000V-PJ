@@ -1,0 +1,7 @@
+# Python packages in the sandbox image. pycryptodome and gmpy2 are the ones the TACC jobs carried (deploy/tcloud/submit.sh).
+pycryptodome
+gmpy2
+z3-solver
+capstone
+pillow
+scapy

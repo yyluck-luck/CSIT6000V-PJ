@@ -146,7 +146,7 @@ def cmd_doctor(args) -> int:
                     __import__(known_mod[k])
                 except Exception:
                     missing[k] = v
-            elif not shutil.which(k):
+            elif not shutil.which({"sleuthkit": "fls"}.get(k, k)):     # sleuthkit 没有叫这个名字的命令
                 missing[k] = v
         if missing:
             _p("")
