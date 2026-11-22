@@ -1243,7 +1243,11 @@ class Handler(BaseHTTPRequestHandler):
             mem = {rid: st for rid, st in STATE.items()
                    if "events" in st and st.get("kind") != "chat"}
         items = [runs_index.item_from_state(rid, st) for rid, st in mem.items()]
-        items += [x for x in runs_index.list_runs(config.RUNS_ROOT) if x["id"] not in mem]
+        # 这里的 300 必须和下面 items[:300] 一致。list_runs 自己的默认 limit 是 200
+        # （按运行目录计），不传的话页面上限实际是 200：第 201 条以后的运行再怎么
+        # 排在前面也拿不到，而代码看起来是允许 300 条的。
+        items += [x for x in runs_index.list_runs(config.RUNS_ROOT, limit=300)
+                  if x["id"] not in mem]
         items.sort(key=lambda x: x.get("ts") or 0, reverse=True)
         self._json(200, {"runs": items[:300]})
 
