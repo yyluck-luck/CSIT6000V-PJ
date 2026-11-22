@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 ROOT="$(git rev-parse --show-toplevel)"
 REF="${SUBMIT_REF:-HEAD}"
 FULL="$(git -C "$ROOT" rev-parse "$REF")"
-BLOB="https://github.com/yyluck-luck/CSIT6000V-PJ/blob/$FULL"
+BLOB="https://github.com/yyluck-luck/CSIT6000V-PJ/blob/main"
 
 count() {   # commits and lines added by the given author names (no merges, data files left out)
   local args=() a
@@ -41,8 +41,8 @@ cat > stats.tex <<TEX
 \\newcommand{\\LiuSpan}{$LS}\\newcommand{\\ZhangSpan}{$ZS}\\newcommand{\\HongSpan}{$HS}\\newcommand{\\TotalCommits}{$TOTAL}
 TEX
 
-# the README and its figures at that commit; links to files in the repository become links to that commit on GitHub,
-# images stay local (pandoc embeds them from .ref/)
+# the README and its figures at that commit; links to files in the repository become links to the default branch on
+# GitHub, images stay local (pandoc embeds them from .ref/)
 git -C "$ROOT" show "$REF:README.md" > readme-src.md
 rm -rf .ref && mkdir -p .ref
 git -C "$ROOT" archive "$REF" docs/figures 2>/dev/null | tar -x -C .ref 2>/dev/null || true
