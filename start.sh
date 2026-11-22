@@ -161,6 +161,12 @@ else
   fi
   set -- --host 127.0.0.1 --port "$PORT" --model "$MODEL"
   [ -d "$APP/runs/tacc" ] && set -- "$@" --replay runs/tacc        # finished TACC runs show up in Runs and the Lab
+  # Qwen-on-TACC needs the course SDK. It is not searched for (that guesses, and can cross
+  # permission boundaries on someone else's machine): the page asks for its path the first time,
+  # and remembers it in runs/tacc/tcloud.txt, so this note only appears until that has happened.
+  if ! command -v "${TCLOUD_BIN:-tcloud}" >/dev/null 2>&1 && [ ! -x "$(cat "$APP/runs/tacc/tcloud.txt" 2>/dev/null)" ]; then
+    echo "Note: tcloud (the course SDK) is not on PATH; the page will ask for its path on the first connect."
+  fi
   # The server is put in its own session, not merely behind nohup: nohup only ignores SIGHUP,
   # while the child stays in the caller's process group. Whatever tears that group down - an
   # agent's shell, a CI step, a terminal closed while the group is still attached - takes the
