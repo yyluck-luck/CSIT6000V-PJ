@@ -26,6 +26,7 @@ from app import tacc_live  # noqa: E402
 SUBMIT = r"""#!/usr/bin/env bash
 st="$FAKE_STATE"
 echo "${1:-?}" >> "$st/submits"          # 交了几次（测试用：确认"读不到私钥"只交一次）
+echo "TCLOUD_BIN=${TCLOUD_BIN:-unset}" >> "$st/env"   # 页面把解析到的 SDK 路径传进来了吗（页面知道不等于脚本知道）
 if [[ -n "${FAKE_SUBMIT_FAIL:-}" ]]; then echo "[tcloud] staging"; echo "$FAKE_SUBMIT_FAIL" >&2; exit 1; fi
 if [[ -n "${FAKE_SUBMIT_SLEEP:-}" ]]; then sleep "$FAKE_SUBMIT_SLEEP"; fi
 if [[ -n "${FAKE_SESSION_FAILS:-}" ]]; then c=$(( $(cat "$st/sessfail" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/sessfail"
@@ -255,6 +256,15 @@ class TestServeReconciliation(TaccHarness):
         self.assertEqual(s["serve"], "501")
         self.assertEqual(len((self.tmp / "state" / "submits").read_text().split()), 1,
                          "adopted after the timeout, not submitted twice")
+
+    def test_the_resolved_sdk_path_is_handed_to_the_submit_script(self):
+        # 2026-11-23 00:57：会话已经 ready（读日志用的是解析后的路径），但每条 Run/Ask 都被 submit.sh 判成
+        # "not on PATH and TCLOUD_BIN is not set"——页面解析出的路径没有传给那个子进程。
+        os.environ.pop("TCLOUD_BIN", None)
+        (self.tmp / "tcloud.txt").write_text(str(self.tmp / "tcloud") + "\n", encoding="utf-8")
+        self.assertEqual(tacc_live._submit("batch", {})[0], "501")
+        self.assertEqual((self.tmp / "state" / "env").read_text(encoding="utf-8").strip(),
+                         f"TCLOUD_BIN={self.tmp / 'tcloud'}")
 
     def test_a_submission_that_reported_no_job_id_is_adopted(self):
         os.environ["FAKE_SUBMIT_SILENT"] = "1"        # 交上去了，作业号却没打出来（回程断了）

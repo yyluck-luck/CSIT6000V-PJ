@@ -300,6 +300,12 @@ def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], Non
     接着重试了好几分钟，会话都停了还在往下一个作业要用的工作目录里上传。
     """
     env = {**os.environ, "LANG": os.environ.get("LANG") or "en_US.UTF-8", "FP_SUBMIT_TRIES": "1", **env_extra}
+    # submit.sh 是另一个进程：它只看环境变量，看不到 _tc() 在"环境变量 → 记住的路径 → PATH"里的解析结果。
+    # 少了这一行，页面明明知道 tcloud 在哪（会话能读日志、能跑起来），每一条 Run/Ask 却都被脚本判定为
+    # "not on PATH and TCLOUD_BIN is not set"（2026-11-23 00:57，会话 ready、47 分钟剩余，消息全是 Not sent）。
+    sdk = shutil.which(_tc())
+    if sdk:
+        env["TCLOUD_BIN"] = sdk
     stop = cancelled or (lambda: False)
     wait = _retry_wait()
     out = ""
