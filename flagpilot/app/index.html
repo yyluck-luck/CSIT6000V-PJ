@@ -2882,12 +2882,23 @@ let taccT = 0, taccLimit = 5, taccWas = false;
 const fmtClock = s => { s = Math.max(0, Math.round(s || 0)); return pad2(Math.floor(s / 60)) + ':' + pad2(s % 60); };
 const STEPS = ['Queue', 'Server', 'Batch', 'Download', 'Done'];
 const STEP_OF = {starting: 0, queued: 0, serve: 1, ready: 1, batch: 2, download: 3, cleanup: 3, done: 4};
+// 大计时器每 4 秒才随轮询更新一次（空闲时 20 秒），中间靠这个本地插值补足，
+// 否则秒数是一跳一跳的。只改文字、不重绘整块，免得打断选择与悬停。
+const TACC = {at: 0, elapsed: 0, head: '', running: false};
+function taccClockTick(){
+  if (!TACC.running) return;
+  const el = (TACC.elapsed || 0) + (Date.now() - TACC.at) / 1000;
+  const big = document.querySelector('#taccView .bign'); if (big) big.textContent = fmtClock(el);
+  const more = $('#islMore'); if (more && TACC.head) more.textContent = `${TACC.head} · ${fmtClock(el)}`;
+}
+setInterval(taccClockTick, 1000);
 $('#taccLimit').addEventListener('click', e => { const b = e.target.closest('button[data-limit]'); if (!b) return; taccLimit = +b.dataset.limit; setSeg($('#taccLimit'), [...$('#taccLimit').querySelectorAll('button')].indexOf(b)); });
 async function taccPoll(){
   let s; try { s = await (await fetch('/api/tacc', {cache: 'no-store'})).json(); } catch(_){ return; }
   renderTacc(s); clearTimeout(taccT);
   if (s.running){ const per = s.per_tier || {}, cur = s.tiers.find(t => per[t] && !per[t].finished) || s.tiers[0], x = per[cur] || {};
-    $('#islMore').textContent = `TACC · ${s.phase}${x.total ? ` · ${cur} ${x.done}/${x.total}` : ''} · ${fmtClock(s.elapsed)}`; }
+    TACC.head = `TACC · ${s.phase}${x.total ? ` · ${cur} ${x.done}/${x.total}` : ''}`;
+    $('#islMore').textContent = `${TACC.head} · ${fmtClock(s.elapsed)}`; }
   if (taccWas && !s.running){ toast(s.phase === 'done' ? 'TACC batch finished: results are in Runs' : 'TACC pipeline stopped'); setStatus(s.phase === 'done' ? 'Done' : 'Stopped', s.phase === 'done' ? '' : 'warn', 'TACC · ' + s.batch); loadHistory(true); }
   taccWas = s.running;
   if (s.running || (page === 'lab' && !$('.labp[data-lab="tacc"]').hidden)) taccT = setTimeout(taccPoll, s.running ? 4000 : 20000);
@@ -2901,6 +2912,7 @@ function resultsTable(res, batch){
 }
 function renderTacc(s){
   const can = s.available && s.available.sdk && s.available.pipeline;
+  TACC.at = Date.now(); TACC.elapsed = s.elapsed || 0; TACC.running = !!s.running;   // 本地插值的基准
   $('#taccStart').disabled = s.running || !can; $('#taccStart').classList.toggle('busy', s.running); $('#taccStop').hidden = !s.running;
   let html = '';
   if (s.running || s.batch){
@@ -3004,7 +3016,7 @@ function renderQwen(){
   const log = (p.tail && p.tail.length) ? `<details class="qlog"${logOpen ? ' open' : ''}><summary>Live log from the job</summary><pre>${esc(p.tail.join('\n'))}</pre></details>` : '';
   let html;
   if (ph === 'starting' || ph === 'stopping'){
-    const eta = p.eta != null ? Math.max(0, p.eta - since) : null, el = (p.elapsed || 0) + since, pct = eta != null ? Math.min(99, el / Math.max(1, el + eta) * 100) : null;
+    const eta = p.eta != null ? Math.max(0, p.eta - since) : null, el = Math.max(p.elapsed || 0, QW.elapsed || 0) + since, pct = eta != null ? Math.min(99, el / Math.max(1, el + eta) * 100) : null;
     const head = (ph === 'stopping' ? 'Stopping' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B') + (p.slow && ph === 'starting' ? ' · slower than usual today' : '');
     html = `<p class="qline" aria-live="polite">${head} · ${clockS(el)} so far${eta != null ? ` · about ${clockS(eta)} left` : p.step === 'queue' ? ` · then about ${clockS(p.typical || 300)}` : ''}</p>`
       + `<div class="qbar${pct == null ? ' ind' : ''}" role="progressbar" aria-label="Start-up progress"${pct == null ? '' : ` aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"`}><i${pct == null ? '' : ` style="width:${pct.toFixed(1)}%"`}></i></div>`

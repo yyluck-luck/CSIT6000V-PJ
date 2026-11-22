@@ -857,5 +857,36 @@ class TestRobustness(TaccHarness):
         self.assertIn("has ended on TACC", tacc_live.status()["error"])
 
 
+class TestStartProgress(TaccHarness):
+    """启动弹窗上的“已用时间”必须单调递增。
+
+    实测过一次：网页进程是改代码之前起的，S 里没有 prog，`/api/tacc/session` 的 progress
+    是空的。页面于是只剩自己的本地计时，而它每次轮询都清零 —— 弹窗上显示成 0 s、1 s、
+    0 s 来回跳，看着像卡死。已用时间不能依赖进度对象存不存在。
+    """
+
+    def test_status_has_an_elapsed_even_when_progress_is_empty(self):
+        tacc_live.S.update(phase="starting", serve="5000", t0=time.time() - 30, prog={})
+        st = tacc_live.status()
+        self.assertGreaterEqual(st["progress"]["elapsed"], 29,
+                                "进度为空时没给出已用时间，页面只能靠本地计时（会来回跳）")
+        self.assertEqual(st["progress"]["elapsed"], st["elapsed"])
+
+    def test_elapsed_does_not_restart_between_two_polls(self):
+        tacc_live.S.update(phase="starting", serve="5000", t0=time.time() - 12, prog={})
+        first = tacc_live.status()["progress"]["elapsed"]
+        time.sleep(0.4)
+        second = tacc_live.status()["progress"]["elapsed"]
+        self.assertGreaterEqual(first, 11)
+        self.assertGreaterEqual(second, first, "两次轮询之间已用时间倒退了")
+
+    def test_a_progress_without_t_sub_falls_back_to_the_session_clock(self):
+        # 另一种半新半旧的形态：prog 在，但没有 t_sub（旧代码写的），算出来会是 0。
+        tacc_live.S.update(phase="starting", serve="5000", t0=time.time() - 20,
+                           prog={"at": {}, "step": "vllm", "detail": {}, "tail": [],
+                                 "queue": "", "ahead": 0})
+        self.assertGreaterEqual(tacc_live.status()["progress"]["elapsed"], 19)
+
+
 if __name__ == "__main__":
     unittest.main()

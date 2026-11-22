@@ -66,6 +66,31 @@ class TestSubmitStageCleanup(unittest.TestCase):
         self.assertTrue((self.tmp / "listing").read_text().strip(), "提交时暂存目录应当还在")
         self.assertEqual(left, [])
 
+    # ---- 只设 TCLOUD_BIN 的用法：docs/TACC.md 就是这么教读者的 ----
+    def submit_with_clean_path(self, **extra):
+        """PATH 里没有 tcloud：SDK 只能通过 TCLOUD_BIN 找到。"""
+        env = {**os.environ, "PATH": "/usr/bin:/bin", "TMPDIR": str(self.tmpdir), "FAKE_DIR": str(self.tmp),
+               "LANG": "en_US.UTF-8", "FLAGPILOT_TASKS": str(self.tasks), **extra}
+        for k in ("TCLOUD_BIN", "FP_KEEP_STAGE", "FP_DRY_RUN", "FAKE_RC"):
+            if k not in extra:
+                env.pop(k, None)
+        r = subprocess.run(["bash", str(SUBMIT), "doctor"], capture_output=True, text=True, env=env,
+                           cwd=str(ROOT), timeout=120)
+        return r, sorted(self.tmpdir.glob("fp-tcloud-*"))
+
+    def test_tcloud_bin_alone_is_enough(self):
+        """网页（app/tacc.py、app/tacc_live.py）与 pipeline.sh 都先认 TCLOUD_BIN；命令行入口以前只查 PATH，
+        照文档 export 了 TCLOUD_BIN 的人在这里照样撞"找不到 tcloud"。"""
+        r, left = self.submit_with_clean_path(TCLOUD_BIN=str(self.bin / "tcloud"), FP_DRY_RUN="1")
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        self.assertNotIn("找不到 tcloud", r.stderr)
+        self.assertEqual(len(left), 1)
+
+    def test_the_message_says_how_to_point_at_the_sdk(self):
+        r, _ = self.submit_with_clean_path()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("TCLOUD_BIN", r.stderr, "报错只说找不到，没说要怎么指过去")
+
     def test_code_ships_as_one_zip_and_runs_from_it(self):
         """SDK 按文件逐个上传（实测答疑作业 37 个文件、提交 35 s）：代码合成一个 flagpilot.zip，作业从 zip 里 import。"""
         import sys

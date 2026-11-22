@@ -299,17 +299,24 @@ def context_summary(plan: dict) -> dict:
 
 
 def read_log(path: Path) -> list[dict]:
-    """读会话日志。半行（进程被杀/磁盘满）跳过，不让整段历史失效。"""
+    """读会话日志。半行（进程被杀/磁盘满）跳过，不让整段历史失效。
+
+    `errors="replace"` 是必须的：坏字节出现在任意一行时，按 UTF-8 严格解码会在
+    迭代到那一行时抛 UnicodeDecodeError，把整个读取打断——`/api/chat/history`
+    直接断连接，`runs_index.list_chats` 则把这个会话从列表里摘掉，用户看到的是
+    "历史没了"。替换成 U+FFFD 之后，那一行 JSON 解析失败被跳过，其余行照常返回。
+    """
     rows: list[dict] = []
     try:
-        with Path(path).open(encoding="utf-8") as fh:
+        with Path(path).open(encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
                     continue
                 try:
                     rec = storage.decode_record(line)
-                except json.JSONDecodeError:
+                except (ValueError, storage.StorageError):
+                    # 半截 JSON、坏字节、没有密钥的加密行：跳过这一行，不动其余
                     continue
                 if isinstance(rec, dict):
                     rows.append(rec)

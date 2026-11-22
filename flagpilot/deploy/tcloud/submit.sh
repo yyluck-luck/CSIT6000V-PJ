@@ -28,7 +28,10 @@ MODE="${1:?用法: deploy/tcloud/submit.sh serve|doctor|batch [SERVICE_BASE_URL]
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 TASKS="${FLAGPILOT_TASKS:-$ROOT/tasks}"
-command -v tcloud >/dev/null || { echo "找不到 tcloud（课程 SDK v0.4.1）" >&2; exit 1; }
+# 与网页（app/tacc.py、app/tacc_live.py）、pipeline.sh 一致：先认 TCLOUD_BIN，再退回 PATH。
+# 只设 TCLOUD_BIN 是文档推荐的用法（docs/TACC.md「本地前端接 TACC」），以前这里只查 PATH，照文档做照样报"找不到"。
+TC="${TCLOUD_BIN:-tcloud}"
+command -v "$TC" >/dev/null || { echo "找不到 tcloud（课程 SDK v0.4.1）：放进 PATH，或 export TCLOUD_BIN=<tcloud 的绝对路径>" >&2; exit 1; }
 
 # SDK 拿本地目录名当集群上的 WORKDIR 名：名字固定，重复提交覆盖同一份，
 # 不会每交一次就在 /mnt/home（已满）多留 73M。代价是同一时间只能跑一个客户端作业。
@@ -231,7 +234,7 @@ cd "$STAGE"
 TRIES="${FP_SUBMIT_TRIES:-5}"
 [[ "$TRIES" =~ ^[0-9]+$ ]] && (( TRIES >= 1 )) || TRIES=5
 for (( i = 1; i <= TRIES; i++ )); do
-  rc=0; out=$(tcloud submit 2>&1) || rc=$?
+  rc=0; out=$("$TC" submit 2>&1) || rc=$?
   printf '%s\n' "$out"
   grep -q 'Submitted batch job' <<<"$out" && exit "$rc"      # submitted: report tcloud's own status, as before
   # 上传途中断线（"Failed to upload env repository"）同样还没交上去；卷满了（No space left on device）重试没用

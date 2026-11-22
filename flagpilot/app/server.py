@@ -606,6 +606,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(304)
             self.send_header("ETag", page.etag)
             self.send_header("Cache-Control", "no-cache")
+            # 304 也要带 Vary：同一个 ETag 对应 gzip 和原文两种表示，缺了它，
+            # 中间缓存可能把压缩过的版本发给不支持 gzip 的客户端（RFC 7232 §4.1）。
+            self.send_header("Vary", "Accept-Encoding")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -1288,7 +1291,11 @@ class Handler(BaseHTTPRequestHandler):
             mem = {rid: st for rid, st in STATE.items()
                    if "events" in st and st.get("kind") != "chat"}
         items = [runs_index.item_from_state(rid, st) for rid, st in mem.items()]
-        items += [x for x in runs_index.list_runs(config.RUNS_ROOT) if x["id"] not in mem]
+        # 这里的 300 必须和下面 items[:300] 一致。list_runs 自己的默认 limit 是 200
+        # （按运行目录计），不传的话页面上限实际是 200：第 201 条以后的运行再怎么
+        # 排在前面也拿不到，而代码看起来是允许 300 条的。
+        items += [x for x in runs_index.list_runs(config.RUNS_ROOT, limit=300)
+                  if x["id"] not in mem]
         items.sort(key=lambda x: x.get("ts") or 0, reverse=True)
         self._json(200, {"runs": items[:300]})
 
@@ -1402,9 +1409,26 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
     dirs = [base] if (base / "trace.jsonl").exists() else \
         sorted({p.parent for pat in ("*/trace.jsonl", "*/*/trace.jsonl", "*/*/*/trace.jsonl") for p in base.glob(pat)})
     mounted: list[tuple[str, str, str]] = []
+    skipped: list[tuple[str, str]] = []
     for d in dirs:
-        evs = read_jsonl(d / "trace.jsonl")
+        try:
+            evs = read_jsonl(d / "trace.jsonl")
+        except Exception as exc:
+            # 挂载是"有什么就回放什么"：加密过的 trace 没有密钥、拷贝传了一半、别的工具写的二进制，
+            # 都只说明这一条读不了。以前异常直接抛穿，`main()` 在启动阶段就死了，整页起不来；
+            # 一条坏 trace 不该让另外几百条也看不见。
+            skipped.append((d.name, f"{type(exc).__name__}: {exc}"))
+            continue
         if not evs:
+            # 读取本身是容错的（坏字节换成 U+FFFD），坏行于是解析失败、整份文件返回空——
+            # 和"还没开始写"的空文件长得一模一样。按大小分开：0 字节是没开始，非空却
+            # 一行都读不出来就是坏了，得报出来，否则 Run 页又少了一条却没人知道。
+            try:
+                blank = (d / "trace.jsonl").stat().st_size == 0
+            except OSError:
+                blank = False
+            if not blank:
+                skipped.append((d.name, "文件非空，但没有一行能解析"))
             continue
         summary = next((e for e in reversed(evs) if e.get("type") == "summary"), None)
         if not summary:
@@ -1415,6 +1439,13 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
         STATE[rid] = {"q": queue.Queue(), "summary": summary,
                       "events": evs, "kind": "replay"}
         mounted.append((rid, d.name, f"{summary.get('verdict')}/{summary.get('reason')}"))
+    if skipped:
+        # 跳过要说话：Run 页少了几条，得能分清是"坏了"还是"本来就没跑"
+        print(f"⚠ 回放：{len(skipped)} 条 trace 读不了，已跳过；其余 {len(mounted)} 条照常挂载", flush=True)
+        for name, why in skipped[:10]:
+            print(f"    {name}: {why}", flush=True)
+        if len(skipped) > 10:
+            print(f"    …另有 {len(skipped) - 10} 条", flush=True)
     return mounted
 
 
