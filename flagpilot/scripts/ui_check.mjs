@@ -878,13 +878,20 @@ try {
   // a reload comes back to the open challenge and picks its run up again; while a run is going the browser asks first
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
   const backTask = await js("(() => { const t = TASKS.find(x => x.has_gold) || TASKS[0]; pick(t); return t.name; })()");
-  await js("document.querySelector('#run').click()"); await until("busy && here().run", 3000);
+  // the server is slow to answer the new run (600 ms): until it does, the page must not point a reload at the previous run
+  // (2026-11-22: under load this check reopened the challenge's previous run, which pick() had kept)
+  const runPrev = await js("here().run || ''");
+  await js("window.__F9 = window.fetch; window.fetch = (u, o) => String(u) === '/api/run' ? new Promise(r => setTimeout(r, 600)).then(() => window.__F9(u, o)) : window.__F9(u, o)");
+  await js("document.querySelector('#run').click()"); await sleep(250);
+  const staleGone = await js(`busy && !here().run`);
+  await until(`busy && here().run && here().run !== ${JSON.stringify(runPrev)}`, 5000);
+  await js("window.fetch = window.__F9");
   const runWas = await js("here().run"); const dlgBefore = dialogs.length;
   await send("Page.reload"); await until("document.readyState === 'complete'", 10000); await sleep(400);
   const asked = dialogs.length > dlgBefore && dialogs[dialogs.length - 1] === "beforeunload";
   const cameBack = await until(`sel === ${JSON.stringify(backTask)} && !document.querySelector('#work').hidden && document.querySelector('#landing').hidden`, 6000);
   const runBack = await until(`here().run === ${JSON.stringify(runWas)} && /VERIFIED|UNVERIFIED|WRONG|BUDGET|REPRODUCED/.test(document.querySelector('#verdict').textContent)`, 15000);
-  check("reload: asks first while a run is going, then comes back to the challenge and its run", asked && cameBack && runBack, JSON.stringify({asked, cameBack, runBack, runWas}));
+  check("reload: asks first while a run is going, then comes back to the challenge and its run", staleGone && asked && cameBack && runBack, JSON.stringify({staleGone, runPrev, asked, cameBack, runBack, runWas}));
 
   // the logo goes home: Solve's landing even when a challenge is open
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");

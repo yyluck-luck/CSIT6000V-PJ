@@ -2504,7 +2504,9 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-expl
   chatRestored = true; go('chat'); $('#newChat').click(); const box = $('#chatInput'); box.value = msg; box.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); });
 let runPage = 'solve';
 function lockRun(on){ busy = on; if (on){ runPage = page; rsEditing = false; } railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); syncRunSet(); }
-function beginRun(label){ run = fresh(); run.tacc = lastBackend === 'tacc'; openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); syncRunSet(); }
+/* a new run: the previous run of this challenge is no longer where a reload should go (until the server answers with the
+   new run's id, a reload comes back to the challenge alone) */
+function beginRun(label){ keepHere({run: null}); run = fresh(); run.tacc = lastBackend === 'tacc'; openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); syncRunSet(); }
 function clearRunParam(){ if (new URLSearchParams(location.search).has('run')) history.replaceState(null, '', location.pathname + '#/' + page); }
 let lastBackend = 'local';
 /* a challenge that ran as a network service in its CTF: its server cannot be reached from the offline sandbox and its real
