@@ -85,24 +85,37 @@ def cmd_doctor(args) -> int:
         else:
             _p(f"题库一致性       通过（{len(tasks)} 题的目录与附件齐全）")
 
-    # 泄漏检查：这两样东西绝不能被上传
-    leaks = []
+    # 泄漏检查分两级。题目指向带题解的版本、或残留 solution/ 目录——这两样是配置错误，直接算失败；
+    # `_private/gold_private.json` 只是提示：docs/TASKS.md 的目录结构里就有它，build_taskset.py 正是写在这里，
+    # 本机评分也要读它；要求是它不出现在"跑评测的机器"上，而上传时 submit.sh 已经排除 `_private/`。
+    # 一律算失败的话，每一台正常的开发机 doctor 都报"先处理上面的问题"、退出码恒为 1，这条检查就没有信号了。
+    # 真要按上集群的标准卡，用 --strict。
+    strict = getattr(args, "strict", False)
+    hard: list[str] = []
+    notes: list[str] = []
     gold = config.TASKS_ROOT / "_private" / "gold_private.json"
     if gold.exists():
-        leaks.append(f"明文答案表存在：{gold}")
+        notes.append(f"明文答案表在本机：{gold}（上传前删掉；submit.sh 不会带 _private/）")
     if "with-solutions" in str(config.TASKS_ROOT):
-        leaks.append(f"题库指向了带题解的版本：{config.TASKS_ROOT}")
+        hard.append(f"题库指向了带题解的版本：{config.TASKS_ROOT}")
     for sol in config.TASKS_ROOT.glob("tasks/*/solution"):
-        leaks.append(f"题解目录残留：{sol}")
+        hard.append(f"题解目录残留：{sol}")
         break
-    if leaks:
+    if notes:
+        _p("")
+        _p("提示（不影响本机运行；--strict 把它算作问题）：")
+        for n in notes:
+            _p("  - " + n)
+    if hard:
         _p("")
         _p("⚠ 泄漏风险（上集群前必须处理）：")
-        for l in leaks:
+        for l in hard:
             _p("  - " + l)
+    if hard or (notes and strict):
+        _p("泄漏检查         不通过")
         ok = False
     else:
-        _p("泄漏检查         通过（无明文 gold、无题解目录）")
+        _p("泄漏检查         通过（无题解目录、" + ("明文 gold 仅在本机" if notes else "无明文 gold") + "）")
 
     # 执行能力
     _p("")
@@ -738,6 +751,8 @@ def build_parser() -> argparse.ArgumentParser:
     kg.set_defaults(func=cmd_storage_keygen)
 
     d = sub.add_parser("doctor", help="环境自检")
+    d.add_argument("--strict", action="store_true",
+                   help="把本机的明文 gold 也算作问题（上集群前的把关用）")
     d.set_defaults(func=cmd_doctor)
 
     l = sub.add_parser("list", help="列出题目")
