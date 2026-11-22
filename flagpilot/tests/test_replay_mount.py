@@ -80,5 +80,25 @@ class TestReplayMountSurvivesBadTraces(unittest.TestCase):
         self.assertIn("bad-0", out, "没有说是哪几条 trace 读不了")
 
 
+    def test_a_trace_that_is_still_being_written_is_not_called_broken(self):
+        """0 字节的 trace = 刚开跑还没落第一条事件，不该被算进"读不了"。
+
+        读取改成容错之后，坏字节和空文件都返回空列表，只能靠大小分开；分错了就会在
+        每批刚启动时报一堆"读不了"，把真正的损坏淹没掉。
+        """
+        for i in range(3):
+            d = self.root / f"running-{i}"
+            d.mkdir()
+            (d / "trace.jsonl").write_bytes(b"")
+        _good(self.root / "ok-002-s0")
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            mounted = S._mount_replay(str(self.root))
+
+        self.assertEqual([name for _, name, _ in mounted], ["ok-002-s0"])
+        self.assertNotIn("读不了", buf.getvalue(), "空文件被当成损坏了")
+
+
 if __name__ == "__main__":
     unittest.main()
