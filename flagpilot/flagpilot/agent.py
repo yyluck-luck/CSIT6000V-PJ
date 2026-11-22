@@ -18,14 +18,14 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from statistics import median
 from typing import Callable
 
 from . import context, pricing, verify, storage, writeup
 from .client import build_client
-from .config import (Ablation, ModelSpec, RunConfig, TRACK_H,
+from .config import (Ablation, Budget, ModelSpec, RunConfig, TRACK_H,
                      make_model_spec, track_h_api_key)
 from .memory import MemoryStore
 from .sandbox import Sandbox, probe_capabilities
@@ -528,7 +528,19 @@ def run_attempt(
     last_switch: dict | None = None
     fallback_turn = None
 
-    while turns < cfg.budget.max_turns + bonus_turns:
+    def take_more_turns() -> None:
+        # 看着运行的人加了轮数（Solve 上的 "+20 turns"）：只增不减，输出 token 和时间预算跟着放大（Budget.for_turns）。
+        # 必须在判断轮数 / 时间 / token 是否用完之前取：停在最后一轮等批准时加的轮数，以前会被循环条件先判成用完。
+        more = control.take_turns() if control is not None else None
+        if more and more > cfg.budget.max_turns:
+            was = cfg.budget.max_turns
+            cfg.budget = replace(Budget.for_turns(more), max_prompt_tokens=cfg.budget.max_prompt_tokens)
+            tr.event("budget", turn=turns + 1, max_turns=more, was=was)
+
+    while True:
+        take_more_turns()
+        if turns >= cfg.budget.max_turns + bonus_turns:
+            break                          # reason 仍是开头的 "max_turns"
         if time.monotonic() - t0 > cfg.budget.max_wall_s:
             reason = "wall_time"
             break

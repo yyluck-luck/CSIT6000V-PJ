@@ -11,7 +11,8 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
-OPS = ("step", "pause", "resume", "approve", "edit", "skip", "stop", "hint")
+OPS = ("step", "pause", "resume", "approve", "edit", "skip", "stop", "hint", "turns")
+MAX_TURNS = 200                 # "turns": the most a run may be given while it runs (the page offers +20 at a time)
 
 
 class RunControl:
@@ -24,6 +25,7 @@ class RunControl:
         self._decision: tuple[str, str | None] | None = None
         self._hints: list[str] = []
         self.hints_used = 0
+        self._turns: int | None = None  # 运行中加的轮数上限（只增不减；agent 下一轮开始时取走）
         self.decisions = 0
 
     def set(self, op: str, value=None, turn: int | None = None) -> bool:
@@ -50,6 +52,10 @@ class RunControl:
                 if not text:
                     return False
                 self._hints.append(text)
+            elif op == "turns":
+                if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_TURNS:
+                    return False
+                self._turns = max(self._turns or 0, value)
             else:
                 return False
             self._c.notify_all()
@@ -59,6 +65,12 @@ class RunControl:
         with self._c:
             return {"step": self.step, "paused": self.paused, "stopped": self.stopped,
                     "waiting": dict(self.waiting) if self.waiting else None, "hints_queued": len(self._hints)}
+
+    def take_turns(self) -> int | None:
+        """A larger turn budget given while the run goes on (None = unchanged). The agent applies it before a turn."""
+        with self._c:
+            n, self._turns = self._turns, None
+            return n
 
     def take_hints(self) -> list[str]:
         with self._c:

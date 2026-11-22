@@ -720,6 +720,50 @@ try {
   check("a finished run's page holds still at the bottom; the answer form's warning names its value and goes when the box changes",
     still <= 1 && gWarn && gGone && gSaved, JSON.stringify({still, gWarn, gGone, gSaved}));
 
+  // run settings, start to finish (2026-11-22: "settings such as turns and the model should be set at the start; a replay should
+  // re-run"): chosen in the bar before a run, sent with it, shown (not editable) while it runs, where only +20 turns is offered,
+  // then "This run used ..." with Run again / Change settings; a replay shows its own settings under its challenge's title
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  const rsTask = await js("(() => { const t = TASKS.filter(x => !x.custom)[0]; run = null; rsEditing = false; pick(t); return t.name; })()"); await sleep(200);
+  const rsBefore = await js("!document.querySelector('#runSet').hidden && !document.querySelector('#rsEdit').hidden && document.querySelector('#rsInfo').hidden && !document.querySelector('#insp #modelSel') && !!document.querySelector('#runSet #turnSeg')");
+  await js("document.querySelector('#ablSeg button[data-name=\"B1\"]').click(); document.querySelector('#turnSeg button[data-turns=\"40\"]').click()");
+  await js("window.__rb = []; window.__F7 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/run') window.__rb.push(JSON.parse(o.body)); return window.__F7(u, o); }");
+  await js("localStorage.setItem('fp.stepmode', '1'); (() => { const c = document.querySelector('#ctlStep'); if (c && !c.checked){ c.checked = true; c.dispatchEvent(new Event('change', {bubbles: true})); } })()");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  const rsSent = await until("window.__rb.length === 1 && window.__rb[0].ablate === 'B1' && window.__rb[0].turns === 40 && !!window.__rb[0].model", 5000);
+  const rsLive = await until("busy && !document.querySelector('#rsInfo').hidden && document.querySelector('#rsEdit').hidden && /This run: .* · B1 · 40 turns/.test(document.querySelector('#rsNow').textContent) && !document.querySelector('#rsMore').hidden && document.querySelector('#rsAgain').hidden", 8000);
+  await until("!document.querySelector('#awaitCard').hidden", 15000);
+  // twice while the step waits: 40 -> 60 -> 80 (past the four choices); shown at once, taken before the next turn
+  await js("document.querySelector('#rsMore').click()");
+  const rsMore1 = await until("run && run.maxTurns === 60 && /60 turns/.test(document.querySelector('#rsNow').textContent)", 8000);
+  await js("document.querySelector('#rsMore').click()");
+  const rsMore = rsMore1 && await until("run && run.maxTurns === 80 && /80 turns/.test(document.querySelector('#rsNow').textContent)", 8000);
+  // step mode off: the waiting command runs and its card goes (its Run button, clicked afterwards, used to get a 409)
+  await js("(() => { const c = document.querySelector('#ctlStep'); c.checked = false; c.dispatchEvent(new Event('change', {bubbles: true})); })()");
+  const rsCard = await until("document.querySelector('#awaitCard').hidden", 3000);
+  await until("!busy && run && run.done", 30000);
+  const rsDone = await until("/This run used: .* · B1 · 80 turns/.test(document.querySelector('#rsNow').textContent) && !document.querySelector('#rsAgain').hidden && !document.querySelector('#rsChange').hidden && document.querySelector('#rsMore').hidden", 5000);
+  const rsRid = await js("here().run || (window.__rb.length && null)");
+  await js("localStorage.removeItem('fp.stepmode')");
+  // its replay: the challenge's title, its own settings
+  await js("document.querySelector('#ablSeg button[data-name=\"B3\"]').click(); document.querySelector('#turnSeg button[data-turns=\"100\"]').click()");
+  if (rsRid) await js(`openReplay(${JSON.stringify(rsRid)})`);
+  const rsReplay = !!rsRid && await until(`!busy && run && run.done && document.querySelector('#sgTitle').textContent === (taskByName(${JSON.stringify(rsTask)}).title || ${JSON.stringify(rsTask)}) && /This run used: .* · B1 · 80 turns/.test(document.querySelector('#rsNow').textContent)`, 10000);
+  await js("document.querySelector('#rsChange').click()");
+  const rsChange = await until("!document.querySelector('#rsEdit').hidden && ablation === 'B1' && turnBudget === 80 && document.querySelector('#turnSeg').classList.contains('none') && /80 turns/.test(document.querySelector('#turnDesc').textContent)", 3000);
+  await js("rsEditing = false; syncRunSet()");
+  await js("document.querySelector('#rsAgain').click()");
+  const rsAgain = await until("window.__rb.length === 2 && window.__rb[1].ablate === 'B1' && window.__rb[1].turns === 80 && window.__rb[1].task === " + JSON.stringify(rsTask), 8000)
+    && await until("busy || (run && run.done)", 8000) && await until("!busy && run && run.done && run.maxTurns === 80", 30000);
+  // and back on a choice: the segment shows it again
+  await js("document.querySelector('#rsChange').click(); document.querySelector('#turnSeg button[data-turns=\"40\"]').click()");
+  const rsSeg = await until("turnBudget === 40 && !document.querySelector('#turnSeg').classList.contains('none')", 3000);
+  await js("rsEditing = false; syncRunSet()");
+  await js("window.fetch = window.__F7");
+  check("run settings: set before a run and sent with it; shown while it runs (+20 turns only); a finished run and its replay show what they used and run again with it",
+    rsBefore && rsSent && rsLive && rsMore && rsCard && rsDone && rsReplay && rsChange && rsAgain && rsSeg, JSON.stringify({rsBefore, rsSent, rsLive, rsMore1, rsMore, rsCard, rsDone, rsRid, rsReplay, rsChange, rsAgain, rsSeg}));
+
   // turns per run: the drawer offers 20/40/60/100 (40 by default, remembered); a run uses the choice; a run that used all
   // its turns offers to run again with more (2026-11-21: "why only 20 rounds?")
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);

@@ -177,7 +177,8 @@
   select.pillsel{appearance:none;-webkit-appearance:none;padding:10px 26px 10px 0;font:600 15px var(--mono);cursor:pointer;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23141414' stroke-width='1.6' fill='none'/%3E%3C/svg%3E") no-repeat right 4px center}
   .flabel{display:block;margin:30px 0 0;font:600 15px var(--font)}
   .segc{position:relative;display:inline-grid;grid-auto-flow:column;grid-auto-columns:1fr;border:1.5px solid var(--ink);user-select:none;background:var(--white)}
-  .segc .thumb{position:absolute;top:0;bottom:0;left:0;width:calc(100% / var(--n,4));background:var(--ink);transform:translateX(calc(var(--i,0) * 100%));transition:transform var(--t2) var(--ease)}
+  .segc .thumb{position:absolute;top:0;bottom:0;left:0;width:calc(100% / var(--n,4));background:var(--ink);transform:translateX(calc(var(--i,0) * 100%));transition:transform var(--t2) var(--ease),opacity var(--t2) var(--ease)}
+  .segc.none .thumb{opacity:0}
   .segc button{position:relative;z-index:1;border:0;background:transparent;padding:10px 18px;font:600 15px var(--font);cursor:pointer;white-space:nowrap;display:inline-flex;gap:7px;align-items:center;justify-content:center;transition:color var(--t1) ease}
   .segc button+button{border-left:1px solid var(--rule)}
   .segc button.on{color:#fff}
@@ -565,6 +566,13 @@
   .row .src{margin-left:8px;font:700 15px var(--mono);color:var(--blue);text-decoration:none;padding:2px 6px} .row .src:hover{background:var(--blue-t)}
   /* watching a run: step mode, pause, hints; a waiting command can be edited, run or skipped */
   .runctl{display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px;margin:16px 0 0;padding:12px 14px;border:1.5px dashed var(--ink);background:var(--white)}
+  .runset{margin:18px 0 0;padding:14px 16px;border:1.5px solid var(--ink);background:var(--white)}
+  .runset .rs-edit{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 22px}
+  .runset .rs-f{display:flex;flex-direction:column;gap:6px} .runset .rs-l{font:600 15px var(--font);color:var(--ink2)}
+  .runset .pillsel{min-width:180px} .runset .segc button{padding:8px 16px}
+  .runset .rs-d{flex:1 1 100%;margin:2px 0 0}
+  .runset .rs-info{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px} .runset .rs-now{font:500 15px var(--mono);color:var(--ink)}
+  .runset .segc[aria-disabled="true"],.runset select:disabled{opacity:.5;pointer-events:none}
   .runctl .hintbox{display:flex;flex:1 1 320px;min-width:240px;border:1.5px solid var(--rule);transition:border-color var(--t1)} .runctl .hintbox:focus-within{border-color:var(--ink)}
   .runctl input{flex:1;min-width:0;border:0;padding:8px 12px;font:15px var(--font);background:transparent;outline:none}
   .await{margin:14px 0 0;border:1.5px solid var(--ink);background:var(--yellow-t);box-shadow:5px 5px 0 var(--ink);padding:14px 16px;animation:awaitIn .4s var(--spring)}
@@ -900,6 +908,21 @@
           <button class="ibtn" id="inspBtn" aria-label="Agent flow" data-tip="Agent flow · call chain · solve.py">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg></button>
         </div>
+        <!-- Run settings: chosen before a run; a run on screen (running, finished or replayed) shows what it used -->
+        <div class="runset" id="runSet" hidden>
+          <div class="rs-edit" id="rsEdit">
+            <label class="rs-f"><span class="rs-l">Model</span><select id="modelSel" class="pillsel" title="Model for this run"></select></label>
+            <div class="rs-f"><span class="rs-l">Tier</span><div class="segc mono" id="ablSeg" style="--n:4"><span class="thumb"></span></div></div>
+            <div class="rs-f"><span class="rs-l">Turns</span><div class="segc mono" id="turnSeg" style="--n:4" aria-label="Turn budget"><span class="thumb"></span></div></div>
+            <p class="hint rs-d"><span id="ablDesc">—</span><br><span id="turnDesc">—</span></p>
+          </div>
+          <div class="rs-info" id="rsInfo" hidden>
+            <span class="rs-now" id="rsNow"></span><span class="grow"></span>
+            <button class="btn" id="rsMore" type="button" hidden data-tip="Give this run 20 more turns; it uses them if it needs them">+20 turns</button>
+            <button class="btn primary" id="rsAgain" type="button" hidden data-tip="Run this challenge again with the same model, tier and turns">Run again<span class="arr">→</span></button>
+            <button class="btn plain" id="rsChange" type="button" hidden>Change settings</button>
+          </div>
+        </div>
         <div class="runctl" id="runCtl" hidden>
           <label class="chip toggle" data-tip="Each command waits for your OK before it runs"><input type="checkbox" id="ctlStep"><span class="tick"></span>Step mode</label>
           <button class="btn" id="ctlPause">Pause</button>
@@ -1090,12 +1113,6 @@
 <!-- ======================= Details drawer ======================= -->
 <aside id="insp" aria-label="Agent flow">
   <div class="ihd"><h2>Agent flow</h2><span class="grow"></span><button class="btn plain" id="inspClose">Done</button></div>
-  <div class="isec"><h3>Model and tier</h3>
-    <select id="modelSel" class="pillsel" title="Model for new runs and chats"></select>
-    <div class="segc mono" id="ablSeg" style="--n:4;width:100%;margin-top:14px"><span class="thumb"></span></div>
-    <p class="hint" id="ablDesc" style="margin-top:10px">—</p>
-    <div class="segc mono" id="turnSeg" style="--n:4;width:100%;margin-top:14px" aria-label="Turn budget"><span class="thumb"></span></div>
-    <p class="hint" id="turnDesc" style="margin-top:10px">—</p></div>
   <div class="isec"><h3>Call chain <span class="grow"></span><span class="stat" id="cTurn">turns <b>0</b></span><span class="stat" id="cTool">tools <b>0</b></span></h3>
     <div id="chainTrack"></div>
     <div style="display:flex;gap:6px;margin-top:8px"><button class="btn plain" id="expandAll">Expand all</button><button class="btn plain" id="collapseAll">Collapse</button></div></div>
@@ -1150,7 +1167,11 @@ let askTask = null, askChosen = false;          // Ask's own challenge (see setA
    bubbles, off screen, and is put back when its conversation is opened again; its row in Threads blinks until it is done. */
 let curKey = 'new-0', draftN = 0;
 const LIVE = new Map();
-let turnBudget = 40, turnChoices = [20, 40, 60, 100];   // turns per run on Solve (the server sends the choices and the default)
+let turnBudget = 40, turnChoices = [20, 40, 60, 100], turnMax = 200;   // turns per run on Solve (the server sends the choices and the default)
+/* Solve's run settings (model, tier, turns) are chosen before a run and travel with it; a run on screen (running, finished,
+   replayed) shows what it used instead, with "Run again" and "Change settings" (rsEditing) */
+let runModel = '', rsEditing = false;
+const RUN_MODEL_KEY = 'fp.run.model', TIER_KEY = 'fp.tier';
 const SCRIPT_NOTE_DEFAULT = $('#scriptNote').innerHTML;
 const CHAT_KEY = 'fp.chat.sid';
 
@@ -1494,7 +1515,7 @@ function railMark(p, st){ const b = document.querySelector(`.navbtn[data-page="$
   if (st === 'ok' || st === 'bad'){ if (p !== page){ b.classList.add('note'); b.classList.toggle('note-bad', st === 'bad'); } }
   const w = !!document.querySelector('.navbtn.working'), br = $('#brand'); if (br.classList.contains('working') === w) return;
   br.classList.toggle('working', w); logoTurn.kick(); }
-function setSeg(seg, idx){ seg.style.setProperty('--i', Math.max(0, idx)); [...seg.querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', i === idx)); }
+function setSeg(seg, idx){ seg.style.setProperty('--i', Math.max(0, idx)); seg.classList.toggle('none', idx < 0); [...seg.querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', i === idx)); }
 function showPage(p){
   qs('.page').forEach(s => { const on = s.dataset.page === p; s.inert = !on; s.classList.toggle('on', on); });
   qs('.navbtn').forEach(b => { const on = b.dataset.page === p; b.classList.toggle('on', on); on ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'); if (on) b.classList.remove('note', 'note-bad'); });
@@ -1656,8 +1677,9 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 const ABL_NOTE = {B0: ['Bare model', 'no truncation, shell and python only, minimal prompt'], B1: ['+ trimming', 'long observations keep head, tail and flag-like lines, so the prefix stays cacheable'],
                   B2: ['+ structured tools', 'adds file, strings and decode actions'], B3: ['+ full rules', 'adds the solving and submission rules (default)']};
 let ablList = [];
-function setAblation(name){
-  ablation = name;
+function setAblation(name, keep = false){
+  if (!ABL_NOTE[name] && !(ablList || []).some(a => a.name === name)) return;   // only a tier the server offers
+  ablation = name; if (keep) try { localStorage.setItem(TIER_KEY, name); } catch(_){}
   setSeg($('#ablSeg'), [...$('#ablSeg').querySelectorAll('button')].findIndex(x => x.dataset.name === name));
   const [tag, why] = ABL_NOTE[name] || ['', ''];
   $('#ablDesc').innerHTML = `<b>${esc(name)}</b> ${esc(tag)} — ${esc(why)}`;
@@ -1667,15 +1689,17 @@ function renderAblations(list){
   seg.innerHTML = '<span class="thumb"></span>' + list.map(a => `<button data-name="${esc(a.name)}">${esc(a.name)}</button>`).join('');
   setAblation(ablation);
 }
-$('#ablSeg').addEventListener('click', e => { const b = e.target.closest('button[data-name]'); if (b) setAblation(b.dataset.name); });
+$('#ablSeg').addEventListener('click', e => { const b = e.target.closest('button[data-name]'); if (b) setAblation(b.dataset.name, true); });
 /* turns per run: 20 is the evaluation's budget (every batch in the README uses it); hard imported challenges need more.
    Output tokens and time per run grow with the turns (1,600 tokens and 75 s a turn). Remembered in this browser. */
 const TURN_KEY = 'fp.turns';
+/* any multiple of 20 up to turnMax: a run given "+20 turns" can end past the four choices, and "Run again" keeps what it had */
 function setTurnBudget(n, keep = true){
-  if (!turnChoices.includes(n)) return;
-  turnBudget = n; if (keep) try { localStorage.setItem(TURN_KEY, String(n)); } catch(_){}
+  if (!(Number.isInteger(n) && n >= 20 && n <= turnMax && n % 20 === 0)) return;
+  const choice = turnChoices.includes(n);
+  turnBudget = n; if (keep && choice) try { localStorage.setItem(TURN_KEY, String(n)); } catch(_){}
   setSeg($('#turnSeg'), turnChoices.indexOf(n));
-  $('#turnDesc').innerHTML = `<b>${n} turns</b> per run — ${n === 20 ? "the evaluation's budget" : 'more room for hard challenges'}; up to ${(1600 * n).toLocaleString('en-US')} output tokens and ${Math.round(75 * n / 60)} min`;
+  $('#turnDesc').innerHTML = `<b>${n} turns</b> per run — ${!choice ? 'what the run on screen ended with' : n === 20 ? "the evaluation's budget" : 'more room for hard challenges'}; up to ${(1600 * n).toLocaleString('en-US')} output tokens and ${Math.round(75 * n / 60)} min`;
 }
 function renderTurns(choices, def){
   if (Array.isArray(choices) && choices.length) turnChoices = choices.map(Number);
@@ -1690,27 +1714,24 @@ async function loadModels(){
     const m = await getJSON('/api/models', 'models'), s = $('#modelSel');
     PROVIDERS = (m.providers || []).filter(x => x && x.id); MODELS = PROVIDERS.map(x => x.id);
     const opts = MODELS.includes(m.current) ? MODELS : [m.current, ...MODELS];
-    s.innerHTML = opts.map(n => `<option value="${esc(n)}"${n === m.current ? ' selected' : ''}>${esc(prettyModel(n))}</option>`).join('');
-    s.onchange = async () => {
-      const d = await (await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({model: s.value})})).json();
-      if (d.error){ setStatus('Error', 'bad', d.error); return; }
-      $('#rcModel').textContent = d.model; toast(prettyModel(d.model) + ' answers new runs'); loadTasks();
-    };
+    let saved = ''; try { saved = localStorage.getItem(RUN_MODEL_KEY) || ''; } catch(_){}
+    runModel = opts.includes(saved) ? saved : m.current;
+    s.innerHTML = opts.map(n => `<option value="${esc(n)}"${n === runModel ? ' selected' : ''}>${esc(prettyModel(n))}</option>`).join('');
+    s.onchange = () => { runModel = s.value; try { localStorage.setItem(RUN_MODEL_KEY, runModel); } catch(_){} runLabel(); };
+    runLabel();
   } catch(e){ /* listing models is optional */ }
 }
 let TASKS = [], MINE = [];
 async function loadTasks(){
   const d = await getJSON('/api/tasks', 'tasks');
-  if ($('#modelSel').options.length === 0) $('#modelSel').innerHTML = `<option value="${esc(d.model)}" selected>${esc(d.model)}</option>`;
-  $('#rcModel').textContent = d.model; ablation = d.ablation || 'B3';
-  renderAblations(d.ablations || []); renderTurns(d.turn_choices, d.turns);
+  if ($('#modelSel').options.length === 0){ $('#modelSel').innerHTML = `<option value="${esc(d.model)}" selected>${esc(d.model)}</option>`; runModel = runModel || d.model; }
+  $('#rcModel').textContent = d.model;
+  { let t = ''; try { t = localStorage.getItem(TIER_KEY) || ''; } catch(_){} ablation = (d.ablations || []).some(a => a.name === t) ? t : (ablation || d.ablation || 'B3'); }
+  renderAblations(d.ablations || []); if (Number(d.turn_max) >= 100) turnMax = Number(d.turn_max); renderTurns(d.turn_choices, d.turns);
   TASKS = d.tasks || []; MINE = d.custom_tasks || [];
   if (d.stale && !staleTold){ staleTold = true; setTimeout(() => toast('The server code changed since it started. Restart it (./start.sh) to use the newest features', 'bad'), 1200); }
   // with the offline mock model the local Run is only a demo; the real agent is Qwen on TACC
-  const mock = /^mock/i.test(d.model || ''), rb = $('#run'), tb = $('#runTacc'); LOCALMODEL = d.model || 'mock';
-  rb.classList.toggle('primary', !mock); tb.classList.toggle('primary', mock);
-  rb.lastChild.previousSibling && (rb.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = mock ? 'Demo run' : 'Run'; }));
-  rb.dataset.tip = mock ? 'Offline mock model: a demo of the pipeline, not a real agent' : 'Run with ' + prettyModel(d.model);
+  LOCALMODEL = d.model || 'mock'; runLabel();
   renderTaskList();
   if (sel){ const t = taskByName(sel); if (t) selTask = t; else pick(null); }
   showMount(); renderArms(); syncAskChip();
@@ -1812,7 +1833,7 @@ function pick(t){
   $('#run').hidden = !t; $('#runTacc').hidden = !t;
   ['#run', '#sweep', '#probeBtn'].forEach(q => $(q).disabled = !t || busy);
   if (!busy && !(run && run.turns.length)) renderFlow();
-  showMount(); loadMemory(t ? t.name : ''); viewMode(); labPlan();
+  showMount(); loadMemory(t ? t.name : ''); viewMode(); labPlan(); syncRunSet();
 }
 function showMount(){
   const t = askTask;
@@ -2156,7 +2177,8 @@ $('#flow').addEventListener('toggle', e => {
 function onEvent(ev){
   if (!run) run = fresh();
   switch (ev.type){
-    case 'meta': if (ev.budget && ev.budget.max_turns) run.maxTurns = ev.budget.max_turns; break;
+    case 'meta': run.meta = ev; if (ev.budget && ev.budget.max_turns) run.maxTurns = ev.budget.max_turns; if (!R.bulk) syncRunSet(); break;
+    case 'budget': run.maxTurns = Math.max(run.maxTurns || 0, ev.max_turns || 0); setTurns(run.turns.length, run.maxTurns); if (!R.bulk) syncRunSet(); break;
     case 'model_partial': if (!R.bulk && !run.byKey.has('t' + ev.turn)){ renderLive(ev.turn, ev.text || ''); run.liveTurn = ev.turn; } break;
     case 'tacc': { $('#runCtl').classList.add('tacc'); const msg = taccStage(ev); run.taccMsg = msg; run.taccStarted = ev.stage === 'running'; run.stageAt = Date.now();
       setStatus(ev.stage === 'hold' ? 'On hold' : 'Running', ev.stage === 'hold' ? 'warn' : '', `${sel || ''} · ${msg}`);
@@ -2279,7 +2301,7 @@ function showDone(ev){
         $('.goldin').innerHTML = '<span class="hint">Answer removed. Runs are no longer judged against it.</span>'; $('#addGold').remove(); }
       catch(e){ toast(e.message); } };
   };
-  if ($('#changeModel')) $('#changeModel').onclick = () => { toggleInsp(true); setTimeout(() => { const m = $('#modelSel'); if (m){ m.focus(); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } }, 260); };
+  if ($('#changeModel')) $('#changeModel').onclick = () => { adoptRunSettings(); rsEditing = true; syncRunSet(); const m = $('#modelSel'); if (m){ m.scrollIntoView({block: 'center', behavior: 'smooth'}); m.focus({preventScroll: true}); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } };
   const rb = $('#run'); if (tone === 'ok' && !reduced()){ rb.classList.add('done'); setTimeout(() => rb.classList.remove('done'), 1400); }
   if (!R.bulk && page === 'solve' && !reduced()) requestAnimationFrame(() => $('#verdict').scrollIntoView({behavior: 'smooth', block: 'nearest'}));
   $('#mState').textContent = 'final'; $('#mState').className = 'badge ' + (tone === 'ok' ? 'ok' : tone);
@@ -2369,7 +2391,7 @@ function runOne(task, ablate, onEvent, onReset, backend, hint){
   return new Promise(async (resolve, reject) => {
     let r;
     const step = backend !== 'tacc' && $('#ctlStep').checked;
-    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step, turns: turnBudget, ...(hint ? {hint} : {})})}); } catch(e){ return reject(e); }
+    try { r = await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task, ablate, backend: backend || '', step, turns: turnBudget, ...(runModel && backend !== 'tacc' ? {model: runModel} : {}), ...(hint ? {hint} : {})})}); } catch(e){ return reject(e); }
     if (!r.ok){ let m = 'HTTP ' + r.status; try { m = (await r.json()).error || m; } catch(_){} return reject(new Error('Submission failed: ' + m)); }
     const {run_id} = await r.json(); if (!run_id) return reject(new Error('The server returned no run id'));
     if (onEvent === onEventRef) keepHere({sel: task, run: run_id});            // a reload picks this run up again
@@ -2438,6 +2460,7 @@ async function ctl(op, value, turn){ if (!ctlRid) return {ok: false};
   try { const r = await fetch('/api/run/control', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: ctlRid, op, value, turn})}); return await r.json(); }
   catch(_){ return {ok: false}; } }
 $('#ctlStep').addEventListener('change', e => { try { localStorage.setItem(STEP_KEY, e.target.checked ? '1' : '0'); } catch(_){} ctl('step', e.target.checked);
+  if (!e.target.checked && !$('#ctlPause').dataset.on) awaitHide();   // step mode off lets the waiting command run: its card goes
   toast(e.target.checked ? 'Step mode: each command waits for your OK' : 'Step mode off'); });
 $('#ctlPause').onclick = async () => { const b = $('#ctlPause'), on = !b.dataset.on; b.dataset.on = on ? '1' : ''; b.textContent = on ? 'Resume' : 'Pause'; await ctl(on ? 'pause' : 'resume');
   if (on) toast('Pausing before the next command'); };
@@ -2467,8 +2490,8 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-expl
   const msg = `Explain step ${t.n} of my run on ${sel || 'this challenge'}. The agent did a ${a.action} action:\n${String(what).slice(0, 600)}` + (out ? `\nIt got this output:\n${out}` : '') + '\nWhy was this a sensible step, and what does the output tell us?';
   chatRestored = true; go('chat'); $('#newChat').click(); const box = $('#chatInput'); box.value = msg; box.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); });
 let runPage = 'solve';
-function lockRun(on){ busy = on; if (on) runPage = page; railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); }
-function beginRun(label){ run = fresh(); openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); }
+function lockRun(on){ busy = on; if (on){ runPage = page; rsEditing = false; } railMark(runPage, on ? 'working' : (runPage === 'solve' && /\bbad\b/.test($('#island').className) ? 'bad' : 'ok')); ['#run'].forEach(q => { $(q).disabled = on || !sel; $(q).classList.toggle('busy', on); }); $('#probeBtn').disabled = on || !sel; if (on) hair(0, 'run'); syncRunSet(); }
+function beginRun(label){ run = fresh(); run.tacc = lastBackend === 'tacc'; openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); syncRunSet(); }
 function clearRunParam(){ if (new URLSearchParams(location.search).has('run')) history.replaceState(null, '', location.pathname + '#/' + page); }
 let lastBackend = 'local';
 async function runLocal(hint){
@@ -2559,8 +2582,11 @@ function startReplay(rid, live = false){
   const end = () => { if (live){ ctlHide(); lockRun(false); } };
   recoverRun(rid, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, live ? 45 * 60000 : 20000)
     .then(sum => { run.done = sum; R.bulk = !live; try { showDone(sum); } finally { R.bulk = false; } openSteps.add('submit'); renderFlow();
-      const t = taskByName(String(sum.run_id || '').replace(/-s\d+$/, ''));
-      if (!live){ $('#sgId').textContent = 'replay · ' + rid; decrypt($('#sgTitle'), t ? (t.title || t.name) : (sum.run_id || rid)); } end(); })
+      // the replay's own challenge (from its trace; run ids such as "e9fe7801d4f3" are not challenge names)
+      const t = taskByName((run.meta && run.meta.task) || String(sum.run_id || '').replace(/-s\d+$/, ''));
+      if (!live && t && sel !== t.name){ pick(t); keepHere({run: rid}); }
+      if (!live){ $('#sgId').textContent = 'replay · ' + rid; decrypt($('#sgTitle'), t ? (t.title || t.name) : ((run.meta && run.meta.task) || sum.run_id || rid)); }
+      rsEditing = false; syncRunSet(); end(); })
     .catch(() => { setStatus('Run not found', 'bad', rid); $('#verdict').innerHTML = ''; run = null; renderFlow(); end(); });
 }
 /* after a reload: back to the challenge that was open; a run still going on the server is followed again, a finished one is shown */
@@ -3803,6 +3829,47 @@ $('#chatTools').onchange = showMount;
 function newChat(t = selTask, chosen = false){
   curKey = 'new-' + (++draftN); chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); setAskTask(t, chosen);
   $('#chatLog').innerHTML = ''; started(false); syncBusy(); loadThreads(); $('#chatInput').focus(); return true; }
+/* ---- Solve's run settings ---- */
+/* "Demo run" while the chosen model is the offline mock; with a real model, Run is the main button */
+function runLabel(){ const mock = /^mock/i.test(runModel || LOCALMODEL || ''), rb = $('#run'), tb = $('#runTacc'); if (!rb) return;
+  rb.classList.toggle('primary', !mock); tb.classList.toggle('primary', mock);
+  rb.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = mock ? 'Demo run' : 'Run'; });
+  rb.dataset.tip = mock ? 'Offline mock model: a demo of the pipeline, not a real agent' : 'Run with ' + prettyModel(runModel || LOCALMODEL); }
+/* what the run on screen used: from its trace (a replay shows its own model, tier and turns, not the ones for the next run) */
+function runSettingsOf(r){ const m = (r && r.meta) || {}, model = (m.model && (m.model.name || m.model)) || '';
+  // the trace's meta holds the tier as {name: "B1", truncate: ...}; a run's summary holds the name
+  const tier = (m.ablation && (m.ablation.name || (typeof m.ablation === 'string' ? m.ablation : ''))) || (r && r.done && r.done.ablation) || '';
+  return {model: String(model), tier: String(tier), turns: (r && r.maxTurns) || ((m.budget || {}).max_turns) || 0,
+          tacc: !!(r && (r.tacc || /tacc|qwen3\.8-27b/i.test(String(model))))}; }
+const againTask = () => { const name = (run && run.meta && run.meta.task) || sel; return name ? taskByName(name) : null; };
+function syncRunSet(){
+  const box = $('#runSet'); if (!box) return;
+  box.hidden = !(sel || run);
+  const shown = !!(run && (busy || run.done || (run.turns && run.turns.length) || run.meta)), info = shown && !rsEditing;
+  $('#rsEdit').hidden = info; $('#rsInfo').hidden = !info;
+  if (!info) return;
+  const st = runSettingsOf(run);
+  $('#rsNow').textContent = (busy ? 'This run: ' : 'This run used: ') + [st.model ? prettyModel(st.model) + (st.tacc ? ' on TACC' : '') : '—', st.tier || '—', st.turns ? st.turns + ' turns' : '—'].join(' · ')
+    + (busy && st.tacc ? ' (fixed when it was sent to TACC)' : '');
+  $('#rsMore').hidden = !(busy && !st.tacc && ctlRid && st.turns < turnMax);
+  $('#rsAgain').hidden = busy || !againTask(); $('#rsChange').hidden = busy;
+}
+/* set the editors to the settings of the run on screen ("Run again" and "Change settings" start from them) */
+function adoptRunSettings(){ const st = runSettingsOf(run);
+  if (st.tier) setAblation(st.tier);
+  if (st.turns) setTurnBudget(st.turns, false);
+  if (st.model && !st.tacc){ const s = $('#modelSel'); if ([...s.options].some(o => o.value === st.model)){ s.value = st.model; runModel = st.model; runLabel(); } }
+  return st; }
+/* +20 turns: the run takes them before its next turn (even when it is waiting on its last one); shown at once */
+$('#rsMore').onclick = async () => { if (!run) return; const want = Math.min(turnMax, (run.maxTurns || turnBudget) + 20), r0 = run;
+  const d = await ctl('turns', want);
+  if (!(d && d.ok)){ toast('Could not add turns: ' + ((d && d.error) || 'the run has ended')); return; }
+  if (run === r0 && want > (run.maxTurns || 0)){ run.maxTurns = want; setTurns(run.turns.length, run.maxTurns); syncRunSet(); }
+  toast(`This run may now take ${want} turns`); };
+$('#rsChange').onclick = () => { adoptRunSettings(); rsEditing = true; syncRunSet(); $('#modelSel').focus(); };
+$('#rsAgain').onclick = () => { if (busy) return; const t = againTask(); if (!t) return; const st = adoptRunSettings();
+  if (sel !== t.name) pick(t);
+  return st.tacc ? $('#runTacc').__go('') : runLocal(''); };
 /* the conversation on screen has a reply coming in: new messages queue under it, and Send says so */
 function syncBusy(){ chatBusy = LIVE.has(curKey); if (sendPix) sendPix.busy(chatBusy); pixLabel($('#sendChat'), chatBusy ? 'Queue ↵' : 'Send ↵'); }
 $('#newChat').onclick = () => newChat();

@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -89,6 +90,30 @@ class TestFinishAndHints(unittest.TestCase):
         self.assertEqual(len(dones), 1)
         again = self.post("/api/run/control", {"id": rid, "op": "finish"})
         self.assertTrue(again.get("already"))
+
+    def test_a_run_takes_its_own_model_and_more_turns_while_it_runs(self):
+        """2026-11-22: model, tier and turns are set before a run (Solve's settings bar) and travel with it; while it runs,
+        only more turns can be given ("+20 turns")."""
+        r = self.post("/api/run", {"task": "demo-001", "step": True, "turns": 20, "model": "mock"})
+        rid = r["run_id"]
+        self.assertEqual((r["model"], r["turns"]), ("mock", 20))
+        ctl = S.STATE[rid]["control"]
+        self.assertTrue(self.until(lambda: ctl.waiting), "the run waits at its first command (step mode)")
+        self.assertTrue(self.post("/api/run/control", {"id": rid, "op": "turns", "value": 40})["ok"])
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.post("/api/run/control", {"id": rid, "op": "turns", "value": "lots"})
+        ctx.exception.close()
+        self.post("/api/run/control", {"id": rid, "op": "step", "value": False})
+        self.post("/api/run/control", {"id": rid, "op": "approve", "turn": ctl.waiting["turn"]} if ctl.waiting else {"id": rid, "op": "resume"})
+        self.assertIsNotNone(self.done_of(rid))
+        evs = self.get(f"/api/result?id={rid}")["events"]
+        meta = next(e for e in evs if e.get("type") == "meta")
+        self.assertEqual((meta["model"]["name"], meta["budget"]["max_turns"]), ("mock", 20))
+        self.assertEqual([(e["max_turns"], e["was"]) for e in evs if e.get("type") == "budget"], [(40, 20)])
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self.post("/api/run", {"task": "demo-001", "model": "bad model; rm"})
+        self.assertEqual(ctx.exception.code, 400)
+        ctx.exception.close()
 
     def test_a_hint_given_before_the_run_reaches_its_first_turn(self):
         rid = self.post("/api/run", {"task": "demo-001", "hint": "  try   base64  "})["run_id"]

@@ -132,7 +132,9 @@ class TestWebAPI(unittest.TestCase):
         r = self.post("/api/run", {"task": self.task_name(), "ablate": "B3", "turns": None})
         self.assertEqual(r["turns"], 40, "no choice: the page's default")
         self.assertEqual(next(ev for ev in self.events_of(r["run_id"]) if ev.get("type") == "meta")["budget"]["max_turns"], 40)
-        for bad in (7, "20", True, 0, 1000):
+        r = self.post("/api/run", {"task": self.task_name(), "ablate": "B3", "turns": 80})
+        self.assertEqual(r["turns"], 80, '"Run again" after "+20 turns" re-runs with the turns the run ended with')
+        for bad in (7, "20", True, 0, 30, 210, 1000):
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 self.post("/api/run", {"task": self.task_name(), "ablate": "B3", "turns": bad})
             self.assertEqual(ctx.exception.code, 400, bad)

@@ -85,6 +85,12 @@ MAX_CONCURRENT_RUNS = 3          # 单进程同时跑几个 agent；防本地网
 # 网页单题的轮数上限（页面上可选）。20 是评测口径（Lab 实验、批跑都用它）；导入的难题 20 轮不够，单题默认 40。
 TURN_CHOICES = (20, 40, 60, 100)
 WEB_TURNS = 40
+# "+20 turns" during a run can take it past the choices (80, 120 ...); "Run again" re-runs with what the run ended with
+TURN_STEP, TURN_MAX = 20, 200
+
+
+def _turns_ok(n) -> bool:
+    return isinstance(n, int) and not isinstance(n, bool) and TURN_STEP <= n <= TURN_MAX and n % TURN_STEP == 0
 MAX_STATE_ENTRIES = 80           # STATE 只增不减会吃内存，完成后按时间淘汰
 RUNNING = 0
 
@@ -487,7 +493,7 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
         task = resolve_task(task_name)
         if task is None:
             raise ValueError(f"Unknown challenge {task_name}")
-        cfg = _make_cfg("web", ablate, turns=STATE[run_id].get("turns") or WEB_TURNS)
+        cfg = _make_cfg("web", ablate, model=STATE[run_id].get("model"), turns=STATE[run_id].get("turns") or WEB_TURNS)
         # 每次运行一个独立目录：以前 out_dir 固定是 runs/web，run_id 又只是
         # "题目-s0"，同一题跑第二遍会把上一遍的 trace 覆盖掉。四档连跑更糟，
         # B0→B3 只剩最后一档的痕迹，事后想核对"当时到底调了什么"就没了。
@@ -646,7 +652,7 @@ class Handler(BaseHTTPRequestHandler):
                 "model": SETTINGS["model"],
                 "ablation": SETTINGS["ablation"],
                 "ablations": [{"name": k, "desc": v.desc} for k, v in ABLATIONS.items()],
-                "turns": WEB_TURNS, "turn_choices": list(TURN_CHOICES),
+                "turns": WEB_TURNS, "turn_choices": list(TURN_CHOICES), "turn_max": TURN_MAX,
             })
         if path == "/api/models":
             return self._json(200, {"providers": provider_list(), "current": SETTINGS["model"],
@@ -879,8 +885,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": f"Unknown tier {ablate}"})
         turns = payload.get("turns")
         turns = WEB_TURNS if turns is None else turns
-        if isinstance(turns, bool) or turns not in TURN_CHOICES:
-            return self._json(400, {"error": "turns must be one of " + ", ".join(map(str, TURN_CHOICES))})
+        if not _turns_ok(turns):
+            return self._json(400, {"error": f"turns must be a multiple of {TURN_STEP} from {TURN_STEP} to {TURN_MAX}"})
+        # the run's own model (Solve's settings bar, or "Run again" with a replay's model); none = the server's setting
+        model = str(payload.get("model") or "").strip() or None
+        if model and not _MODEL_RE.match(model):
+            return self._json(400, {"error": "bad model name"})
         rid = uuid.uuid4().hex[:12]
         with LOCK:
             if RUNNING >= MAX_CONCURRENT_RUNS:
@@ -896,7 +906,7 @@ class Handler(BaseHTTPRequestHandler):
                           "control": _new_control(payload) if payload.get("backend") != "tacc" else None,
                           "finish": threading.Event() if payload.get("backend") == "tacc" else None,
                           "hint": _hint_of(payload),
-                          "turns": turns,
+                          "turns": turns, "model": model,
                           "ablate": ablate or SETTINGS["ablation"]}
         try:
             target = _tacc_worker if payload.get("backend") == "tacc" else _worker
@@ -905,7 +915,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 RUNNING = max(0, RUNNING - 1)
             raise
-        self._json(200, {"run_id": rid, "ablation": ablate or SETTINGS["ablation"], "turns": turns})
+        self._json(200, {"run_id": rid, "ablation": ablate or SETTINGS["ablation"], "turns": turns, "model": model or SETTINGS["model"]})
 
     # ---------- 运行时设置 ----------
 
