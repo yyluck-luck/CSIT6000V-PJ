@@ -130,13 +130,20 @@ def serve_progress(log: str) -> dict:
 
 
 def eta_s(step: str, in_step_s: float) -> int:
-    """Seconds still to go from step (entered in_step_s ago), using the typical step times. Never below 5 s
-    before "ready": a step that runs long has not finished just because its typical time is up."""
+    """Seconds still to go from step (entered in_step_s ago), using the typical step times. The current step counts
+    at least 5 s while it runs (one that runs long has not finished just because its typical time is up), and the
+    steps after it count in full: they have not started. (2026-11-21, job 30530: with slow shared storage the engine
+    step took five times its usual time, and the panel said "about 5 s left" with four steps still to go.)"""
     if step == "ready":
         return 0
     ids = [s[0] for s in STEPS]
     if step not in ids:
         return TYPICAL_S
     i = ids.index(step)
-    left = sum(s[3] for s in STEPS[i:]) - in_step_s
-    return int(max(5, left))
+    return int(max(5, STEPS[i][3] - in_step_s) + sum(s[3] for s in STEPS[i + 1:]))
+
+
+def slow(step: str, in_step_s: float) -> bool:
+    """The current step has run well past its usual time (twice it, plus half a minute)."""
+    typical = next((s[3] for s in STEPS if s[0] == step), None)
+    return typical is not None and step != "ready" and in_step_s > 2 * typical + 30

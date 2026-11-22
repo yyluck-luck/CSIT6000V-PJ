@@ -222,6 +222,9 @@ try {
               {id: 'warmup', label: 'Allocating memory and warming up', state: 'todo', s: 15}, {id: 'server', label: 'Opening the API', state: 'todo', s: 5},
               {id: 'ready', label: 'Ready', state: 'todo', s: 0}]}}`);
   const pStart = await until("document.querySelectorAll('#qwBody .qsteps li').length === 9 && document.querySelector('#qwBody .qsteps li.current') && /60%/.test(document.querySelector('#qwBody').textContent) && /about (1:\\d\\d|\\d+ s) left/.test(document.querySelector('#qwBody .qline').textContent) && document.querySelector('#qwBody .qlog')", 6000);
+  await js("window.__QW.progress.slow = true; window.__QW.progress.eta = 80; qwenPoll()");
+  const pSlow = await until("/slower than usual today/.test(document.querySelector('#qwBody .qline').textContent)", 4000);
+  await js("window.__QW.progress.slow = false; window.__QW.progress.eta = 70; qwenPoll()");
   const smallPanel = await js(SMALL);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
   const pClosed = await until("document.querySelector('#qwWrap').hidden", 2000);
@@ -233,8 +236,8 @@ try {
   const dlgGone = await until("document.querySelector('#dlgWrap').hidden", 3000), noPost = await js("window.__posts3.length === 0"), noPending = await js("!pendingRun");
   const declined = dlgGone && noPost && noPending;
   await js("window.fetch = window.__F3; QW = {phase: 'idle'}; qwenPoll()");
-  check("Qwen panel shows each start-up step live; a session about to end asks before a run", pIdle && pStart && pClosed && qAsked && declined && !smallPanel.length,
-    JSON.stringify({pIdle, pStart, pClosed, qAsked, dlgGone, noPost, noPending, posts: await js('window.__posts3'), dlg: await js("(() => { const w = document.querySelector('#dlgWrap'); return [w.hidden, w.className, (w.querySelector('#dlgT') || {}).textContent || '', w.querySelectorAll('.btn').length]; })()"), small: smallPanel.slice(0, 3)}));
+  check("Qwen panel shows each start-up step live (and says when it is slower than usual); a session about to end asks before a run", pIdle && pStart && pSlow && pClosed && qAsked && declined && !smallPanel.length,
+    JSON.stringify({pIdle, pStart, pSlow, pClosed, qAsked, dlgGone, noPost, noPending, posts: await js('window.__posts3'), dlg: await js("(() => { const w = document.querySelector('#dlgWrap'); return [w.hidden, w.className, (w.querySelector('#dlgT') || {}).textContent || '', w.querySelectorAll('.btn').length]; })()"), small: smallPanel.slice(0, 3)}));
   await noCJK("solve, after the Qwen panel");
 
   // 5e. pasting a link: several matches → a list to pick from; a challenge already here → offered at once; fixes are shown

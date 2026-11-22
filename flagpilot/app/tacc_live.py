@@ -413,6 +413,7 @@ def _progress_view(g: dict, phase: str) -> dict:
     elif t_node is None and phase == "starting":
         eta = None                                    # 还在排队：要等多久看集群，没法估
     return {"step": cur or ("queue" if phase == "starting" else ""), "steps": steps, "detail": g.get("detail") or {},
+            "slow": bool(cur) and tacc_log.slow(cur, now - at.get(cur, now)),
             "tail": g.get("tail") or [], "eta": eta, "typical": tacc_log.TYPICAL_S, "queue": g.get("queue") or "",
             "ahead": g.get("ahead") or 0, "elapsed": round(now - g.get("t_sub", now))}
 

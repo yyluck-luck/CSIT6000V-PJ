@@ -95,8 +95,15 @@ class TestEta(unittest.TestCase):
         left = [tacc_log.eta_s(s, 0) for s in ids]
         self.assertEqual(left, sorted(left, reverse=True))
         self.assertEqual(tacc_log.eta_s("ready", 0), 0)
-        self.assertEqual(tacc_log.eta_s("compile", 10_000), 5)
+        self.assertEqual(tacc_log.eta_s("compile", 10_000), 5 + 15 + 5, "a step that runs long keeps the later steps' time")
+        self.assertEqual(tacc_log.eta_s("engine", 285), 5 + 10 + 45 + 15 + 5)     # job 30530 said "about 5 s left" here
         self.assertEqual(tacc_log.eta_s("", 0), tacc_log.TYPICAL_S)
+
+    def test_a_step_well_past_its_usual_time_is_called_slow(self):
+        self.assertFalse(tacc_log.slow("engine", 100))
+        self.assertTrue(tacc_log.slow("engine", 285))
+        self.assertFalse(tacc_log.slow("ready", 10_000))
+        self.assertFalse(tacc_log.slow("", 10_000))
 
 
 if __name__ == "__main__":

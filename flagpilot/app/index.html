@@ -2939,7 +2939,7 @@ function renderQwen(){
   let html;
   if (ph === 'starting' || ph === 'stopping'){
     const eta = p.eta != null ? Math.max(0, p.eta - since) : null, el = (p.elapsed || 0) + since, pct = eta != null ? Math.min(99, el / Math.max(1, el + eta) * 100) : null;
-    const head = ph === 'stopping' ? 'Stopping' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B';
+    const head = (ph === 'stopping' ? 'Stopping' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B') + (p.slow && ph === 'starting' ? ' · slower than usual today' : '');
     html = `<p class="qline" aria-live="polite">${head} · ${clockS(el)} so far${eta != null ? ` · about ${clockS(eta)} left` : p.step === 'queue' ? ` · then about ${clockS(p.typical || 300)}` : ''}</p>`
       + `<div class="qbar${pct == null ? ' ind' : ''}" role="progressbar" aria-label="Start-up progress"${pct == null ? '' : ` aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"`}><i${pct == null ? '' : ` style="width:${pct.toFixed(1)}%"`}></i></div>`
       + `<ol class="qsteps">${steps}</ol>${log}<div class="actions"><button class="btn" type="button" data-qw="stop">Stop starting</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
