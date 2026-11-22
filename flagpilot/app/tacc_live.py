@@ -38,6 +38,8 @@ BOOT_MARGIN_S = 60                                # 分到节点后、作业第�
 MIN_RUN_S = 7 * 60       # 单题至少要剩这么多会话时间：上传 + 排队 + 激活约 2–3 分钟，作业开跑时 job.sh 还要 ≥ 240 s 才肯跑
 MIN_CHAT_S = 3 * 60      # 答疑一轮：上传 + 排队 + 回答
 REASON_EVERY_S = 15      # 作业等着或跑着时多久问一次 Slurm（排队原因、作业还在不在）。每次一趟 SSH，别太勤
+# 答疑一轮里，日志还在长就说明作业活着：此时再问 Slurm 只是多开一趟 10–25 s 的 SSH，和读日志抢同一条通道
+CHAT_QUIET_S = float(os.environ.get("FLAGPILOT_TACC_QUIET") or 75)
 FAST_POLL_S = 4          # 有人开着启动进度弹窗、或启动已到最后几步时，多久看一次服务日志
 SUBMIT_TRIES = 6
 SUBMIT_BACKOFF = (1, 2, 4, 6, 9)                  # × FLAGPILOT_TACC_RETRY_WAIT（默认 5 s）：5、10、20、30、45 s，约 2 分钟
@@ -875,6 +877,10 @@ def _watchdog(jid: str) -> None:
             return
         if time.time() - last >= float(os.environ.get("FLAGPILOT_TACC_ALIVE_EVERY", "60")):
             last = time.time()
+            with _L:
+                busy = bool(S["busy"])
+            if busy:
+                continue                  # 有客户端作业在跑：通道显然是通的，这一趟 ps（10–25 s）只会和读日志抢管道
             st = _job_state(jid, tries=1)
             gone = gone + 1 if st == "" else 0
             if gone >= 2:
@@ -977,16 +983,22 @@ def _cancel_then_release(jid: str) -> None:
         _release()
 
 
-def _watch(jid: str, started: bool, last: dict, emit: Callable[[str], None]) -> str:
+def _watch(jid: str, started: bool, last: dict, emit: Callable[[str], None],
+           quiet_s: float | None = None) -> str:
     """作业等着开跑或正在跑时的公共检查。返回放弃的原因；作业已经不在 Slurm 里了返回 GONE；空串 = 接着等。
 
     会话结束（到点或被断开）还在等的作业永远等不到服务，直接取消，免得它之后开跑、白占名额。
     每 REASON_EVERY_S 问一次 Slurm：还没开跑就把排队原因（变了才）告诉页面；作业从列表里消失、日志里却没有
     结束标记（被杀、节点故障、脚本中途退出）也能发现，不再干等 30 分钟。ps 没列出来不算消失；连续两次才算。
+    quiet_s：日志已经多久没有新内容。答疑传进来——作业已经在跑、日志还在长，就不问 Slurm：一趟 ps 是
+    10–25 s 的 SSH，会和读日志抢同一条通道，一轮问答因此多等二十秒（2026-11-23 实测）。排队时照问，
+    好把 Slurm 给的排队原因告诉页面。
     """
     if S["phase"] != "ready":
         _cancel(jid)
         return "the TACC session ended before the job " + ("finished" if started else "started")
+    if quiet_s is not None and started and quiet_s < CHAT_QUIET_S:
+        return ""                       # 已经在跑、日志还在长：不必问（排队时仍按原节奏问，好把原因告诉页面）
     if time.time() - last.get("t", 0) < REASON_EVERY_S:
         return ""
     last["t"] = time.time()
@@ -1007,8 +1019,14 @@ def _watch(jid: str, started: bool, last: dict, emit: Callable[[str], None]) -> 
     return ""
 
 
-def _tick() -> None:
-    time.sleep(float(os.environ.get("FLAGPILOT_TACC_TICK", "3")))
+def _tick(since: float | None = None) -> None:
+    """等到下一次读日志：间隔里扣掉上一次读本身花掉的时间。
+
+    网关慢时一次 `tcloud cat` 要 11–25 s（2026-11-23 实测），读完再固定睡 3 s 等于白加三秒，一轮问答就多等
+    三四次。since=None 保持老行为（睡满间隔），给启动循环那条路径用。
+    """
+    gap = float(os.environ.get("FLAGPILOT_TACC_TICK", "3"))
+    time.sleep(gap if since is None else max(0.0, gap - (time.time() - since)))
 
 
 def batch_name(task: str) -> str:
@@ -1240,17 +1258,21 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
             stage({"stage": "queued", "job": jid})
             stopper = state["stopper"] = _Stopper(jid, cancelled)   # 撤回一到就取消，不等下面可能卡住的读
             seen, running, t_end, last, L, gone_seen = {"delta": 0, "ev": 0}, False, time.time() + 15 * 60, {}, "", False
-            lost = False
+            lost, t_cycle, t_change = False, 0.0, time.time()
             while time.time() < t_end:
-                _tick()
+                _tick(t_cycle)                 # 第一次读不睡；之后补足间隔，读本身花掉的时间算在里面
+                t_cycle = time.time()
                 if cancelled():
                     stopper.fire()
                     return recalled
-                w = _watch(jid, running, last, lambda why: stage({"stage": "queued", "job": jid, "reason": why}))
+                w = _watch(jid, running, last, lambda why: stage({"stage": "queued", "job": jid, "reason": why}),
+                           quiet_s=time.time() - t_change)
                 if w and w != GONE:
                     return {"error": w, "answer": ""}
                 got = _sdk("cat", f"slurm_log/flagpilot-client-{jid}.log")
                 if tacc_log.is_log(got) or "[fp] job=" in got:
+                    if got != L:
+                        t_change = time.time()     # 日志还在长：作业活着，这一轮不必再去问 Slurm
                     L = got
                 if not running and "[fp] job=" in L:
                     running = True
@@ -1278,6 +1300,9 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
                     if tacc_log.PAYLOAD_MISSING in L and upload == 1:
                         if stopper.close():        # 撤回恰好这时到
                             return recalled
+                        # 这个作业还占着名额：不取消就重交，新作业会排在自己后面（2026-11-23 01:31，30869 因此
+                        # 等了十几分钟）。取消放到线程里，别让重交也卡在它后面。
+                        threading.Thread(target=_cancel, args=(jid,), daemon=True).start()
                         lost = True
                         break
                     return {"error": "the TACC job ended without a reply: " + tacc_log.why_no_result(L, jid), "answer": ""}
