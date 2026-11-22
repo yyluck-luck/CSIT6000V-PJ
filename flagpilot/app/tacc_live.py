@@ -209,7 +209,10 @@ def _serve_started(log: str, default: float) -> float:
     return default
 
 
-def _adopt_serve() -> tuple[str, str, str] | None:
+_INFLIGHT: dict[int, int] = {}       # 会话代次 → 还在路上（交给 TACC、作业号没回来）的服务作业提交数
+
+
+def _adopt_serve(gen: int | None = None) -> tuple[str, str, str] | None:
     """TACC 上还有我自己的 qwen-public-serve、本页却不知道它：(作业号, 状态, 日志)。
 
     为什么要有这一步：本地只有"提交那一刻拿到的作业号"这一个线索。提交其实成功了、回程却断了，
@@ -217,7 +220,14 @@ def _adopt_serve() -> tuple[str, str, str] | None:
     个人名额跑满一小时，之后每次提交都排在 QOSMaxJobsPerUserLimit 后面（2026-11-22 就是这样，页面说
     "网关忙"，集群上却一直有我的作业在跑）。查不到列表、认不出名字都不算数：宁可报错，也不接一个
     说不定不是自己的作业。刚被我们取消掉的不接（否则"停掉再开"会接回那个正在收尾的）。
+
+    更早一代会话的提交还在路上时，这一代不接任何作业：此刻列表里冒出来的服务作业多半就是那一次晚到的，旧循环拿到作业号
+    就会取消它；先接过来，新会话就指着一个马上被取消的作业（"停掉再马上开"，2026-11-22 合并 main 后在 macOS 上稳定复现）。
+    旧循环先把晚到的作业号记进 _DROPPED、再撤下"在路上"，所以这一代什么时候对账都不会接错。
     """
+    with _L:
+        if any(n > 0 for g, n in _INFLIGHT.items() if gen is None or g != gen):
+            return None
     rows = _ps(1)
     if rows is None:
         return None
@@ -744,11 +754,12 @@ def _serve_loop(adopt: tuple[str, float] | None = None, gen: int | None = None) 
                 return abandon(None)
             # 先问一句 TACC：本地没有作业号，不代表集群上没有我的服务作业（提交回程断了、会话状态丢了）。
             # 只在第一次尝试查：重试说明已经对过账、决定重交了。
-            found = _adopt_serve() if attempt == 1 else None
+            found = _adopt_serve(gen) if attempt == 1 else None
             jid, why = "", ""
             if not found:
                 with _L:
                     S["submitting"] = True          # 页面据此显示"正在交给 TACC"，而不是只跳秒数
+                    _INFLIGHT[gen] = _INFLIGHT.get(gen, 0) + 1
                 _log("handing the job to TACC (uploading; no job id yet)")
                 try:
                     jid, why = _submit("serve", {"FP_EXCLUDE": excl}, note=lambda m: mine() and _log(m),
@@ -756,6 +767,12 @@ def _serve_loop(adopt: tuple[str, float] | None = None, gen: int | None = None) 
                 finally:
                     with _L:
                         S["submitting"] = False
+                        stale = not mine() or S["phase"] != "starting"
+                        if stale and jid:
+                            _DROPPED.add(jid)       # 先记下"不要了"，再撤下"在路上"：新一代对账时不会把它接走
+                        _INFLIGHT[gen] = _INFLIGHT.get(gen, 1) - 1
+                        if _INFLIGHT[gen] <= 0:
+                            del _INFLIGHT[gen]
                 with _L:
                     stale = not mine() or S["phase"] != "starting"
                     if not stale and jid:
@@ -767,7 +784,7 @@ def _serve_loop(adopt: tuple[str, float] | None = None, gen: int | None = None) 
                 # 没回报作业号，也不代表没交上去（回程断了 / submit.sh 没打出那一行 / 传了一半超时）：再对一次账。
                 # 只在"可能是白交了一次"的失败上对：题目不存在这类明确的失败别拿旧作业糊过去。
                 if not jid and (not why or why.startswith(_UNSURE_SUBMIT)):
-                    found = _adopt_serve()
+                    found = _adopt_serve(gen)
             if found:
                 jid, state, l0 = found
                 got = take(jid, state, l0)

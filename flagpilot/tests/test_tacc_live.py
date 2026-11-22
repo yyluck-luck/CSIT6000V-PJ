@@ -834,7 +834,12 @@ class TestRobustness(TaccHarness):
     def test_a_session_started_again_is_not_taken_over_by_the_old_submission(self):
         os.environ["FAKE_SUBMIT_SLEEP"] = "0.6"         # each serve submission takes 0.6 s
         self.assertTrue(tacc_live.start()["ok"])        # submits job 501 ...
-        time.sleep(0.2)
+        # wait until that submission is really on its way: since the page asks `tcloud ps` before submitting
+        # (3273d1a), a fixed 0.2 s could pass before it starts on a slow machine, and the stop then came first
+        submits = self.tmp / "state" / "submits"
+        t = time.time()
+        while time.time() - t < 5 and "serve" not in (submits.read_text() if submits.exists() else ""):
+            time.sleep(0.01)
         tacc_live.stop()                                # ... stopped while that try is in flight ...
         self.assertTrue(tacc_live.start()["ok"])        # ... and started again at once: job 502
         t = time.time()
@@ -846,6 +851,28 @@ class TestRobustness(TaccHarness):
         self.assertNotIn("cancel 502", self.record())
         time.sleep(0.3)
         self.assertEqual(tacc_live.status()["serve"], "502", "the old loop never writes over the new session")
+
+    def test_a_new_session_does_not_adopt_the_job_an_older_submission_is_still_landing(self):
+        """2026-11-22: a submission can land on TACC (the job is in `tcloud ps`) well before its job id comes back (27-79 s
+        on the real gateway). Stopped and started again in that window, the new session's look at `tcloud ps` found the
+        old job, not yet known as dropped, and took it; the old loop then got its id and cancelled it under the new
+        session. While an older session's submission is on its way, the new one adopts nothing."""
+        os.environ["FAKE_SUBMIT_LAND_THEN_HANG"] = "1.2"     # the job lands, then the submit hangs before printing its id
+        self.addCleanup(os.environ.pop, "FAKE_SUBMIT_LAND_THEN_HANG", None)
+        self.assertTrue(tacc_live.start()["ok"])
+        ps = self.tmp / "state" / "ps"
+        t = time.time()
+        while time.time() - t < 5 and "501" not in (ps.read_text() if ps.exists() else ""):
+            time.sleep(0.01)                                # job 501 is on TACC; its id has not come back
+        tacc_live.stop()
+        self.assertTrue(tacc_live.start()["ok"])
+        t = time.time()
+        while time.time() - t < 10 and not ("cancel 501" in self.record() and tacc_live.status()["phase"] == "ready"):
+            time.sleep(0.02)
+        s = tacc_live.status()
+        self.assertEqual((s["phase"], s["serve"]), ("ready", "502"), s.get("log"))
+        self.assertIn("cancel 501", self.record(), "the old session's job is cancelled")
+        self.assertFalse(any("reconnected to serve job 501" in line for line in s["log"]), "and never adopted")
 
     def test_a_log_read_that_hangs_is_given_up_quickly(self):
         # 2026-11-21: 1 in 38 `tcloud cat` calls hung for 142 s (the gateway never opened the SSH session); with a 120 s
