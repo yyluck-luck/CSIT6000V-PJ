@@ -556,12 +556,11 @@ class TaccLiveCase(TaccHarness):
         self.assertIn("tcloud cancel -j 778", tacc_live.status()["log"][-1])     # 告诉人怎么手动收尾
 
 
-class AskIsNotOnTacc(unittest.TestCase):
-    """2026-11-22: Ask answers with the hosted models only; /api/chat refuses backend=tacc and writes nothing."""
+class TaccChatHTTP(unittest.TestCase):
+    """/api/chat 带 backend=tacc：回复经 SSE 回来，问答写进本机会话日志（线程列表照常可用）。"""
 
-    def test_a_question_for_tacc_is_refused_with_a_reason(self):
+    def test_chat_over_tacc_is_logged(self):
         import threading
-        import urllib.error
         import urllib.request
         from http.server import ThreadingHTTPServer
         from app import server as S
@@ -569,22 +568,55 @@ class AskIsNotOnTacc(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="fp-tacc-http-"))
         saved = config.RUNS_ROOT
         config.RUNS_ROOT = tmp
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
-            base = f"http://127.0.0.1:{srv.server_address[1]}"
-            with mock.patch.object(tacc_live, "chat", side_effect=AssertionError("must not be called")):
+            def fake_chat(m, h, t, tools, on_delta, on_tool, on_stage=None, cancelled=None):
+                on_stage({"stage": "queued", "job": "7"})
+                on_delta("Hi")
+                return {"answer": "Hi there", "steps": []}
+            with mock.patch.object(tacc_live, "chat", fake_chat):
+                srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+                base = f"http://127.0.0.1:{srv.server_address[1]}"
                 req = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "hello", "backend": "tacc"}).encode(),
                                              headers={"Content-Type": "application/json"})
-                with self.assertRaises(urllib.error.HTTPError) as ctx:
-                    urllib.request.urlopen(req, timeout=10)
-            self.assertEqual(ctx.exception.code, 400)
-            self.assertIn("hosted models", json.loads(ctx.exception.read())["error"])
-            ctx.exception.close()
-            self.assertFalse((tmp / "chat").exists() and any((tmp / "chat").iterdir()), "no conversation was started")
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    sid = json.loads(r.read())["session_id"]
+                got = []
+                with urllib.request.urlopen(base + f"/api/stream?id={sid}", timeout=10) as r:
+                    for line in r:
+                        if line.startswith(b"data:"):
+                            ev = json.loads(line[5:])
+                            got.append(ev["type"])
+                            if ev["type"] in ("chat_done", "error"):
+                                break
+                srv.shutdown()
+                srv.server_close()
+            self.assertEqual(got, ["chat_stage", "chat_delta", "chat_done"])
+            rows = [json.loads(l) for l in (tmp / "chat" / sid / "chat.jsonl").read_text().splitlines()]
+            self.assertEqual([r["type"] for r in rows], ["meta", "user", "reply"])
+            self.assertEqual(rows[-1]["answer"], "Hi there")
+            # 失败的一轮也落盘：重开线程能看到原因；之后的问答配对不受影响
+            with mock.patch.object(tacc_live, "chat", lambda *a, **k: {"error": "TACC submission failed", "answer": ""}):
+                srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
+                threading.Thread(target=srv.serve_forever, daemon=True).start()
+                base = f"http://127.0.0.1:{srv.server_address[1]}"
+                req = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "again", "backend": "tacc", "session_id": sid}).encode(),
+                                             headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(req, timeout=10).close()
+                last = {}
+                with urllib.request.urlopen(base + f"/api/stream?id={sid}", timeout=10) as r:
+                    for line in r:
+                        if line.startswith(b"data:"):
+                            last = json.loads(line[5:])
+                            if last.get("type") in ("chat_done", "error"):
+                                break
+                hist = json.loads(urllib.request.urlopen(base + f"/api/chat/history?id={sid}", timeout=10).read())
+                srv.shutdown()
+                srv.server_close()
+            self.assertEqual((last["type"], last["message"]), ("error", "TACC submission failed"))
+            self.assertEqual([m["type"] for m in hist["messages"]], ["user", "reply", "user", "error"])
+            self.assertEqual(hist["messages"][-1]["error"], "TACC submission failed")
         finally:
-            srv.shutdown()
-            srv.server_close()
             config.RUNS_ROOT = saved
             shutil.rmtree(tmp, ignore_errors=True)
 

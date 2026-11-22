@@ -123,3 +123,22 @@ FP_BATCH=tacc-dev-v8-on FP_SPLIT=dev FP_TASKS=$T FP_SEEDS=4 FP_ABLATIONS=B3 FP_S
 python3 scripts/protocol_breaks.py runs/tacc/v8
 python3 -m flagpilot pair --a tacc/v8/tacc-dev-v8-off-B3 --b tacc/v8/tacc-dev-v8-on-B3
 ```
+
+## Repeated actions (2026-11-22)
+
+A run of Qwen 27B on TACC from the page (an imported challenge, 100 turns) sent the same reply from turn 18 to turn 100:
+83 identical replies, all the same shell command, each with exit status 1 and no output. The loop guard warned once,
+at turn 19, and never again, because it warned once per action for the whole attempt; after the compaction at turn 28
+the warning survived only as one line of the digest. No sampling seed was sent, so this was not a fixed seed at work.
+
+The guard now has two parts (`flagpilot/agent.py`, `tests/test_experiment.py::TestLoopGuard`):
+
+- an action whose two previous runs, on consecutive turns, gave exactly the same result (exit status, timeout and every
+  byte of output) is not run a third time; the model is told it was not run and why, and the third such reply in a row
+  ends the attempt with `budget` / `repeat_loop`. Another action in between, or a result that changes, lets it run;
+- a warning about an action that keeps coming back (three of the last eight) is repeated, at most every three turns.
+
+On that run it would have stopped at turn 21. The evaluated batches (`v5`–`v7`) ran with the earlier guard, and their
+verdicts are not re-scored for this: a blocked action produces no new evidence, but an attempt that stops early also
+cannot recover later, so the effect on solve rates is unmeasured.
+

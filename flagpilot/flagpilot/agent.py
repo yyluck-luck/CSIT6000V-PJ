@@ -127,6 +127,15 @@ CORRECTION_THINKING = (
 # 额度吃掉；反过来，flag 改对了但脚本还挂，也还能再修一次。
 MAX_FLAG_RETRIES = 1
 MAX_SCRIPT_REPAIRS = 1
+# 原样重做：同一个动作连做两次、两次结果一字不差，第三次不再执行；模型还接着发同一个动作，到第 REPEAT_STOP 次就收工。
+# 2026-11-22 TACC 上的 Qwen 27B：从第 18 轮起同一条回复连发 83 次（`ls … | grep`，exit 1，无输出），以前只在第 19 轮
+# 警告过一次，100 轮全耗在这一条命令上。
+REPEAT_STOP = 3
+REPEAT_WARN_GAP = 3            # 同一个动作再次被警告，至少隔这么多轮（以前一个动作一辈子只警告一次）
+REPEAT_BLOCKED = ("OBSERVATION\nNOT RUN: this is the same action as steps {a} and {b}, and both gave exactly the same "
+                  "result ({result}). Running it a third time cannot show anything new, so it was not run. "
+                  "Take a different step: another command, another file or another approach. "
+                  "If you keep sending this action, the run ends.")
 
 REPAIR_FLAG_TEMPLATE = (
     "FLAG REJECTED: the submitted flag is not correct.\n"
@@ -435,6 +444,36 @@ def _evidence_fingerprint(text: str) -> str:
     return hashlib.sha1(norm[:4000].encode("utf-8", "replace")).hexdigest()
 
 
+def _action_key(act) -> str:
+    """判断"同一个动作"：动作类型 + 命令 / 代码 / 路径 + 编码方案 + 文本开头。"""
+    return "|".join([act.action, act.cmd or act.code or act.path or "", act.scheme or "", act.text[:80]])
+
+
+def _result_fingerprint(res) -> str:
+    """工具结果的完整指纹（退出码、是否超时、全部输出）：两次一字不差才算"同样的结果"。
+    不用 _evidence_fingerprint：它只看前 4KB，尾部不同的两份输出会被当成一样，拦下的却是一次可能有用的执行。"""
+    raw = f"{res.exit_code}|{res.timed_out}|{res.combined or ''}"
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()
+
+
+def _act_view(act) -> dict:
+    """引擎实际解析出的动作，给网页显示：只留有值的字段，长的截断（模型原文在 model 事件里）。"""
+    out = {"action": act.action}
+    for k, n in (("thought", 2000), ("cmd", 4000), ("code", 6000), ("path", 400), ("scheme", 60), ("text", 400),
+                 ("flag", 400), ("script", 6000)):
+        v = getattr(act, k, "") or ""
+        if v:
+            out[k] = str(v)[:n]
+    return out
+
+
+def _result_brief(res) -> str:
+    if res.timed_out:
+        return "it timed out"
+    out = (res.combined or "").strip()
+    return f"exit {res.exit_code}, " + (f"{len(out)} characters of output" if out else "no output")
+
+
 def hosted_spec(cfg: RunConfig) -> ModelSpec:
     """H 轨规格。没显式配置就用 TRACK_H 的默认端点与模型名。"""
     if cfg.hybrid.model is not None:
@@ -574,7 +613,9 @@ def run_attempt(
     # 小模型常见的死循环：同一个动作反复执行到轮次耗尽。
     # 这是 harness 该管的事，不该指望 prompt 约束住，所以放在循环里。
     recent: list[str] = []
-    warned: set[str] = set()
+    warned: dict[str, int] = {}               # 动作 → 上一次警告它的轮次
+    ran: list[tuple[str, str, int, str]] = []  # 执行过的动作：(动作, 结果指纹, 轮次, 结果简述)，只留最近几条
+    blocked_streak = 0
     last_switch: dict | None = None
     fallback_turn = None
 
@@ -756,6 +797,10 @@ def run_attempt(
             # "每次调用都有成本"的事实，也给不守规矩的模型更少的免费重试。
             continue
 
+        # 网页照引擎解析出的动作显示，不再自己把回复解析一遍：2026-11-22 回退到 DeepSeek 后回复写成 DSML，引擎认得、
+        # 页面不认得，100 步里 32 步显示成 "? —"，看上去每一步都一样
+        tr.event("action", turn=turns, act=_act_view(act))
+
         if act.action == "submit":
             submitted = act.flag.strip()
             tr.event("submit", turn=turns, flag=submitted, script=act.script)
@@ -812,6 +857,25 @@ def run_attempt(
             reason = replay.reason
             break
 
+        # ---- 原样重做 ----
+        # 同一个动作已经连做两次、两次结果一字不差：第三次不再执行（执行了也只会得到同样的结果），告诉模型为什么；
+        # 它还接着发，到 REPEAT_STOP 次就收工，不把剩下的轮次全耗在同一条命令上。放在人工审批之前：不让人批一条不会执行的命令
+        key = _action_key(act)
+        if len(ran) >= 2 and ran[-1][0] == key == ran[-2][0] and ran[-1][1] == ran[-2][1]:
+            blocked_streak += 1
+            same = [ran[-2][2], ran[-1][2]]
+            tr.event("repeat_blocked", turn=turns, action=act.action, cmd=act.cmd[:200], same_as=same,
+                     streak=blocked_streak)
+            messages.append({"role": "assistant", "content": history_reply(comp.text, cfg.policy.reply_history)})
+            messages.append({"role": "user", "content": REPEAT_BLOCKED.format(a=same[0], b=same[1], result=ran[-1][3]) + NT})
+            if cfg.hybrid.enabled and hosted_client is None:
+                stall_streak += 1                 # 没有新证据：和协议错误一样算停滞
+            if blocked_streak >= REPEAT_STOP:
+                verdict, reason = "budget", "repeat_loop"
+                break
+            continue
+        blocked_streak = 0
+
         if control is not None:
             field = "cmd" if act.action == "shell" else "code" if act.action == "python" else ""
             t_wait = time.monotonic()
@@ -832,11 +896,13 @@ def run_attempt(
                 setattr(act, field, edited)
                 if field == "code":
                     act.cmd = edited[:400]
+        key = _action_key(act)                    # 人可能刚改过命令
         res = toolbox.execute(act)
         if res is None:
             verdict, reason = "error", "tool returned nothing"
             break
         sum_tool_ms += res.duration_ms or 0
+        ran = (ran + [(key, _result_fingerprint(res), turns, _result_brief(res))])[-4:]
 
         obs_raw = format_observation(turns, act, res)
         obs, was_trunc = truncate(obs_raw, cfg.policy)
@@ -866,17 +932,20 @@ def run_attempt(
                 stall_streak = 0
 
         # ---- 死循环检测 ----
-        key = "|".join([act.action, act.cmd or act.code or act.path or "",
-                        act.scheme or "", act.text[:80]])
         recent.append(key)
         if len(recent) > 8:
             recent.pop(0)
-        if recent.count(key) >= 3 and key not in warned:
-            warned.add(key)
+        # 以前一个动作一辈子只警告一次：模型兜一圈（A、B、A、B…）又回来，就再没人说它了
+        if recent.count(key) >= 3 and turns - warned.get(key, -REPEAT_WARN_GAP) >= REPEAT_WARN_GAP:
+            again = key in warned
+            warned[key] = turns
             tr.event("repeat_warning", turn=turns, action=act.action, cmd=act.cmd[:200])
             messages.append({"role": "user", "content":
-                             "REPEAT WARNING: you have run this exact action three times "
-                             "and it did not get you closer to the flag.\n"
+                             ("REPEAT WARNING: you keep coming back to this exact action "
+                              f"({recent.count(key)} of your last {len(recent)} actions) "
+                              if again else
+                              "REPEAT WARNING: you have run this exact action three times ")
+                             + "and it did not get you closer to the flag.\n"
                              "Change approach: try a different tool, decode a different "
                              "layer, or inspect a different file. Do not repeat it again." + NT})
 
