@@ -711,7 +711,13 @@ def cmd_dataset(args) -> int:
 
 
 def cmd_writeup(args) -> int:
-    output = writeup.generate(Path(args.run_dir), Path(args.out) if args.out else None)
+    # 没跑完的 run 目录（没有 summary）或空的 run_dir，writeup.render 会抛 ValueError。
+    # 以前直接漏出去：读者看到的是六层 traceback，而 show 对同样情况只回一句"没有找到 ..."。
+    try:
+        output = writeup.generate(Path(args.run_dir).expanduser(), Path(args.out) if args.out else None)
+    except ValueError as exc:
+        _p(f"无法生成 writeup：{exc}")
+        return 1
     _p(f"Writeup saved: {output}")
     return 0
 
