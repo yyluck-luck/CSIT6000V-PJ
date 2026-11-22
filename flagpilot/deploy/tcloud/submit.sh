@@ -31,7 +31,12 @@ TASKS="${FLAGPILOT_TASKS:-$ROOT/tasks}"
 # 与网页（app/tacc.py、app/tacc_live.py）、pipeline.sh 一致：先认 TCLOUD_BIN，再退回 PATH。
 # 只设 TCLOUD_BIN 是文档推荐的用法（docs/TACC.md「本地前端接 TACC」），以前这里只查 PATH，照文档做照样报"找不到"。
 TC="${TCLOUD_BIN:-tcloud}"
-command -v "$TC" >/dev/null || { echo "找不到 tcloud（课程 SDK v0.4.1）：放进 PATH，或 export TCLOUD_BIN=<tcloud 的绝对路径>" >&2; exit 1; }
+command -v "$TC" >/dev/null || {
+  # 中文那行给人看；英文那行排最后：网页取"最后一行"当原因，中文会被丢掉，页面上就只剩一句空话
+  echo "找不到 tcloud（课程 SDK v0.4.1）：放进 PATH，或 export TCLOUD_BIN=<tcloud 的绝对路径>" >&2
+  echo "tcloud (the course SDK) is not on PATH and TCLOUD_BIN is not set: export TCLOUD_BIN=/path/to/tcloud in the shell that starts the page" >&2
+  exit 1
+}
 
 # SDK 拿本地目录名当集群上的 WORKDIR 名：名字固定，重复提交覆盖同一份，
 # 不会每交一次就在 /mnt/home（已满）多留 73M。代价是同一时间只能跑一个客户端作业。
@@ -237,6 +242,14 @@ for (( i = 1; i <= TRIES; i++ )); do
   rc=0; out=$("$TC" submit 2>&1) || rc=$?
   printf '%s\n' "$out"
   grep -q 'Submitted batch job' <<<"$out" && exit "$rc"      # submitted: report tcloud's own status, as before
+  # 读不到私钥时 tcloud 也会打 "Failed to create remote session"，但那和网关忙是两回事：权限问题重试一万次
+  # 也不会好，而按网关忙报出来只会让人以为集群堵了（2026-11-22 就这样白等了三个小时）。先说清楚。
+  if grep -q 'Failed to read AuthFile' <<<"$out"; then
+    echo "[tcloud] 读不到课程 SDK 的私钥：$(grep -m1 'Failed to read AuthFile' <<<"$out" | sed 's/.*AuthFile at *//')" >&2
+    echo "[tcloud] 这不是网关问题，重试没有用。检查该文件的属主与权限（应为本用户、600）；" >&2
+    echo "[tcloud] 如果当前是沙箱或受限环境，请在你自己的终端里重跑这条命令。" >&2
+    exit 1
+  fi
   # 上传途中断线（"Failed to upload env repository"）同样还没交上去；卷满了（No space left on device）重试没用
   if (( i < TRIES )) && grep -q -e 'Failed to create remote session' -e 'ssh: handshake failed' -e 'Failed to upload' <<<"$out" \
      && ! grep -q -e 'No space left on device' -e 'Disk quota exceeded' <<<"$out"; then
