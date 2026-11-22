@@ -93,5 +93,48 @@ class TestBatchPath(unittest.TestCase):
                       "报错要给出实际找过的路径，否则看不出是名字错了还是目录不对")
 
 
+class TestMarkdownOutput(unittest.TestCase):
+    """`--md` 是 README 里把对比表写进实验记录的方式（`compare --batches ... --md e1.md`）。
+
+    这几条命令的正文和落盘内容必须一致：报告里的表格是从这些 .md 拼进去的，文件少一列、
+    或者父目录没建出来直接崩，都得在这里先红。
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.a = _batch(self.tmp, "results/m-B0", [_row("crypto-005", "wrong"), _row("crypto-058", "verified")])
+        self.b = _batch(self.tmp, "results/m-B3", [_row("crypto-005", "verified"), _row("crypto-058", "verified")])
+
+    def test_compare_writes_the_same_table_it_prints(self):
+        target = self.tmp / "deep" / "nested" / "compare.md"
+        rc, out = _run(["compare", "--batches", f"{_rel(self.a)},{_rel(self.b)}", "--md", str(target)])
+
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(target.is_file(), "父目录没有时应当自己建出来")
+        body = target.read_text(encoding="utf-8")
+        self.assertIn("| batch |", body)
+        self.assertIn("50.0%", body)
+        self.assertIn("100.0%", body)
+        for line in body.strip().splitlines():
+            self.assertIn(line, out, "落盘的表和打印的表不是同一份")
+
+    def test_pair_writes_its_report(self):
+        target = self.tmp / "pair.md"
+        rc, out = _run(["pair", "--a", _rel(self.a), "--b", _rel(self.b), "--md", str(target)])
+
+        self.assertEqual(rc, 0, out)
+        body = target.read_text(encoding="utf-8")
+        self.assertIn("McNemar", body)
+        self.assertIn("修好", body)
+
+    def test_a_reference_batch_that_is_not_loaded_is_an_error(self):
+        """`--ref` 写错时不能静默给出不带参照的表：E3 的对比全靠它。"""
+        rc, out = _run(["compare", "--batches", _rel(self.a), "--ref", "not-loaded"])
+        self.assertEqual(rc, 1)
+        self.assertIn("not-loaded", out)
+
+
 if __name__ == "__main__":
     unittest.main()
