@@ -690,6 +690,34 @@ try {
   check("Ask: a conversation can be left while it is being answered; it blinks in Threads, and the reply stays in it",
     swBlink && !!otherSid && swAway && swNoRefuse && swBack && swDone && swFinal, JSON.stringify({swBlink, otherSid, swAway, swNoRefuse, swBack, swDone, swFinal, toastsBefore}));
 
+  // Ask: a new conversation whose first message cannot go out yet (Qwen still starting, or slow to send) is listed in Threads
+  // from the page, blinking; a new conversation can be started meanwhile and the waiting one opened again; once the server
+  // gives it an id, its row becomes the real one
+  await js(`(() => { window.__F6 = window.fetch; window.__ES6 = window.EventSource; window.__post6 = null; window.__done6 = null; window.__c6 = false;
+    const json = x => Promise.resolve(new Response(JSON.stringify(x), {headers: {'Content-Type': 'application/json'}}));
+    window.fetch = (u, o) => { u = String(u);
+      if (u === '/api/chat' && o && o.method === 'POST' && JSON.parse(o.body).message === 'draft question')
+        return new Promise(res => { window.__post6 = () => { window.__c6 = true; res(new Response(JSON.stringify({session_id: 'cccccccccccc', turn: 1}), {headers: {'Content-Type': 'application/json'}})); }; });
+      if (u.startsWith('/api/chat/sessions')) return window.__F6(u, o).then(r => r.json()).then(d => json({sessions: (window.__c6 ? [{id: 'cccccccccccc', title: 'draft question', turns: 1, ts: Date.now() / 1000}] : []).concat((d.sessions || []).filter(x => x.id !== 'cccccccccccc'))}));
+      if (u.startsWith('/api/chat/history?id=cccccccccccc')) return json({session_id: 'cccccccccccc', model: '', task: '', exists: true, messages: [{type: 'user', turn: 1, text: 'draft question'}]});
+      return window.__F6(u, o); };
+    window.EventSource = class { constructor(url){ if (!String(url).includes('cccccccccccc')) return new window.__ES6(url);
+      window.__done6 = () => this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Draft answer', turns: 1, session_id: 'cccccccccccc'})}); } close(){} }; })()`);
+  await js("newChat()"); await sleep(150);
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'draft question'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const drRow = await until("window.__post6 && (() => { const b = document.querySelector('#threadList .thread.draft.replying[data-key]'); return b && /draft question/.test(b.textContent) && /Sending|On hold|Waiting/i.test(b.querySelector('span').textContent) && b.classList.contains('on'); })()", 5000);
+  await js("document.querySelector('#newChat').click()"); await sleep(200);
+  const drNew = await until("!/draft question/.test(document.querySelector('#chatLog').textContent) && !chatBusy && !document.querySelector('#threadList .thread.draft.on') && !!document.querySelector('#threadList .thread.draft.replying')", 5000);
+  await js("document.querySelector('#threadList .thread.draft').click()");
+  const drBack = await until("/draft question/.test(document.querySelector('#chatLog').textContent) && document.querySelector('#chatLog .bub.bot .typing') && chatBusy && document.querySelector('#threadList .thread.draft.on')", 5000);
+  await js("window.__post6()");
+  const drReal = await until("!document.querySelector('#threadList .thread.draft') && document.querySelector('#threadList .thread.replying[data-sid=\"cccccccccccc\"]') && curKey === 'cccccccccccc' && chatId === 'cccccccccccc'", 5000);
+  await until("window.__done6", 5000); await js("window.__done6()");
+  const drDone = await until("!document.querySelector('#threadList .thread.replying') && /Draft answer/.test(document.querySelector('#chatLog').textContent) && !chatBusy", 5000);
+  await js("window.fetch = window.__F6; window.EventSource = window.__ES6; newChat()");
+  check("Ask: a conversation still waiting to send is listed in Threads (blinking); new ones can start meanwhile, and it can be opened again",
+    drRow && drNew && drBack && drReal && drDone, JSON.stringify({drRow, drNew, drBack, drReal, drDone}));
+
   // the bottom of a finished run holds still (steps used content-visibility, and the page bounced 32 px there: "the whole page
   // shakes with Add the answer"); the answer form's warning is about one value and "Save it anyway" saves that value
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);

@@ -3509,9 +3509,13 @@ let THREADS = [];
 async function loadThreads(){
   if (!THREADS.length && !$('#threadList .thread')) $('#threadList').innerHTML = '<div style="padding:14px 22px"><div class="skel" style="height:15px;width:80%"></div><div class="skel" style="height:15px;width:60%;margin-top:18px"></div><div class="skel" style="height:15px;width:70%;margin-top:18px"></div></div>';
   try { THREADS = (await (await fetch('/api/chat/sessions', {cache: 'no-store'})).json()).sessions || []; } catch(_){ THREADS = []; }
-  $('#threadList').innerHTML = THREADS.length ? THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}${LIVE.has(t.id) ? ' replying' : ''}" data-sid="${esc(t.id)}"${t.model ? ` data-tip="${esc(prettyModel(t.model))}"` : ''}><b>${t.model ? `<i class="g ${modelGlyph(t.model)}"></i>` : ''}${esc(t.title)}</b><span>${LIVE.has(t.id) ? 'Replying…' : `${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}`}</span></button>`).join('')
+  /* a new conversation whose first message has not reached the server yet (waiting for Qwen to start, or being sent) has no
+     id there: it is listed from this page, blinking, and can be opened again while it waits */
+  const drafts = [...LIVE.values()].filter(it => String(it.key).startsWith('new-') && !THREADS.some(t => t.id === it.key));
+  const draftRow = it => `<button class="thread draft replying${it.key === curKey ? ' on' : ''}" data-key="${esc(it.key)}"><b>${esc(String(it.text || 'New conversation').slice(0, 80))}</b><span>${esc(it.waitNote || 'Sending…')}</span></button>`;
+  $('#threadList').innerHTML = (THREADS.length || drafts.length) ? drafts.map(draftRow).join('') + THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}${LIVE.has(t.id) ? ' replying' : ''}" data-sid="${esc(t.id)}"${t.model ? ` data-tip="${esc(prettyModel(t.model))}"` : ''}><b>${t.model ? `<i class="g ${modelGlyph(t.model)}"></i>` : ''}${esc(t.title)}</b><span>${LIVE.has(t.id) ? 'Replying…' : `${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}`}</span></button>`).join('')
     : '<p class="hint" style="padding:20px 22px">No threads yet.</p>';
-  $('#threadsShow .n').textContent = $('#threadsBtn .n').textContent = THREADS.length || '';
+  $('#threadsShow .n').textContent = $('#threadsBtn .n').textContent = (THREADS.length + drafts.length) || '';
 }
 async function openThread(sid){
   curKey = sid; syncBusy();
@@ -3546,7 +3550,17 @@ async function openThread(sid){
   qs('#threadList .thread').forEach(b => b.classList.toggle('on', b.dataset.sid === chatId));
   $('#chatWrap').classList.remove('showthreads'); syncThreadsChip();
 }
-$('#threadList').addEventListener('click', e => { const b = e.target.closest('.thread[data-sid]'); if (b) openThread(b.dataset.sid); });
+$('#threadList').addEventListener('click', e => { const d = e.target.closest('.thread[data-key]'); if (d){ openDraft(d.dataset.key); return; }
+  const b = e.target.closest('.thread[data-sid]'); if (b) openThread(b.dataset.sid); });
+/* back to a conversation that is still waiting for its first reply to go out: its message, receipt and reply are put back */
+function openDraft(key){
+  const it = LIVE.get(key); if (!it){ loadThreads(); return; }
+  curKey = key; chatTurns = 0; chatSteps = 0; saveChatId(null); syncBusy();
+  const log = $('#chatLog'); log.innerHTML = ''; started(true);
+  [it, ...chatQ.filter(q => q.key === key)].forEach(x => [x.me, x.state === 'replied' ? null : x.rc, x.bot].forEach(n => { if (n) log.appendChild(n); }));
+  if (it.pick) useThreadPick(it.pick);
+  setAskTask(it.task || null, true); scrollChat(true); loadThreads();
+}
 /* the thread list collapses (remembered); on narrow screens it slides over the conversation instead */
 const THR_KEY = 'fp.threads.hidden', LIVE_KEY = 'fp.chat.live';
 /* Slurm's reasons for a pending job, in words (and a short form for the chip) */
@@ -3718,7 +3732,8 @@ async function exchange(it){
   let acc = '', shownTxt = '', closed = false, raf = 0, attached = false, es = null, over = false, fetching = false, resolveSent = () => {};
   it.sentP = new Promise(r => { resolveSent = r; });
   /* dashed until the reply is complete; the receipt under it says what the conversation is waiting for */
-  const onHold = t => { if (it.recalled) return; rc.className = 'rcpt'; rc.innerHTML = '<span class="dot"></span>On hold · ' + esc(t); };
+  const onHold = t => { if (it.recalled) return; rc.className = 'rcpt'; rc.innerHTML = '<span class="dot"></span>On hold · ' + esc(t);
+    const note = cap(String(t)) + '…'; if (it.waitNote !== note){ it.waitNote = note; if (String(it.key).startsWith('new-')) loadThreads(); } };
   let wentOut = false; const sent = () => { wentOut = true; };
   const settle = (ok, why) => { if (it.recalled) return;
     if (ok){ me.classList.remove('hold'); rc.remove(); it.state = 'replied'; return; }
