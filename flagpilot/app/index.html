@@ -309,7 +309,9 @@
   /* ---------- solve: steps ---------- */
   #flow{border-top:1.5px solid var(--ink);margin-top:14px}
   #timeline.none{display:none}
-  .step{position:relative;border-bottom:1px solid var(--rule);content-visibility:auto;contain-intrinsic-size:auto 56px}
+  /* no content-visibility here: a step entering and leaving the viewport switched between its real height and the remembered one,
+     and at the bottom of a run the page bounced 32 px up and down (2026-11-22: "the whole page shakes with Add the answer") */
+  .step{position:relative;border-bottom:1px solid var(--rule)}
   .step.enter{animation:stepin .22s var(--ease) both}
   .step.flash{animation:flash .9s ease}
   @keyframes stepin{from{transform:translateX(-8px);background:var(--yellow-t)}}
@@ -1932,7 +1934,7 @@ const sect = (title, inner, open, tip) => `<details class="sec"${open ? ' open' 
 
 /* ================================================================
    Solve view: incremental rendering batched per frame. One node per step; events only mark keys dirty;
-   bodies are built when opened; off-screen steps skip layout (content-visibility).
+   bodies are built when opened (no content-visibility on steps: at the page bottom it made the page bounce).
    ================================================================ */
 let openSteps = new Set();
 const R = {steps: new Map(), chips: new Map(), submitEl: null, submitChip: null, dirty: new Set(), raf: 0, bulk: false, figW: 0, bars: 0, chainEnd: false, figStale: false, live: null, liveText: '', liveTurn: 0, liveRaf: 0};
@@ -2253,18 +2255,23 @@ function showDone(ev){
       + (had ? '<button class="btn" id="goldClear" type="button">Remove the answer</button>' : '') + '<span class="hint">Only its hash is kept.</span></div>');
     /* a flag this run could not back up is probably made up: saving it as the answer would make the next run that types it look right */
     const unproven = ev.verdict !== 'verified';
-    const save = async (confirm = false) => { const g = $('#goldIn').value.trim(); if (!g) return;
+    /* the warning is about one value: it goes as soon as the box changes, and "Save it anyway" saves that value, not whatever
+       the box holds by then (it used to stay up over an emptied box, where "Save it anyway" did nothing) */
+    const unwarn = () => { qs('.goldin .gwarn, .goldin #goldAnyway').forEach(el => el.remove()); };
+    const save = async (confirm = false, value = null) => { const g = (value ?? $('#goldIn').value).trim(); if (!g){ $('#goldIn').focus(); return; }
       try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, gold: g, flag: (run && run.submit && run.submit.flag) || flag || '', unverified: unproven, confirm})}); const d = await r.json();
         if (r.status === 409 && d.needs_confirm){
-          if (!$('.goldin .gwarn')) $('.goldin').insertAdjacentHTML('beforeend', `<p class="gwarn bad">${esc(d.error)}</p><button class="btn" id="goldAnyway" type="button">Save it anyway</button>`);
-          $('#goldAnyway').onclick = () => save(true); return; }
+          unwarn();
+          $('.goldin').insertAdjacentHTML('beforeend', `<p class="gwarn bad">“${esc(g)}”: ${esc(d.error)}</p><button class="btn" id="goldAnyway" type="button">Save it anyway</button>`);
+          $('#goldAnyway').onclick = () => save(true, g); return; }
         if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);
         if (selTask) selTask.has_gold = true; await loadTasks();
         $('.goldin').innerHTML = d.match === true ? '<span class="ok">Saved. The flag from this run matches the answer: it was right.</span>'
           : d.match === false ? '<span class="bad">Saved. The flag from this run does not match the answer: it was wrong.</span>' : '<span class="hint">Saved. Later runs are judged against it.</span>';
         $('#addGold').remove(); }
       catch(e){ toast(e.message); } };
-    $('#goldSave').onclick = () => save(); $('#goldIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } }); $('#goldIn').focus();
+    $('#goldSave').onclick = () => save(); $('#goldIn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } });
+    $('#goldIn').addEventListener('input', unwarn); $('#goldIn').focus({preventScroll: true});
     if ($('#goldClear')) $('#goldClear').onclick = async () => {
       try { const r = await fetch('/api/custom/gold', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({task: sel, clear: true})}); const d = await r.json();
         if (!r.ok || d.error) throw new Error(d.error || 'HTTP ' + r.status);

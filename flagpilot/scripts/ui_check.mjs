@@ -690,6 +690,36 @@ try {
   check("Ask: a conversation can be left while it is being answered; it blinks in Threads, and the reply stays in it",
     swBlink && !!otherSid && swAway && swNoRefuse && swBack && swDone && swFinal, JSON.stringify({swBlink, otherSid, swAway, swNoRefuse, swBack, swDone, swFinal, toastsBefore}));
 
+  // the bottom of a finished run holds still (steps used content-visibility, and the page bounced 32 px there: "the whole page
+  // shakes with Add the answer"); the answer form's warning is about one value and "Save it anyway" saves that value
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  const gName = await js(`fetch('/api/upload', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: 'gold form', query: 'Find the flag in note.txt', category: 'misc', files: [{name: 'note.txt', data_b64: btoa('nothing here')}]})}).then(r => r.json()).then(d => d.task.name)`);
+  await js("loadTasks()"); await sleep(300);
+  await js(`pick(MINE.find(t => t.name === ${JSON.stringify(gName)}))`); await sleep(150);
+  await js("localStorage.removeItem('fp.stepmode'); (() => { const c = document.querySelector('#ctlStep'); if (c && c.checked){ c.checked = false; c.dispatchEvent(new Event('change', {bubbles: true})); } })()");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  await until("document.querySelector('#addGold') && !busy", 30000);
+  await js("showDone({type: 'done', verdict: 'budget', reason: 'invalid_action', turns: 3, ablation: 'B3'})"); await sleep(1200);
+  await js("(() => { const pg = document.querySelector('.page.on'); pg.scrollTop = pg.scrollHeight; })()"); await sleep(400);
+  const still = await js(`new Promise(res => { const pg = document.querySelector('.page.on'), seen = []; const t0 = performance.now();
+    const tick = () => { seen.push(pg.scrollTop); if (performance.now() - t0 < 600) requestAnimationFrame(tick); else res(Math.max(...seen) - Math.min(...seen)); }; requestAnimationFrame(tick); })`);
+  await js(`(() => { window.__gold = []; window.__F6 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/custom/gold'){ const b = JSON.parse(o.body); window.__gold.push(b);
+      return Promise.resolve(new Response(JSON.stringify(b.confirm ? {ok: true, match: null} : {needs_confirm: true, error: 'That is the flag this run could not back up, so it is probably made up. Save it only if you know it is the real flag.'}), {status: b.confirm ? 200 : 409, headers: {'Content-Type': 'application/json'}})); }
+      return window.__F6(u, o); }; })()`);
+  await js("document.querySelector('#addGold').click()"); await until("document.querySelector('#goldIn')", 2000);
+  const typeGold = async v => js(`(() => { const i = document.querySelector('#goldIn'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input', {bubbles: true})); })()`);
+  await typeGold("picoCTF{made_up}"); await js("document.querySelector('#goldSave').click()");
+  const gWarn = await until("/made_up/.test((document.querySelector('.goldin .gwarn') || {}).textContent || '') && document.querySelector('#goldAnyway')", 3000);
+  await typeGold("");
+  const gGone = await until("!document.querySelector('.goldin .gwarn') && !document.querySelector('#goldAnyway')", 2000);
+  await typeGold("picoCTF{made_up}"); await js("document.querySelector('#goldSave').click()"); await until("document.querySelector('#goldAnyway')", 3000);
+  await js("document.querySelector('#goldIn').value = ''"); await js("document.querySelector('#goldAnyway').click()");
+  const gSaved = await until("window.__gold.length === 3 && window.__gold[2].confirm === true && window.__gold[2].gold === 'picoCTF{made_up}'", 3000);
+  await js("window.fetch = window.__F6");
+  check("a finished run's page holds still at the bottom; the answer form's warning names its value and goes when the box changes",
+    still <= 1 && gWarn && gGone && gSaved, JSON.stringify({still, gWarn, gGone, gSaved}));
+
   // turns per run: the drawer offers 20/40/60/100 (40 by default, remembered); a run uses the choice; a run that used all
   // its turns offers to run again with more (2026-11-21: "why only 20 rounds?")
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
