@@ -138,26 +138,26 @@ def parse_action(text: str, allowed: tuple[str, ...] = BASE_ACTIONS) -> tuple[Ac
     """从模型输出里抠出动作。返回 (action, error)。
 
     小模型常见的三种坏输出：包了 markdown 围栏、前后带解释、JSON 截断。
-    前两种能救，第三种救不了——救不了就返回错误，由循环喂回一次纠正。
+    前两种能救，第三种救不了——救不了就返回错误，由循环喂回一次纠正（Policy.continue_cut 打开时先请模型接着写完）。
     """
     if not text or not text.strip():
         return None, "空回复"
-    text = _THINK.sub("", text)
+    obj = json_object(text)
+    if obj is None:
+        return None, "没有解析到合法的 JSON 动作"
+    try:
+        return Action.from_obj(obj, allowed), None
+    except ValueError as e:
+        return None, str(e)
 
-    candidates: list[str] = []
-    for m in _FENCE.findall(text):
-        candidates.append(m)
-    candidates.append(text.strip())
 
-    for cand in candidates:
+def json_object(text: str) -> dict | None:
+    """回复里的 JSON 对象：先看 markdown 围栏里的、再看整段，最后从第一个 { 开始做括号配平。找不到返回 None。"""
+    text = _THINK.sub("", text or "")
+    for cand in [*_FENCE.findall(text), text.strip()]:
         obj = _try_json(cand)
         if isinstance(obj, dict):
-            try:
-                return Action.from_obj(obj, allowed), None
-            except ValueError as e:
-                return None, str(e)
-
-    # 最后再试一次：从第一个 { 开始做括号配平
+            return obj
     start = text.find("{")
     if start >= 0:
         depth = 0
@@ -168,13 +168,37 @@ def parse_action(text: str, allowed: tuple[str, ...] = BASE_ACTIONS) -> tuple[Ac
                 depth -= 1
                 if depth == 0:
                     obj = _try_json(text[start : i + 1])
-                    if isinstance(obj, dict):
-                        try:
-                            return Action.from_obj(obj, allowed), None
-                        except ValueError as e:
-                            return None, str(e)
-                    break
-    return None, "没有解析到合法的 JSON 动作"
+                    return obj if isinstance(obj, dict) else None
+    return None
+
+
+def json_cut(text: str) -> bool:
+    """回复是不是在一个 JSON 对象中间就结束了：从第一个 { 起，到结尾时字符串没闭合或括号没配平。
+
+    v6 / v7 的协议错误几乎都是这样（finish_reason 是 stop，不是 token 上限）；引号没转义这类错误括号是配平的，不算。
+    """
+    text = _THINK.sub("", text or "")
+    start = text.find("{")
+    if start < 0:
+        return False
+    depth, in_str, esc = 0, False, False
+    for ch in text[start:]:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+            if depth == 0:
+                return False
+    return depth > 0
 
 
 def _try_json(s: str):

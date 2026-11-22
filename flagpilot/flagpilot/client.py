@@ -181,6 +181,7 @@ class ChatClient:
         # 有些运行时（Ollama / llama.cpp / 老版本 vLLM）不认识 chat_template_kwargs，
         # 会直接 400。第一次撞上就永久降级，避免每次请求都白撞一遍。
         self._no_template_kwargs = spec.provider in ("openai-compatible", "gemini")
+        self._no_seed = False           # 服务端拒绝过 seed 字段：之后不再发
 
     # 退化重复的守卫（见模块级 looping()）。FLAGPILOT_LOOP_GUARD=0 关掉，复现旧行为用。
     loop_guard = os.environ.get("FLAGPILOT_LOOP_GUARD", "1") != "0"
@@ -222,6 +223,8 @@ class ChatClient:
                 # Ollama 的 Qwen3 模板认这个字段，vLLM 也支持；不支持会 400 后降级。
                 # 实测只有它真能关掉思维链（/no_think 与 think:false 在 Ollama 上都被忽略）。
                 payload["reasoning_effort"] = "none"
+        if self.spec.seed is not None and not self._no_seed:
+            payload["seed"] = int(self.spec.seed)
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self._url,
@@ -322,6 +325,13 @@ class ChatClient:
                     return retry
                 return Completion(text="", latency_ms=int((time.monotonic() - t0) * 1000),
                                   error=f"HTTP {e.code}: {detail}", max_tokens=payload["max_tokens"])
+            if e.code in (400, 422) and "seed" in payload and "seed" in body.lower():
+                # 这个服务端不认采样种子：不再发，这一轮重试一次（轨迹里 note 记下，复现性比不过发了的）
+                self._no_seed = True
+                retry = self.complete(messages, max_tokens, on_delta=on_delta, _fit_retries=_fit_retries,
+                                      _temperature=_temperature)
+                retry.note = (retry.note + " " if retry.note else "") + "服务端不接受 seed，已不再发送"
+                return retry
             if e.code == 400 and not self._no_template_kwargs and self.spec.provider != "deepseek":
                 # 大概率是 chat_template_kwargs 不被接受：降级后重试一次
                 self._no_template_kwargs = True

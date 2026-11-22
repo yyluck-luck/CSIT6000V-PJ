@@ -85,6 +85,14 @@ class Policy:
     # 压缩时保留最近多少条消息（user/assistant 混计）。
     # 6 条 ≈ 最近 3 轮，够模型接上"我正在干什么"。
     compact_keep_recent: int = 6
+    # 回复中途结束（README 已知局限 16）的三个对策，默认都关：v5–v7 都没开，打开就是另一个引擎，要新批次来量。
+    # 模型自己的回复以什么样子留在历史里（agent.history_reply）：cut = 前 2000 字（v5–v7）；
+    # elide = 同样 2000 字，但把最长的字符串字段从中间省略并标出，JSON 保持完整
+    reply_history: str = "cut"
+    # 回复停在 JSON 中间（finish_reason=stop）时请模型从断处接着写一次，拼起来再解析（agent.CONTINUE_CUT）
+    continue_cut: bool = False
+    # 每段工具输出末尾加一行 "--- end of output ---"（agent.OUTPUT_FENCE）
+    fence_output: bool = False
 
 
 @dataclass
@@ -167,6 +175,10 @@ class ModelSpec:
     # 有些运行时（Ollama）不接受 chat_template_kwargs，此时用 Qwen3 的软开关
     # ——在用户消息末尾加 /no_think。由 make_model_spec() 按模型名自动打开。
     soft_no_think: bool = False
+    # 采样种子：每个请求都带上（vLLM、OpenAI 认 seed 字段，同一 prompt + 同一 seed 采出同样的回复）。None = 不发，
+    # v5–v7 的评测批次都没发。agent 给第 s 次尝试用 seed + s（cli --sample-seed / submit.sh FP_SAMPLE_SEED），
+    # 重复的几次仍是不同的样本。服务端不认这个字段（400 里提到 seed）时客户端就不再发，见 ChatClient。
+    seed: int | None = None
 
 
 def make_model_spec(name: str, base_url: str = "", thinking: bool = False, **kw) -> ModelSpec:
@@ -370,6 +382,7 @@ class RunConfig:
                 "temperature": self.model.temperature,
                 "max_tokens": self.model.max_tokens,
                 **({"fallback": self.model.fallback} if self.model.fallback else {}),
+                **({"seed": self.model.seed} if self.model.seed is not None else {}),
             },
             "budget": self.budget.__dict__,
             "policy": self.policy.__dict__,
