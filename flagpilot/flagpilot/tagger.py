@@ -39,6 +39,7 @@ PRIORITY = [
     "not_reproducible",
     "wrong_flag",
     "no_submit",
+    "repeat_loop",
     "budget",
 ]
 
@@ -70,6 +71,7 @@ LABELS = {
     "not_reproducible": "答案对但不可复现",
     "wrong_flag": "答案错误",
     "no_submit": "轮次耗尽未提交",
+    "repeat_loop": "同一个动作原样重做，被拦后仍不改（提前收工）",
     "budget": "预算耗尽（其他）",
 }
 
@@ -175,6 +177,9 @@ def classify_run(run_dir: Path | str | None, record: dict) -> dict:
             # agent 已经知道自己是截断而不是乱答：直接采信，别再猜一遍。
             tags.append(reason)
             evidence[reason] = f"agent 判定 {reason}（max_tokens={max_tokens or '?'}）"
+        elif reason == "repeat_loop":
+            tags.append("repeat_loop")
+            evidence["repeat_loop"] = "同一个动作两次结果一字不差，之后又原样发了三次，运行提前结束"
         elif reason == "max_turns":
             tags.append("no_submit")
             evidence["no_submit"] = (f"{record.get('turns') or '?'} 轮用满，"

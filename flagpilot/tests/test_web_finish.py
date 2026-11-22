@@ -155,6 +155,25 @@ class TestFinishAndHints(unittest.TestCase):
         self.get("/api/tacc/session")
         self.assertEqual(tacc_live.S["watch"], 0.0)
 
+    def test_recalling_a_question_cancels_its_tacc_job(self):
+        seen = {}
+
+        def fake_chat(m, h, task, tools, on_delta, on_tool, on_stage=None, cancelled=None):
+            t = time.time()
+            while time.time() - t < 10 and not cancelled():
+                time.sleep(0.02)
+            seen["cancelled"] = cancelled()
+            return {"error": "recalled", "answer": "", "cancelled": True}
+
+        with mock.patch.object(tacc_live, "chat", fake_chat):
+            d = self.post("/api/chat", {"message": "what is this?", "backend": "tacc"})
+            sid, turn = d["session_id"], d["turn"]
+            self.post("/api/chat/recall", {"session_id": sid, "turn": turn})
+            self.assertTrue(self.until(lambda: seen.get("cancelled")), "recall reaches the TACC job")
+        time.sleep(0.3)
+        rows = [json.loads(l) for l in (self.tmp / "chat" / sid / "chat.jsonl").read_text().splitlines() if l.strip()]
+        self.assertNotIn("error", [r["type"] for r in rows], "a recalled question is not logged as a failure")
+
     def test_a_closed_tab_is_not_logged_as_a_server_error(self):
         err = io.StringIO()
         with redirect_stderr(err):

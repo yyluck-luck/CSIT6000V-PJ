@@ -1225,9 +1225,6 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
          cancelled: Callable[[], bool] | None = None) -> dict:
     """答疑一轮：小作业调用常驻服务；@@delta 逐段交给 on_delta，@@reply 是结果。
 
-    2026-11-22 起网页的 Ask 不再走 TACC（/api/chat 拒绝 backend=tacc），这里没有调用方。它和 run_task 共用提交、排队、
-    取消、重试那一套作业机制，它的测试也在测那一套，所以先留着；要删就连同 tests/test_tacc_live.py 里的答疑用例一起删。
-
     on_stage 收到 uploading → queued（带作业号）→ running（带节点），网页在"三个点"展开后显示；
     提交时网关断开会收到 retrying（带说明）。cancelled()：这一问被撤回了，作业在后台取消。
     """

@@ -276,8 +276,78 @@ class TestLoopGuard(unittest.TestCase):
             agent.build_client = old
             shutil.rmtree(tmp, ignore_errors=True)
 
-        warns = [r for r in rows if r.get("type") == "repeat_warning"]
-        self.assertTrue(warns, "连续三次同一动作应触发 repeat_warning")
+        warns = [r for r in rows if r.get("type") in ("repeat_warning", "repeat_blocked")]
+        self.assertTrue(warns, "连续三次同一动作应被拦下（repeat_warning 或 repeat_blocked）")
+
+    @staticmethod
+    def _run(replies, max_turns):
+        """Run the agent against a scripted model: replies(turn) gives the action JSON of each call. Returns the trace
+        rows and every message list the model was sent."""
+        import json
+        from flagpilot import agent
+        from flagpilot.client import Completion, ServerMetrics
+        from flagpilot.config import Budget, RunConfig
+        from flagpilot.tasks import Task
+
+        tmp = Path(tempfile.mkdtemp(prefix="fp-loop-"))
+        task = Task(task_id=-1, name="rep", category="X", title="", query="",
+                    gold_sha256="0" * 64, assets=[], assets_dir="tasks/none",
+                    suggested_tools=[], scope="core")
+        cfg = RunConfig(budget=Budget(max_turns=max_turns, max_wall_s=60),
+                        limits=SandboxLimits(action_timeout_s=5))
+        sent = []
+
+        class C:
+            def complete(self, messages, max_tokens=None):
+                sent.append([dict(m) for m in messages])
+                return Completion(text=json.dumps(replies(len(sent))), prompt_tokens=10, completion_tokens=5,
+                                  ttft_ms=1, latency_ms=2)
+
+            def scrape_metrics(self):
+                return ServerMetrics()
+
+        old = agent.build_client
+        agent.build_client = lambda spec: C()
+        try:
+            agent.run_attempt(task, cfg, tmp, seed=0)
+            with open(tmp / "rep-s0" / "trace.jsonl", encoding="utf-8") as fh:
+                rows = [json.loads(l) for l in fh]
+        finally:
+            agent.build_client = old
+            shutil.rmtree(tmp, ignore_errors=True)
+        return rows, sent
+
+    def test_an_action_that_gave_the_same_result_twice_in_a_row_is_not_run_again(self):
+        """2026-11-22, Qwen 27B on TACC: from turn 18 on the model sent the very same reply 83 times (`ls ... | grep`,
+        exit 1, no output). The guard warned once, at turn 19, and then let it run to the 100-turn limit. Now the third
+        identical action in a row whose two runs gave the same result is not run; the model is told why; and when it
+        keeps sending it, the run ends early instead of using every turn."""
+        rows, sent = self._run(lambda n: {"thought": "t", "action": "shell", "cmd": "echo hi"}, max_turns=20)
+        tools = [r for r in rows if r.get("type") == "tool"]
+        blocked = [r for r in rows if r.get("type") == "repeat_blocked"]
+        summary = rows[-1]
+        self.assertEqual(len(tools), 2, "run twice, then not again")
+        self.assertEqual([int(b["turn"]) for b in blocked], [3, 4, 5])
+        self.assertEqual(blocked[0]["same_as"], [1, 2])
+        self.assertEqual((summary["verdict"], summary["reason"], int(summary["turns"])), ("budget", "repeat_loop", 5))
+        told = sent[3][-1]["content"]
+        self.assertIn("NOT RUN", told)
+        self.assertIn("steps 1 and 2", told)
+
+    def test_the_same_action_runs_again_when_something_else_happened_or_its_result_changed(self):
+        script = ["echo hi", "echo hi", "touch x", "echo hi", "echo hi"]
+        rows, _ = self._run(lambda n: {"thought": "t", "action": "shell", "cmd": script[min(n, len(script)) - 1]}, max_turns=5)
+        self.assertEqual(len([r for r in rows if r.get("type") == "tool"]), 5, "another action in between: nothing blocked")
+        self.assertFalse([r for r in rows if r.get("type") == "repeat_blocked"])
+        rows, _ = self._run(lambda n: {"thought": "t", "action": "shell", "cmd": "echo x >> n.txt; wc -l < n.txt"}, max_turns=6)
+        self.assertEqual(len([r for r in rows if r.get("type") == "tool"]), 6, "a result that changes every time is not a loop")
+        self.assertFalse([r for r in rows if r.get("type") == "repeat_blocked"])
+
+    def test_the_repeat_warning_is_given_again_when_the_model_keeps_coming_back(self):
+        """A loop over two actions (A, B, A, B, ...) is warned about more than once, not only the first time."""
+        rows, _ = self._run(lambda n: {"thought": "t", "action": "shell", "cmd": "echo a" if n % 2 else "echo b"}, max_turns=14)
+        warned_a = [r for r in rows if r.get("type") == "repeat_warning" and r.get("cmd") == "echo a"]
+        self.assertGreaterEqual(len(warned_a), 2, [int(r["turn"]) for r in warned_a])
 
 
 if __name__ == "__main__":

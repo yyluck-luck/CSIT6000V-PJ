@@ -3,8 +3,8 @@
 [![tests (CI)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml/badge.svg)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml)
 ![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-2b4fd8)
 ![runtime dependencies: none (standard library)](https://img.shields.io/badge/runtime%20dependencies-none%20%28standard%20library%29-141414)
-![unit tests: 761 passing](https://img.shields.io/badge/unit%20tests-761%20passing-2b4fd8)
-![browser checks: 105 passing](https://img.shields.io/badge/browser%20checks-105%20passing-2b4fd8)
+![unit tests: 769 passing](https://img.shields.io/badge/unit%20tests-769%20passing-2b4fd8)
+![browser checks: 107 passing](https://img.shields.io/badge/browser%20checks-107%20passing-2b4fd8)
 ![runs on: macOS | Linux | TACC Slurm](https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20TACC%20Slurm-141414)
 ![model: Qwen 3.8 27B on TACC](https://img.shields.io/badge/model-Qwen%203.8%2027B%20on%20TACC-f4b400)
 ![v7 full agent: 36/40 verified](https://img.shields.io/badge/v7%20full%20agent-36%2F40%20verified-2b4fd8)
@@ -395,7 +395,14 @@ python3 -m flagpilot batch --batch local --model qwen3:8b --base-url http://127.
 Replies follow a JSON protocol. The same action written as a model's own tool-call markup (DeepSeek's DSML), as
 function-call JSON, with raw tabs or newlines inside a string, or after a stray `</think>` is read as that action: runs of
 imported challenges on 2026-11-22 lost turns, and two runs ended, on such replies from DeepSeek (the fail-over target) and
-GLM. None of `v7`'s 51 protocol breaks is of these kinds; 2 of `v6`'s 85 are.
+GLM. None of `v7`'s 51 protocol breaks is of these kinds; 2 of `v6`'s 85 are. The page reads a reply by the same rules
+and, since 2026-11-22, shows the action the engine itself parsed (an `action` event in the trace); before, it knew none of
+these shapes and showed such steps as "? —". `tests/test_page_parser.py` runs the page's parser under node on every reply
+in `flagpilot/results/` and fails where it disagrees with the engine.
+An action that gave exactly the same result on the two turns before is not run a third time: the model is told why, and
+the third such reply in a row ends the attempt (`repeat_loop`). The earlier guard warned once per action and never
+again; on 2026-11-22 Qwen on TACC then sent one reply 83 times and used all 100 turns on it. The evaluated batches ran
+with the earlier guard.
 `--sample-seed N` sends seed N+s with every request of attempt s (vLLM and OpenAI honour it; a server that rejects the
 field stops getting it); the evaluated batches did not send one.
 
@@ -595,15 +602,13 @@ submits SDK jobs and reads their Slurm logs, so nothing is forwarded.
   process group killed, so no job is left running whose id nobody saw. Before anything is sent again, the page asks
   TACC whether the job landed.
 - **Run on TACC** submits a small client job with that challenge; its events stream into the page as it runs (read
-  every 4 s), and the finished run is downloaded and mounted as a replay. Measured: `general-004` (B3) from click to
-  `verified` in 64 s. Ask does not use TACC (since 2026-11-22): a reply there was a Slurm job of half a minute or more
-  that held one of the account's two job slots, so Ask answers with the hosted models.
+  every 4 s), and the finished run is downloaded and mounted as a replay. An **Ask** message is one small job too.
+  Measured: a reply in about 27–31 s, `general-004` (B3) from click to `verified` in 64 s.
 - A request waits ("on hold") while another job of the account runs, with Slurm's reason for any queue; too close to
   the session's end, the page offers a new session first. **Finish** and recalling a question cancel the job at once.
-- Checked on the real cluster with `scripts/live_tacc_check.py` (17 checks through the page's own API: start-up, a
-  solve, an upload, a hint, Finish while a job runs, Ask refusing TACC, ending the session). Its three passes of
-  2026-11-21 ran the earlier version, whose 20 checks still included Ask on TACC; the third passed 19 of 20, and its one
-  failure led to the payload check in the next item.
+- Checked on the real cluster with `scripts/live_tacc_check.py` (20 checks through the page's own API: start-up, a
+  solve, an upload, a hint, Finish while a job runs, Ask in two languages, recall, ending the session); the third pass
+  passed 19 of 20, and its one failure led to the payload check in the next item.
 - The SDK goes through an unreliable login gateway and a home volume shared by every user. Reads give up after 25 s
   and reconnect; a dropped handshake is retried for about two minutes; a cut-off upload is retried and a job whose
   payload did not arrive is sent again once; a full volume is named. Measurements, the failures found on the cluster
@@ -656,11 +661,11 @@ including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 761 tests (17 of them need the optional `cryptography`)
+python3 -m unittest discover -s tests -t . -q     # 769 tests (17 of them need the optional `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web app)
-node scripts/ui_check.mjs                         # 105 browser checks in headless Chrome
+node scripts/ui_check.mjs                         # 107 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 91 controls
-python3 scripts/live_tacc_check.py --base http://127.0.0.1:8080   # optional: 17 checks on the real cluster
+python3 scripts/live_tacc_check.py --base http://127.0.0.1:8080   # optional: 20 checks on the real cluster
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and fakes every model, GitHub and TACC, so

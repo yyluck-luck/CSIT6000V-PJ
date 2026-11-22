@@ -218,12 +218,27 @@ class TestWeb(unittest.TestCase):
         self.assertIn("question 2", text)
         self.assertIn("third question", text)
 
-    def test_ask_does_not_run_on_tacc(self):
-        """2026-11-22: Ask answers with the hosted models; a question for TACC is refused before anything is written."""
+    def test_a_tacc_chat_sends_the_same_plan(self):
         self.thread("aaaaaaaaaaa3", 3)
-        before = (self.tmp / "chat" / "aaaaaaaaaaa3" / "chat.jsonl").read_bytes()
-        self.assertEqual(self.code("/api/chat", {"message": "fourth", "session_id": "aaaaaaaaaaa3", "backend": "tacc"}), 400)
-        self.assertEqual((self.tmp / "chat" / "aaaaaaaaaaa3" / "chat.jsonl").read_bytes(), before)
+        self.post("/api/chat/context", {"session_id": "aaaaaaaaaaa3", "op": "exclude", "turn": 2})
+        seen = {}
+        done = threading.Event()
+
+        def fake_chat(message, history, task, tools, on_delta, on_tool, on_stage=None, cancelled=None):
+            seen["history"] = history
+            done.set()
+            return {"answer": "fine", "steps": []}
+        original = S.tacc_live.chat
+        S.tacc_live.chat = fake_chat
+        try:
+            self.post("/api/chat", {"message": "fourth", "session_id": "aaaaaaaaaaa3", "backend": "tacc"})
+            self.assertTrue(done.wait(10))
+        finally:
+            S.tacc_live.chat = original
+        users = [h.get("user", "") for h in seen["history"] if "user" in h]
+        self.assertEqual([u.split()[1] for u in users], ["1", "3"])
+        self.assertIn("left out by the user", seen["history"][-1]["note"])
+
 
 if __name__ == "__main__":
     unittest.main()
