@@ -21,6 +21,8 @@ venv/
 
 # 日志与临时包
 *.log
+# 评测记录里的作业日志要进仓库（README §3 引用它们；scripts/export_records.py 只导出这些）
+!results/**/*.log
 logs/
 *.tar.gz
 

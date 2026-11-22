@@ -1,0 +1,63 @@
+[20:52:55] serve job 30235 submitted (attempt 1, exclude=10-0-1-10,10-0-1-11,10-0-4-10,10-0-4-11)
+[20:53:56] waiting for serve 30235 @10-0-3-11
+[20:54:56] waiting for serve 30235 @10-0-3-11
+[20:55:57] waiting for serve 30235 @10-0-3-11
+[20:56:58] waiting for serve 30235 @10-0-3-11
+[20:57:59] serve ready: http://10-0-3-11:8000/v1 (job 30235, node 10-0-3-11)
+[20:59:02] client job 30236 submitted
+[21:00:03] waiting for batch 30236: [fp] tier B1 -> tacc-dev-v6-B1 (2580s left)
+[21:01:04] waiting for batch 30236: [fp] tier B1 -> tacc-dev-v6-B1 (2580s left)
+[21:02:04] waiting for batch 30236: [fp] tier B1 -> tacc-dev-v6-B1 (2580s left)
+[21:03:05] waiting for batch 30236: [1/40] crypto-092-s0          budget     turns=11 169.73s
+[21:04:06] waiting for batch 30236: [2/40] crypto-079-s1          budget     turns=6 193.51s
+[21:05:07] waiting for batch 30236: [4/40] forensics-059-s0       budget     turns=16 128.47s
+[21:06:08] waiting for batch 30236: [4/40] forensics-059-s0       budget     turns=16 128.47s
+[21:07:09] waiting for batch 30236: [6/40] crypto-072-s1          budget     turns=17 119.63s
+[21:08:10] waiting for batch 30236: [9/40] crypto-093-s0          VERIFIED   turns=4 38.97s
+[21:09:11] waiting for batch 30236: [13/40] forensics-003-s1       VERIFIED   turns=4 31.25s
+[21:10:11] waiting for batch 30236: [14/40] general-025-s0         VERIFIED   turns=5 46.68s
+[21:11:12] waiting for batch 30236: [21/40] forensics-071-s0       VERIFIED   turns=6 34.95s
+[21:12:13] waiting for batch 30236: [29/40] crypto-097-s0          VERIFIED   turns=5 29.84s
+[21:13:14] waiting for batch 30236: [fp] tier B2 -> tacc-dev-v6-B2 (1790s left)
+[21:14:15] waiting for batch 30236: [fp] tier B2 -> tacc-dev-v6-B2 (1790s left)
+[21:15:15] waiting for batch 30236: [fp] tier B2 -> tacc-dev-v6-B2 (1790s left)
+[21:16:17] waiting for batch 30236: [fp] tier B2 -> tacc-dev-v6-B2 (1790s left)
+[21:17:18] waiting for batch 30236: [1/40] crypto-092-s0          budget     turns=11 209.58s
+[21:18:18] waiting for batch 30236: [4/40] crypto-079-s0          budget     turns=9 307.01s
+[21:19:19] waiting for batch 30236: [4/40] crypto-079-s0          budget     turns=9 307.01s
+[21:20:20] waiting for batch 30236: [5/40] crypto-072-s0          budget     turns=15 222.43s
+[21:21:21] waiting for batch 30236: [7/40] crypto-074-s0          budget     turns=8 53.82s
+[21:22:22] waiting for batch 30236: [7/40] crypto-074-s0          budget     turns=8 53.82s
+[21:23:23] waiting for batch 30236: [12/40] forensics-003-s0       VERIFIED   turns=6 49.88s
+[21:24:24] waiting for batch 30236: [16/40] general-025-s1         VERIFIED   turns=5 42.42s
+[21:25:25] waiting for batch 30236: [21/40] forensics-008-s0       VERIFIED   turns=6 26.1s
+[21:26:26] waiting for batch 30236: [27/40] crypto-005-s1          VERIFIED   turns=5 24.12s
+[21:27:26] waiting for batch 30236: [33/40] forensics-065-s1       budget     turns=20 185.72s
+[21:28:27] batch finished (ok=1); client log tail:
+    失败归因（15 条失败，共 21 个标签，同一条可命中多个）：
+      不守 JSON 协议                    7  (47%)
+      脚本硬编码答案                    4  (27%)
+      答案错误                          2  (13%)
+      输出被截断（撞 max_tokens）       2  (13%)
+      轮次耗尽未提交                    2  (13%)
+      工具/沙箱超时                     2  (13%)
+      答案对但不可复现                  1  (7%)
+      环境缺工具                        1  (7%)
+      （成功的 attempt 途中还碰到：环境缺工具×10、不守 JSON 协议×1——不计入失败，但说明环境有缺口）
+      → 有题是输出被 max_tokens 截断：先调大 --max-tokens 再比较模型，否则比的是预算不是能力。
+    
+    逐条（取前 8 条）：
+      crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-092-s1           答案错误                        
+      crypto-079-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-072-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      forensics-059-s0        不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-074-s1           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      forensics-059-s1        输出被截断（撞 max_tokens）     turn 19: 4096/4096 tok 用满，JSON 未闭合
+    
+    Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v6-B2.md
+    [fp] tier-done tacc-dev-v6-B2 876s
+    [fp] done: /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v6
+[21:32:42] local: client-30227.log client-30236.log client-live.log pipeline-1.log pipeline-2.log serve-30221.log serve-30235.log serve-live.log tacc-dev-v6-B0 tacc-dev-v6-B0.md tacc-dev-v6-B1 tacc-dev-v6-B1.md tacc-dev-v6-B2 tacc-dev-v6-B2.md tacc-dev-v6-B3 tacc-dev-v6-B3.md 
+[21:32:42] cancel serve job 30235

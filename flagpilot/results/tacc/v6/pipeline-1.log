@@ -1,0 +1,85 @@
+[19:13:31] serve job 30219 submitted (attempt 1, exclude=10-0-1-10,10-0-1-11,10-0-4-10)
+[19:14:32] waiting for serve 30219 @10-0-4-11
+[19:15:33] waiting for serve 30219 @10-0-4-11
+[19:16:34] waiting for serve 30219 @10-0-4-11
+[19:17:34] waiting for serve 30219 @10-0-4-11
+[19:18:39] waiting for serve 30219 @10-0-4-11
+[19:19:40] serve job 30219 failed:
+[19:19:49] serve job 30221 submitted (attempt 2, exclude=10-0-1-10,10-0-1-11,10-0-4-10,10-0-4-11)
+[19:20:50] waiting for serve 30221
+[19:21:51] waiting for serve 30221
+[19:22:52] waiting for serve 30221
+[19:23:52] waiting for serve 30221
+[19:24:53] waiting for serve 30221
+[19:25:54] waiting for serve 30221
+[19:26:55] waiting for serve 30221
+[19:27:56] waiting for serve 30221
+[19:28:57] waiting for serve 30221
+[19:29:57] waiting for serve 30221
+[19:30:58] waiting for serve 30221
+[19:31:59] waiting for serve 30221
+[19:33:00] waiting for serve 30221
+[19:34:01] waiting for serve 30221
+[19:35:02] waiting for serve 30221
+[19:36:02] waiting for serve 30221
+[19:37:03] waiting for serve 30221
+[19:38:04] waiting for serve 30221
+[19:39:05] waiting for serve 30221
+[19:40:06] waiting for serve 30221 @10-0-3-10
+[19:41:07] waiting for serve 30221 @10-0-3-10
+[19:42:07] waiting for serve 30221 @10-0-3-10
+[19:43:08] waiting for serve 30221 @10-0-3-10
+[19:44:09] serve ready: http://10-0-3-10:8000/v1 (job 30221, node 10-0-3-10)
+[19:44:41] client job 30227 submitted
+[19:45:41] waiting for batch 30227: [fp] tier B0 -> tacc-dev-v6-B0 (2580s left)
+[19:46:42] waiting for batch 30227: [1/40] crypto-079-s1          VERIFIED   turns=3 29.46s
+[19:47:43] waiting for batch 30227: [2/40] crypto-092-s0          budget     turns=8 119.64s
+[19:48:44] waiting for batch 30227: [3/40] crypto-092-s1          budget     turns=9 162.49s
+[19:49:45] waiting for batch 30227: [4/40] forensics-059-s1       budget     turns=11 115.83s
+[19:50:46] waiting for batch 30227: [6/40] crypto-072-s0          budget     turns=20 138.67s
+[19:51:47] waiting for batch 30227: [9/40] crypto-093-s0          VERIFIED   turns=5 34.83s
+[19:52:48] waiting for batch 30227: [14/40] crypto-058-s0          VERIFIED   turns=4 31.85s
+[19:53:49] waiting for batch 30227: [18/40] general-025-s0         VERIFIED   turns=5 42.66s
+[19:54:50] waiting for batch 30227: [28/40] forensics-008-s1       VERIFIED   turns=7 32.27s
+[19:55:50] waiting for batch 30227: [36/40] general-037-s1         VERIFIED   turns=4 19.08s
+[19:56:51] waiting for batch 30227: [fp] tier B3 -> tacc-dev-v6-B3 (1952s left)
+[19:57:52] waiting for batch 30227: [1/40] crypto-079-s0          VERIFIED   turns=6 65.97s
+[19:58:53] waiting for batch 30227: [2/40] forensics-059-s1       budget     turns=20 123.76s
+[19:59:55] waiting for batch 30227: [3/40] forensics-059-s0       budget     turns=20 187.34s
+[20:00:56] waiting for batch 30227: [4/40] crypto-072-s1          budget     turns=20 152.92s
+[20:01:57] waiting for batch 30227: [4/40] crypto-072-s1          budget     turns=20 152.92s
+[20:02:58] waiting for batch 30227: [6/40] crypto-079-s1          budget     turns=8 383.68s
+[20:03:59] waiting for batch 30227: [8/40] crypto-092-s0          budget     turns=18 277.28s
+[20:05:00] waiting for batch 30227: [10/40] crypto-092-s1          budget     turns=13 226.23s
+[20:06:01] waiting for batch 30227: [14/40] forensics-003-s0       VERIFIED   turns=11 92.36s
+[20:07:02] waiting for batch 30227: [19/40] forensics-003-s1       VERIFIED   turns=12 141.16s
+[20:08:03] waiting for batch 30227: [28/40] crypto-005-s1          VERIFIED   turns=7 34.07s
+[20:09:04] waiting for batch 30227: [36/40] general-019-s1         unverified turns=3 10.24s
+[20:10:04] batch finished (ok=1); client log tail:
+      General Skills     n=12  verified=8   raw=12  v_rate=67% r_rate=100%
+    
+    失败归因（15 条失败，共 20 个标签，同一条可命中多个）：
+      脚本硬编码答案                    6  (40%)
+      不守 JSON 协议                    6  (40%)
+      轮次耗尽未提交                    3  (20%)
+      输出被截断（撞 max_tokens）       2  (13%)
+      环境缺工具                        2  (13%)
+      工具/沙箱超时                     1  (7%)
+      （成功的 attempt 途中还碰到：环境缺工具×11——不计入失败，但说明环境有缺口）
+      → 有题是输出被 max_tokens 截断：先调大 --max-tokens 再比较模型，否则比的是预算不是能力。
+    
+    逐条（取前 8 条）：
+      forensics-059-s1        轮次耗尽未提交                  20 轮用满，始终没走到 submit
+      forensics-059-s0        输出被截断（撞 max_tokens）     turn 17: 4096/4096 tok 用满，JSON 未闭合
+      crypto-072-s1           工具/沙箱超时                   turn 8 shell
+      crypto-072-s0           输出被截断（撞 max_tokens）     turn 10: 4096/4096 tok 用满，JSON 未闭合
+      crypto-079-s1           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-074-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-092-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+      crypto-093-s0           不守 JSON 协议                  没有解析到合法的 JSON 动作
+    
+    Markdown 已写入 /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v6-B3.md
+    [fp] tier-done tacc-dev-v6-B3 793s
+    [fp] done: /mnt/home/yliutz/USERDIR/flagpilot-runs/tacc-dev-v6
+[20:13:00] local: client-30227.log client-live.log pipeline-1.log serve-30221.log serve-live.log tacc-dev-v6-B0 tacc-dev-v6-B0.md tacc-dev-v6-B3 tacc-dev-v6-B3.md 
+[20:13:00] cancel serve job 30221
