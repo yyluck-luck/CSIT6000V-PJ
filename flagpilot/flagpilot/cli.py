@@ -437,8 +437,20 @@ def _load_batch(path: Path) -> list[dict]:
     return rows
 
 
+def _batch_dir(name: str) -> Path:
+    """批次目录：给的是现成目录就用它（绝对路径，或相对当前目录），否则当作 runs/ 下的名字。
+
+    评测记录随仓库提交在 `flagpilot/results/tacc/...`，运行记录在 `runs/`。只认 `runs/` 的话，
+    README 那些"离线复现 v7 表格"的命令在新克隆里一条都读不到——连 `--batch results/tacc/v7/tacc-dev-v7-B0`
+    这种明确写了路径的写法也被拼成 runs/results/...。写批次的路径不走这里（见 cmd_batch），
+    它们只该落进 runs/。
+    """
+    p = Path(name).expanduser()
+    return p if p.is_dir() else config.RUNS_ROOT / name
+
+
 def cmd_report(args) -> int:
-    path = config.RUNS_ROOT / args.batch / "runs.jsonl"
+    path = _batch_dir(args.batch) / "runs.jsonl"
     if not path.exists():
         _p(f"找不到 {path}")
         return 1
@@ -464,7 +476,7 @@ def cmd_compare(args) -> int:
         return 1
     batches: dict[str, dict] = {}
     for n in names:
-        p = config.RUNS_ROOT / n / "runs.jsonl"
+        p = _batch_dir(n) / "runs.jsonl"
         if not p.exists():
             _p(f"[warn] 跳过 {n}：找不到 {p}")
             continue
@@ -489,7 +501,7 @@ def cmd_compare(args) -> int:
 def cmd_pair(args) -> int:
     loaded = {}
     for name in (args.a, args.b):
-        p = config.RUNS_ROOT / name / "runs.jsonl"
+        p = _batch_dir(name) / "runs.jsonl"
         if not p.exists():
             _p(f"找不到 {p}")
             return 1
