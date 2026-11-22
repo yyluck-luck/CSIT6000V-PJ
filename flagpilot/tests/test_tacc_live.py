@@ -26,6 +26,7 @@ from app import tacc_live  # noqa: E402
 SUBMIT = r"""#!/usr/bin/env bash
 st="$FAKE_STATE"
 if [[ -n "${FAKE_SUBMIT_FAIL:-}" ]]; then echo "[tcloud] staging"; echo "$FAKE_SUBMIT_FAIL" >&2; exit 1; fi
+if [[ -n "${FAKE_SUBMIT_SLEEP:-}" ]]; then sleep "$FAKE_SUBMIT_SLEEP"; fi
 if [[ -n "${FAKE_SESSION_FAILS:-}" ]]; then c=$(( $(cat "$st/sessfail" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/sessfail"
   if (( c <= FAKE_SESSION_FAILS )); then echo "[Tcloud Error] 2026/11/20 tcloudcli.go:140: Failed to create remote session" >&2; exit 1; fi; fi
 if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
@@ -37,7 +38,9 @@ printf 'Submitted batch job %s\n' "$n"
 TCLOUD = r"""#!/usr/bin/env bash
 st="$FAKE_STATE"
 case "$1" in
-  cat) if [[ -n "${FAKE_CAT_FLAKE:-}" ]]; then k=$(( $(cat "$st/flake" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$st/flake"
+  cat) if [[ -n "${FAKE_CAT_HANG:-}" ]]; then h=$(( $(cat "$st/hang" 2>/dev/null || echo 0) + 1 )); echo "$h" > "$st/hang"
+          if (( h == 1 )); then sleep "$FAKE_CAT_HANG"; echo "[Tcloud Error] tcloudcli.go:140: Failed to create remote session"; exit 1; fi; fi
+       if [[ -n "${FAKE_CAT_FLAKE:-}" ]]; then k=$(( $(cat "$st/flake" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$st/flake"
           if (( k % 2 == 0 )); then echo "[Tcloud Error] 2026/11/21 tcloudcli.go:140: Failed to create remote session"; exit 1; fi; fi
     f=$(basename "$2"); n=$(echo "$f" | sed 's/[^0-9]//g'); mode=$(cat "$st/job-$n.mode" 2>/dev/null)
     case "$mode" in
@@ -65,7 +68,9 @@ case "$1" in
       chat) if [[ -n "${FAKE_QUEUE_CHAT:-}" ]]; then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
             printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
     esac ;;
-  download) mkdir -p "${@: -1}/$(basename "${@: -2:1}")"; echo "download $*" >> "$st/record" ;;
+  download) d="${@: -1}/$(basename "${@: -2:1}")"; mkdir -p "$d"; echo "download $*" >> "$st/record"
+            k=$(( $(cat "$st/dl" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$st/dl"
+            if [[ -z "${FAKE_DL_PARTIAL:-}" || "$k" -gt 1 ]]; then echo '{}' > "$d/runs.jsonl"; fi ;;
   cancel) echo "cancel $3" >> "$st/record"
           if [[ -z "${FAKE_CANCEL_STUCK:-}" && -f "$st/ps" ]]; then grep -v "^ *$3 " "$st/ps" > "$st/ps.new"; mv "$st/ps.new" "$st/ps"; fi ;;
   ps) echo "             JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)"; cat "$st/ps" 2>/dev/null ;;
@@ -584,6 +589,131 @@ class TestRobustness(TaccHarness):
         self.assertTrue(row["query"].endswith("Hint from the user: look at the header"), row["query"][-80:])
         self.assertEqual(row["scope"], "core")
         self.assertIn("tasks=demo-001 ", self.record())
+
+    # 2026-11-21 on the real cluster: a question recalled while TACC's gateway kept dropping its submission went on
+    # being retried for minutes, even after the session had been stopped, into the working directory the next job uses
+    def flaky_gateway(self):
+        os.environ.update(FAKE_SESSION_FAILS="99", FLAGPILOT_TACC_RETRY_WAIT="0.3")   # pauses 0.3, 0.6, 1.2, 1.8, 2.7 s
+        (self.tmp / "state" / "sessfail").write_text("0")
+
+    def tries(self):
+        return int((self.tmp / "state" / "sessfail").read_text().strip())
+
+    def test_a_recalled_question_stops_retrying_its_submission(self):
+        self.ready()
+        self.flaky_gateway()
+        flag = {"x": False}
+
+        def stage(ev):                                  # recalled while the submission is being retried
+            if ev.get("stage") == "retrying":
+                flag["x"] = True
+        t = time.time()
+        rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None, stage, cancelled=lambda: flag["x"])
+        self.assertTrue(rep.get("cancelled"), rep)
+        self.assertLess(time.time() - t, 2.0)
+        self.assertEqual(self.tries(), 1, "no try after the recall")
+        self.assertEqual(tacc_live.S["busy"], "")
+
+    def test_a_finished_run_stops_retrying_its_submission(self):
+        self.ready()
+        self.flaky_gateway()
+        flag, evs = {"x": False}, []
+
+        def on_event(ev):
+            evs.append(ev)
+            if ev.get("stage") == "retrying":           # Finish while the submission is being retried
+                flag["x"] = True
+        t = time.time()
+        d = tacc_live.run_task("demo-001", "B3", self.tmp / "runs", on_event, cancelled=lambda: flag["x"])
+        self.assertIsNone(d)
+        self.assertLess(time.time() - t, 2.0)
+        self.assertNotIn("error", [e["type"] for e in evs], "finishing is not an error")
+        self.assertEqual(self.tries(), 1, "no try after Finish")
+        self.assertEqual(tacc_live.S["busy"], "")
+
+    def test_stopping_the_session_stops_a_submission_being_retried(self):
+        self.ready()
+        self.flaky_gateway()
+
+        def stage(ev):
+            if ev.get("stage") == "retrying" and tacc_live.S["phase"] == "ready":
+                tacc_live.stop()
+        t = time.time()
+        rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None, stage)
+        self.assertIn("session ended", rep.get("error", ""), rep)
+        self.assertLess(time.time() - t, 2.0)
+        self.assertEqual(self.tries(), 1, "no try after the session was stopped")
+        self.assertEqual(tacc_live.S["busy"], "")
+
+    def test_a_job_submitted_after_a_recall_is_cancelled_at_once(self):
+        self.ready()
+        os.environ["FAKE_SUBMIT_SLEEP"] = "1"           # the try in flight finishes after the recall
+        flag, stages = {"x": False}, []
+
+        def stage(ev):
+            stages.append(ev)
+            if ev.get("stage") == "uploading":
+                threading.Timer(0.3, lambda: flag.update(x=True)).start()
+        rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None, stage, cancelled=lambda: flag["x"])
+        self.assertTrue(rep.get("cancelled"), rep)
+        self.assertNotIn("queued", [s["stage"] for s in stages], "a recalled question is never shown as queued")
+        t = time.time()
+        while time.time() - t < 5 and (tacc_live.S["busy"] or "cancel 502" not in self.record()):
+            time.sleep(0.02)
+        self.assertIn("cancel 502", self.record())
+        self.assertEqual(tacc_live.S["busy"], "", "the slot is freed once the job has been cancelled")
+
+    def test_stopping_a_starting_session_stops_its_submission_retries(self):
+        self.flaky_gateway()
+        self.assertTrue(tacc_live.start()["ok"])
+        t = time.time()
+        while time.time() - t < 5 and not any("trying again" in l for l in tacc_live.status()["log"]):
+            time.sleep(0.01)
+        tacc_live.stop()
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.status()["phase"] != "idle":
+            time.sleep(0.02)
+        self.assertEqual(tacc_live.status()["phase"], "idle", "stopped, not failed")
+        self.assertLess(time.time() - t, 1.5)
+        time.sleep(0.5)
+        self.assertEqual(self.tries(), 1, "no try after the stop")
+        self.assertEqual(tacc_live.status()["error"], "")
+
+    def test_a_session_started_again_is_not_taken_over_by_the_old_submission(self):
+        os.environ["FAKE_SUBMIT_SLEEP"] = "0.6"         # each serve submission takes 0.6 s
+        self.assertTrue(tacc_live.start()["ok"])        # submits job 501 ...
+        time.sleep(0.2)
+        tacc_live.stop()                                # ... stopped while that try is in flight ...
+        self.assertTrue(tacc_live.start()["ok"])        # ... and started again at once: job 502
+        t = time.time()
+        while time.time() - t < 8 and not ("cancel 501" in self.record() and tacc_live.status()["phase"] == "ready"):
+            time.sleep(0.02)
+        s = tacc_live.status()
+        self.assertEqual((s["phase"], s["serve"]), ("ready", "502"), s.get("log"))
+        self.assertIn("cancel 501", self.record(), "the old submission's job is cancelled")
+        self.assertNotIn("cancel 502", self.record())
+        time.sleep(0.3)
+        self.assertEqual(tacc_live.status()["serve"], "502", "the old loop never writes over the new session")
+
+    def test_a_log_read_that_hangs_is_given_up_quickly(self):
+        # 2026-11-21: 1 in 38 `tcloud cat` calls hung for 142 s (the gateway never opened the SSH session); with a 120 s
+        # timeout the page showed "queued" while short jobs ran to the end, then every event at once
+        self.ready()
+        os.environ.update(FAKE_CAT_HANG="4", FLAGPILOT_TACC_READ_TIMEOUT="0.5")
+        (self.tmp / "state" / "hang").write_text("0")
+        t = time.time()
+        d, evs, _ = self.events()
+        self.assertIsNotNone(d)
+        self.assertEqual(evs[-1]["type"], "summary")
+        self.assertLess(time.time() - t, 3.0, "the hung read was abandoned, not waited out")
+
+    def test_a_half_finished_download_is_tried_again(self):
+        os.environ.update(FAKE_DL_PARTIAL="1", FLAGPILOT_TACC_RETRY_WAIT="0")
+        dest = self.tmp / "dl"
+        dest.mkdir()
+        self.assertTrue(tacc_live._download("flagpilot-runs/web-x-B3", dest, expect="runs.jsonl"))
+        self.assertEqual(self.record().count("download -r"), 2, "the folder without its ledger did not count")
+        self.assertTrue((dest / "web-x-B3" / "runs.jsonl").exists())
 
     def test_the_watchdog_notices_a_service_that_died(self):
         self.ready()

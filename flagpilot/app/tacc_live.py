@@ -43,7 +43,8 @@ GONE = "\x00gone"
 CANCELLED = "\x00cancelled"
 _L = threading.Lock()
 S: dict = {"phase": "idle", "serve": None, "node": None, "url": "", "t0": 0.0, "ready": 0.0, "log": [], "busy": "", "error": "",
-           "queue": "", "prog": {}, "watch": 0.0}
+           "queue": "", "prog": {}, "watch": 0.0, "gen": 0}
+# gen：每开一次会话加一。启动循环只管自己那一代：停了又马上重开时，旧循环晚到的作业号不会写进新会话（它只取消自己的作业）
 # 同时最多两条 SDK 连接：网关正是在一堆连接同时握手时开始断的，别自己再添一把火
 _SDK_SEM = threading.BoundedSemaphore(int(os.environ.get("FLAGPILOT_TACC_SDK_PARALLEL") or 2))
 
@@ -61,6 +62,12 @@ def _tasks_root() -> Path:
     return Path(os.environ.get("FLAGPILOT_TASKS") or ROOT / "tasks")
 
 
+def _read_timeout() -> float:
+    """cat / ps / cancel 一次最多等多久。2026-11-21 实测：正常 0.8 s（最慢 5.6 s）；网关建不起 SSH 会话时一挂 142 s 才报错。
+    以前等 120 s：短作业在这段时间里早跑完了，页面一直显示排队、最后所有事件一齐冒出来。放弃了下一轮重连就好（都可以重来）。"""
+    return float(os.environ.get("FLAGPILOT_TACC_READ_TIMEOUT") or 25)
+
+
 def _retry_wait() -> float:
     return float(os.environ.get("FLAGPILOT_TACC_RETRY_WAIT") or 5)
 
@@ -70,7 +77,8 @@ def _clean(text: str) -> str:
                      if "post-quantum" not in l and "store now, decrypt later" not in l and "pq.html" not in l)
 
 
-def _sdk(*args: str, timeout: float = 120) -> str:
+def _sdk(*args: str, timeout: float | None = None) -> str:
+    timeout = _read_timeout() if timeout is None else timeout
     with _SDK_SEM:
         try:
             r = subprocess.run([_tc(), *args], capture_output=True, timeout=timeout, cwd=str(ROOT))
@@ -87,7 +95,7 @@ def _ps(tries: int = 3) -> list[list[str]] | None:
     """`tcloud ps` 的作业行（按空白切开）。列不出来（SSH 握手失败、超时）返回 None——不能当成"没有作业"：
     以前就是这样把还在跑的作业当成已结束（取消"成功"、会话接不回来、等候脚本以为名额空了）。"""
     for i in range(max(1, tries)):
-        rows = [l.split() for l in _sdk("ps", timeout=60).splitlines()]
+        rows = [l.split() for l in _sdk("ps").splitlines()]
         if any(r[:1] == ["JOBID"] for r in rows):
             return [r for r in rows if r and r[0].isdigit()]
         if i + 1 < tries:
@@ -127,18 +135,36 @@ def _gone(jid: str) -> bool:
     return _job_state(jid) == ""
 
 
-def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], None] | None = None) -> tuple[str, str]:
+def _pause(seconds: float, stop: Callable[[], bool]) -> bool:
+    """睡 seconds 秒，期间 stop() 一变真就提前醒来。返回 True = 被叫停了。"""
+    t_end = time.time() + seconds
+    while time.time() < t_end:
+        if stop():
+            return True
+        time.sleep(min(0.05, max(0.0, t_end - time.time())))
+    return stop()
+
+
+def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], None] | None = None,
+            cancelled: Callable[[], bool] | None = None) -> tuple[str, str]:
     """交一个作业。返回 (作业号, 失败原因)；成功时原因为空。
 
     原因取 submit.sh 输出的最后一行，网页直接显示（以前只有一句 "TACC submission failed"，
     看不出是题名不合法还是题目不存在）。含中文的原因不上页面，完整输出打进服务器日志。
     网关断开 SSH 握手时耐心重试（SUBMIT_TRIES 次，间隔 SUBMIT_BACKOFF 递增，合计约 2 分钟），每次重试经 note
     告诉页面在等什么；submit.sh 自己的重试关掉（FP_SUBMIT_TRIES=1），免得两层叠在一起、页面上又看不到。
+    cancelled()：调用方不要这个作业了（Finish、撤回、会话结束）——不再发起新的一次，返回 ("", CANCELLED)。
+    正在进行的那一次不打断：中途杀掉 tcloud submit 可能留下一个交上去了、作业号却没人知道的作业；
+    它交上去了就把作业号照常返回，由调用方立即取消。2026-11-21 实测：撤回的提问在网关断线时
+    接着重试了好几分钟，会话都停了还在往下一个作业要用的工作目录里上传。
     """
     env = {**os.environ, "LANG": os.environ.get("LANG") or "en_US.UTF-8", "FP_SUBMIT_TRIES": "1", **env_extra}
+    stop = cancelled or (lambda: False)
     wait = _retry_wait()
     out = ""
     for attempt in range(SUBMIT_TRIES):
+        if stop():
+            return "", CANCELLED
         try:
             with _SDK_SEM:
                 r = subprocess.run(["bash", str(_submit_path()), mode, *([url] if url else [])], capture_output=True,
@@ -155,7 +181,9 @@ def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], Non
             print(f"[tacc] {mode}: {msg}", flush=True)
             if note:
                 note(msg)
-            time.sleep(pause)
+            if _pause(pause, stop):
+                print(f"[tacc] {mode}: no longer wanted; not trying again", flush=True)
+                return "", CANCELLED
             continue
         break
     print(f"[tacc] {mode} submission failed:\n{out[-1500:]}", flush=True)
@@ -259,15 +287,16 @@ STATE_FILE: Path | None = None       # serve() 设置：runs/tacc/session.json
 
 def _save() -> None:
     """会话状态落盘（原子替换）。网页服务重启后靠它接回还在跑的服务作业。"""
-    if STATE_FILE is None:
+    f = STATE_FILE                     # 读一次：别的线程可能同时把它换掉
+    if f is None:
         return
     with _L:
         d = {k: S[k] for k in ("phase", "serve", "node", "url", "t0", "ready")}
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = STATE_FILE.with_suffix(".tmp")
+        f.parent.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".tmp")
         tmp.write_text(json.dumps(d), encoding="utf-8")
-        os.replace(tmp, STATE_FILE)
+        os.replace(tmp, f)
     except OSError:
         pass
 
@@ -295,9 +324,11 @@ def restore(path: Path) -> bool:
         with _L:
             if S["phase"] != "idle":
                 return False
+            S["gen"] += 1
+            gen = S["gen"]
             S.update(phase="starting", serve=jid, node=None, url="", t0=float(d["t0"]), ready=0.0, log=[], busy="", error="",
                      queue="", prog=_new_prog(float(d["t0"])))
-        threading.Thread(target=_serve_loop, kwargs={"adopt": (jid, float(d["t0"]))}, daemon=True).start()
+        threading.Thread(target=_serve_loop, kwargs={"adopt": (jid, float(d["t0"])), "gen": gen}, daemon=True).start()
         return True
     if d.get("phase") != "ready" or not jid or not d.get("url") or time.time() > float(d.get("t0") or 0) + SESSION_S:
         return False
@@ -326,11 +357,13 @@ def _new_prog(t_sub: float) -> dict:
     return {"t_sub": t_sub, "at": {}, "step": "", "detail": {}, "tail": [], "queue": "", "ahead": 0}
 
 
-def _progress(p: dict) -> None:
+def _progress(p: dict, gen: int | None = None) -> None:
     """记下服务日志里看到的启动进度。每一步记"第一次看到它"的本机时刻：两次查看之间跳过的步骤一并补上。"""
     ids = [s[0] for s in tacc_log.STEPS]
     now = time.time()
     with _L:
+        if gen is not None and S["gen"] != gen:
+            return
         g = S["prog"]
         if not g:
             return
@@ -376,7 +409,7 @@ def watch() -> dict:
 
 def status() -> dict:
     with _L:
-        d = {k: (list(v) if isinstance(v, list) else v) for k, v in S.items() if k not in ("prog", "watch")}
+        d = {k: (list(v) if isinstance(v, list) else v) for k, v in S.items() if k not in ("prog", "watch", "gen")}
         prog = json.loads(json.dumps(S.get("prog") or {}))
     left = (d["t0"] + SESSION_S - time.time()) if d["phase"] == "ready" else 0
     return {**d, "remaining": max(0, round(left)), "elapsed": round(time.time() - d["t0"]) if d["t0"] else 0,
@@ -406,16 +439,20 @@ def start() -> dict:
     with _L:
         if S["phase"] in ("starting", "ready"):
             return {"ok": True, "phase": S["phase"]}
+        S["gen"] += 1
+        gen = S["gen"]
         S.update(phase="starting", serve=None, node=None, url="", t0=time.time(), ready=0.0, error="", log=[], queue="",
                  prog=_new_prog(time.time()))
-    threading.Thread(target=_serve_loop, daemon=True).start()
+    threading.Thread(target=_serve_loop, kwargs={"gen": gen}, daemon=True).start()
     return {"ok": True, "phase": "starting"}
 
 
-def _fail(msg: str) -> None:
-    _log(msg)
+def _fail(msg: str, gen: int | None = None) -> None:
     with _L:
+        if gen is not None and S["gen"] != gen:      # 这一代会话已经被停掉并重开了：别把新会话标成失败
+            return
         S.update(phase="failed", error=msg, url="")
+    _log(msg)
     _save()
 
 
@@ -452,10 +489,33 @@ def _serve_ended_why(log: str) -> str:
     return (errs[-1][:160] if errs else "it ended before Qwen was ready")
 
 
-def _serve_loop(adopt: tuple[str, float] | None = None) -> None:
-    """起服务作业并等到就绪。adopt=(作业号, 提交时刻)：网页服务重启前已经在启动的作业，接着等，不重交。"""
+def _serve_loop(adopt: tuple[str, float] | None = None, gen: int | None = None) -> None:
+    """起服务作业并等到就绪。adopt=(作业号, 提交时刻)：网页服务重启前已经在启动的作业，接着等，不重交。
+
+    gen：这个循环属于哪一代会话。会话被停掉（phase=stopping）或停了又重开（gen 变了）时，提交不再重试；
+    正在进行的那一次晚到的作业号直接取消，从不写进会话。2026-11-21 起：网关断线时一次提交能挂约 150 s。
+    """
     excl = os.environ.get("FLAGPILOT_TACC_EXCLUDE", BAD_NODES)
     poll = float(os.environ.get("FLAGPILOT_TACC_POLL", "15"))
+    gen = S["gen"] if gen is None else gen
+
+    def mine() -> bool:
+        return S["gen"] == gen
+
+    def abandon(jid: str | None) -> None:
+        """不再要这个作业了：取消它；会话还是这一代、正等着停下时，标成空闲。"""
+        if jid:
+            _cancel(jid)
+            if mine():
+                _log(f"serve job {jid} cancelled")
+            else:
+                print(f"[tacc] serve job {jid} of a stopped session cancelled", flush=True)
+        with _L:
+            if mine() and S["phase"] == "stopping":
+                S.update(phase="idle", serve=None, queue="")
+        if mine():
+            _save()
+
     for attempt in range(1, 5):
         if adopt and attempt == 1:
             jid, t_sub = adopt
@@ -463,37 +523,46 @@ def _serve_loop(adopt: tuple[str, float] | None = None) -> None:
         else:
             t_sub = time.time()
             with _L:
-                S["prog"] = _new_prog(t_sub)
-            jid, why = _submit("serve", {"FP_EXCLUDE": excl}, note=_log)
-            if not jid:
-                return _fail("serve submission failed" + (f": {why}" if why else ""))
-            # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
-            # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
+                if not mine() or S["phase"] != "starting":
+                    stale = True
+                else:
+                    stale = False
+                    S["prog"] = _new_prog(t_sub)
+            if stale:
+                return abandon(None)
+            jid, why = _submit("serve", {"FP_EXCLUDE": excl}, note=lambda m: mine() and _log(m),
+                               cancelled=lambda: not mine() or S["phase"] != "starting")
             with _L:
-                S.update(serve=jid, t0=t_sub)
+                stale = not mine() or S["phase"] != "starting"
+                if not stale and jid:
+                    # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
+                    # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
+                    S.update(serve=jid, t0=t_sub)
+            if stale or why == CANCELLED:
+                return abandon(jid)
+            if not jid:
+                return _fail("serve submission failed" + (f": {why}" if why else ""), gen)
             _save()                       # 提交了就落盘：此刻重启网页服务，也能把这个作业接回来，而不是留下孤儿作业
             _log(f"serve job {jid} submitted (attempt {attempt})")
         deadline, retry, quiet, running, gone, last_ps = time.time() + 45 * 60, False, t_sub, False, 0, 0.0
         while time.time() < deadline:
-            if S["phase"] == "stopping":
-                _cancel(jid)
-                _log(f"serve job {jid} cancelled")
-                with _L:
-                    S.update(phase="idle", serve=None, queue="")
-                _save()
-                return
+            if not mine() or S["phase"] == "stopping":
+                return abandon(jid)
             _nap(poll)
-            if S["phase"] == "stopping":
+            if not mine() or S["phase"] == "stopping":
                 continue
             t_ask = time.time()
             L = _sdk("cat", f"slurm_log/qwen-public-serve-{jid}.log")
+            if not mine():
+                continue
             if tacc_log.is_log(L):
-                _progress(tacc_log.serve_progress(L))
+                _progress(tacc_log.serve_progress(L), gen)
             if not running:
                 if "SDK_BOOTSTRAP=" in L:
                     running = True
                     with _L:
-                        S.update(t0=max(t_sub, quiet - BOOT_MARGIN_S), queue="")
+                        if mine():
+                            S.update(t0=max(t_sub, quiet - BOOT_MARGIN_S), queue="")
                 else:
                     quiet = t_ask
             # 问 Slurm：排队时每次都问（原因、前面几个）；开跑后隔一阵问一次（作业还在不在）
@@ -505,9 +574,10 @@ def _serve_loop(adopt: tuple[str, float] | None = None) -> None:
                     if not running:
                         why, ahead = _queue_info(jid, rows)
                         with _L:
-                            S["queue"] = why
-                            S["prog"].update(queue=why, ahead=ahead)
-            if S["phase"] == "stopping":                 # 查看期间点了断开：别再把它改回 ready
+                            if mine():
+                                S["queue"] = why
+                                S["prog"].update(queue=why, ahead=ahead)
+            if not mine() or S["phase"] == "stopping":   # 查看期间点了断开（或已重开）：别再把它改回 ready
                 continue
             m = re.search(r"SERVICE_BASE_URL=(http://([^:\s]+):\d+/v1)", L)
             if "PRECHECK_FAIL" in L:
@@ -519,7 +589,7 @@ def _serve_loop(adopt: tuple[str, float] | None = None) -> None:
                 break
             if "Application startup complete" in L and m:
                 with _L:
-                    if S["phase"] != "starting":
+                    if not mine() or S["phase"] != "starting":
                         continue
                     S.update(phase="ready", url=m.group(1), node=m.group(2), ready=time.time(), queue="")
                 _save()
@@ -537,15 +607,16 @@ def _serve_loop(adopt: tuple[str, float] | None = None) -> None:
                     retry = True
                     break
                 _cancel(jid)
-                return _fail(f"serve job {jid} stopped: {_serve_ended_why(L)}")
+                return _fail(f"serve job {jid} stopped: {_serve_ended_why(L)}", gen)
             with _L:
                 q = S["queue"]
-            _log(f"waiting for serve {jid}" + (f" on {m.group(2)}" if m else " (starting)" if running
-                                                 else f" (queued: {q})" if q else " (queued)"))
+            if mine():
+                _log(f"waiting for serve {jid}" + (f" on {m.group(2)}" if m else " (starting)" if running
+                                                     else f" (queued: {q})" if q else " (queued)"))
         if not retry:
             _cancel(jid)
-            return _fail(f"serve job {jid} not ready within 45 min (cluster busy)")
-    _fail("no server after 4 attempts")
+            return _fail(f"serve job {jid} not ready within 45 min (cluster busy)", gen)
+    _fail("no server after 4 attempts", gen)
 
 
 def _watchdog(jid: str) -> None:
@@ -622,6 +693,11 @@ def _release() -> None:
         S["busy"] = ""
 
 
+def _session_gone(serve: str | None) -> Callable[[], bool]:
+    """claim 时的会话（按服务作业号认）已经结束了吗？之后又开了新会话也算结束：作业带的是旧服务的地址。"""
+    return lambda: S["phase"] != "ready" or S["serve"] != serve
+
+
 def _cancel_then_release(jid: str) -> None:
     """用户点了 Finish / 撤回：页面上立刻结束，这里在后台把作业取消干净再放出名额——
     下一个作业要等这个真的停了才交，否则两个作业会在同一个工作目录里互相覆盖。"""
@@ -672,11 +748,15 @@ def batch_name(task: str) -> str:
     return f"{head}-{uuid.uuid4().hex[:5]}"
 
 
-def _download(remote: str, dest: Path, tries: int = 4) -> bool:
-    """tcloud download -r，带重试；落地了才算。"""
+def _download(remote: str, dest: Path, tries: int = 4, expect: str = "") -> bool:
+    """tcloud download -r，带重试；落地了才算。expect：下载下来的目录里必须有的文件——只建了目录的半截下载不算。
+
+    单题的记录只有几十 KB（作业已精简到记录），几秒就下完；60 s 还没回来就是网关没建起会话（一挂约 142 s），
+    放弃重来，别让页面在所有事件都到了之后还干等"完成"。"""
+    target = dest / Path(remote).name
     for i in range(tries):
-        _sdk("download", "-r", remote, str(dest) + "/", timeout=300)
-        if (dest / Path(remote).name).exists():
+        _sdk("download", "-r", remote, str(dest) + "/", timeout=60)
+        if target.exists() and (not expect or (target / expect).exists()):
             return True
         if i + 1 < tries:
             time.sleep(_retry_wait() * (i + 1))
@@ -705,6 +785,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
         on_event({"type": "error", "message": err})
         return None
     release = True
+    ended = _session_gone(S["serve"])
     try:
         late = too_late("run")                     # 等名额可能等掉了时间
         if late:
@@ -727,7 +808,16 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
             if cancelled():
                 return None
             jid, why = _submit("batch", env, url=S["url"],
-                               note=lambda m: on_event({"type": "tacc", "stage": "retrying", "message": m}))
+                               note=lambda m: on_event({"type": "tacc", "stage": "retrying", "message": m}),
+                               cancelled=lambda: cancelled() or ended())
+        if jid and (cancelled() or ended()):       # 正在进行的那一次在 Finish / 会话结束之后才交上去：立即取消
+            release = False
+            threading.Thread(target=_cancel_then_release, args=(jid,), daemon=True).start()
+            why = CANCELLED
+        if why == CANCELLED:
+            if not cancelled():
+                on_event({"type": "error", "message": "the Qwen session ended before the job could start"})
+            return None
         if not jid:
             on_event({"type": "error", "message": "TACC submission failed" + (f": {why}" if why else "")})
             return None
@@ -792,7 +882,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
             return None
         out = Path(runs_root) / "tacc" / batch
         out.mkdir(parents=True, exist_ok=True)
-        _download(f"flagpilot-runs/{batch}-{tier}", out)
+        _download(f"flagpilot-runs/{batch}-{tier}", out, expect="runs.jsonl")
         return out / f"{batch}-{tier}"
     finally:
         if release:
@@ -819,6 +909,7 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
     if err:
         return {"error": err, "answer": ""}
     release = True
+    ended = _session_gone(S["serve"])
     try:
         stage({"stage": "uploading"})
         with tempfile.TemporaryDirectory(prefix="fp-chat-") as d:
@@ -837,7 +928,16 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
                 env["FLAGPILOT_TASKS"] = str(Path(d) / "tasks")
             if cancelled():
                 return {"error": "recalled", "answer": "", "cancelled": True}
-            jid, why = _submit("chat", env, url=S["url"], note=lambda m: stage({"stage": "retrying", "message": m}))
+            jid, why = _submit("chat", env, url=S["url"], note=lambda m: stage({"stage": "retrying", "message": m}),
+                               cancelled=lambda: cancelled() or ended())
+        if jid and (cancelled() or ended()):       # 正在进行的那一次在撤回 / 会话结束之后才交上去：立即取消
+            release = False
+            threading.Thread(target=_cancel_then_release, args=(jid,), daemon=True).start()
+            why = CANCELLED
+        if why == CANCELLED:
+            if cancelled():
+                return {"error": "recalled", "answer": "", "cancelled": True}
+            return {"error": "the Qwen session ended before the question could be sent", "answer": ""}
         if not jid:
             return {"error": "TACC submission failed" + (f": {why}" if why else ""), "answer": ""}
         stage({"stage": "queued", "job": jid})
