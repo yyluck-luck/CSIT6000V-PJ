@@ -85,24 +85,37 @@ def cmd_doctor(args) -> int:
         else:
             _p(f"题库一致性       通过（{len(tasks)} 题的目录与附件齐全）")
 
-    # 泄漏检查：这两样东西绝不能被上传
-    leaks = []
+    # 泄漏检查分两级。题目指向带题解的版本、或残留 solution/ 目录——这两样是配置错误，直接算失败；
+    # `_private/gold_private.json` 只是提示：docs/TASKS.md 的目录结构里就有它，build_taskset.py 正是写在这里，
+    # 本机评分也要读它；要求是它不出现在"跑评测的机器"上，而上传时 submit.sh 已经排除 `_private/`。
+    # 一律算失败的话，每一台正常的开发机 doctor 都报"先处理上面的问题"、退出码恒为 1，这条检查就没有信号了。
+    # 真要按上集群的标准卡，用 --strict。
+    strict = getattr(args, "strict", False)
+    hard: list[str] = []
+    notes: list[str] = []
     gold = config.TASKS_ROOT / "_private" / "gold_private.json"
     if gold.exists():
-        leaks.append(f"明文答案表存在：{gold}")
+        notes.append(f"明文答案表在本机：{gold}（上传前删掉；submit.sh 不会带 _private/）")
     if "with-solutions" in str(config.TASKS_ROOT):
-        leaks.append(f"题库指向了带题解的版本：{config.TASKS_ROOT}")
+        hard.append(f"题库指向了带题解的版本：{config.TASKS_ROOT}")
     for sol in config.TASKS_ROOT.glob("tasks/*/solution"):
-        leaks.append(f"题解目录残留：{sol}")
+        hard.append(f"题解目录残留：{sol}")
         break
-    if leaks:
+    if notes:
+        _p("")
+        _p("提示（不影响本机运行；--strict 把它算作问题）：")
+        for n in notes:
+            _p("  - " + n)
+    if hard:
         _p("")
         _p("⚠ 泄漏风险（上集群前必须处理）：")
-        for l in leaks:
+        for l in hard:
             _p("  - " + l)
+    if hard or (notes and strict):
+        _p("泄漏检查         不通过")
         ok = False
     else:
-        _p("泄漏检查         通过（无明文 gold、无题解目录）")
+        _p("泄漏检查         通过（无题解目录、" + ("明文 gold 仅在本机" if notes else "无明文 gold") + "）")
 
     # 执行能力
     _p("")
@@ -184,9 +197,10 @@ def cmd_doctor(args) -> int:
 
 def cmd_list(args) -> int:
     tasks = select(load_index(), category=args.category, scope=args.scope)
-    _p(f"{'name':<18}{'cat':<18}{'scope':<8}title")
+    # scope 列宽 9：最长取值 `extra-gs` 正好 8 个字符，宽度给 8 会和标题粘在一起
+    _p(f"{'name':<18}{'cat':<18}{'scope':<9}title")
     for t in tasks:
-        _p(f"{t.name:<18}{t.category:<18}{t.scope:<8}{(t.title or '')[:70]}")
+        _p(f"{t.name:<18}{t.category:<18}{t.scope:<9}{(t.title or '')[:70]}")
     _p(f"\n共 {len(tasks)} 题")
     return 0
 
@@ -346,7 +360,11 @@ def cmd_show(args) -> int:
 
     text = "\n".join(out)
     if args.out:
-        Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
+        target = Path(args.out).expanduser()
+        # 和 compare/pair/report 的 --md 一致：父目录没有就建出来。以前直接 write_text，
+        # 传一个 `--out notes/run.md`（notes 还没建）就抛 FileNotFoundError 的整段 traceback。
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text + "\n", encoding="utf-8")
         _p(f"已写入 {args.out}")
     else:
         _p(text)
@@ -437,8 +455,20 @@ def _load_batch(path: Path) -> list[dict]:
     return rows
 
 
+def _batch_dir(name: str) -> Path:
+    """批次目录：给的是现成目录就用它（绝对路径，或相对当前目录），否则当作 runs/ 下的名字。
+
+    评测记录随仓库提交在 `flagpilot/results/tacc/...`，运行记录在 `runs/`。只认 `runs/` 的话，
+    README 那些"离线复现 v7 表格"的命令在新克隆里一条都读不到——连 `--batch results/tacc/v7/tacc-dev-v7-B0`
+    这种明确写了路径的写法也被拼成 runs/results/...。写批次的路径不走这里（见 cmd_batch），
+    它们只该落进 runs/。
+    """
+    p = Path(name).expanduser()
+    return p if p.is_dir() else config.RUNS_ROOT / name
+
+
 def cmd_report(args) -> int:
-    path = config.RUNS_ROOT / args.batch / "runs.jsonl"
+    path = _batch_dir(args.batch) / "runs.jsonl"
     if not path.exists():
         _p(f"找不到 {path}")
         return 1
@@ -464,7 +494,7 @@ def cmd_compare(args) -> int:
         return 1
     batches: dict[str, dict] = {}
     for n in names:
-        p = config.RUNS_ROOT / n / "runs.jsonl"
+        p = _batch_dir(n) / "runs.jsonl"
         if not p.exists():
             _p(f"[warn] 跳过 {n}：找不到 {p}")
             continue
@@ -489,7 +519,7 @@ def cmd_compare(args) -> int:
 def cmd_pair(args) -> int:
     loaded = {}
     for name in (args.a, args.b):
-        p = config.RUNS_ROOT / name / "runs.jsonl"
+        p = _batch_dir(name) / "runs.jsonl"
         if not p.exists():
             _p(f"找不到 {p}")
             return 1
@@ -681,7 +711,13 @@ def cmd_dataset(args) -> int:
 
 
 def cmd_writeup(args) -> int:
-    output = writeup.generate(Path(args.run_dir), Path(args.out) if args.out else None)
+    # 没跑完的 run 目录（没有 summary）或空的 run_dir，writeup.render 会抛 ValueError。
+    # 以前直接漏出去：读者看到的是六层 traceback，而 show 对同样情况只回一句"没有找到 ..."。
+    try:
+        output = writeup.generate(Path(args.run_dir).expanduser(), Path(args.out) if args.out else None)
+    except ValueError as exc:
+        _p(f"无法生成 writeup：{exc}")
+        return 1
     _p(f"Writeup saved: {output}")
     return 0
 
@@ -726,6 +762,8 @@ def build_parser() -> argparse.ArgumentParser:
     kg.set_defaults(func=cmd_storage_keygen)
 
     d = sub.add_parser("doctor", help="环境自检")
+    d.add_argument("--strict", action="store_true",
+                   help="把本机的明文 gold 也算作问题（上集群前的把关用）")
     d.set_defaults(func=cmd_doctor)
 
     l = sub.add_parser("list", help="列出题目")
