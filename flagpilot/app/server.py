@@ -1375,6 +1375,15 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
             skipped.append((d.name, f"{type(exc).__name__}: {exc}"))
             continue
         if not evs:
+            # 读取本身是容错的（坏字节换成 U+FFFD），坏行于是解析失败、整份文件返回空——
+            # 和"还没开始写"的空文件长得一模一样。按大小分开：0 字节是没开始，非空却
+            # 一行都读不出来就是坏了，得报出来，否则 Run 页又少了一条却没人知道。
+            try:
+                blank = (d / "trace.jsonl").stat().st_size == 0
+            except OSError:
+                blank = False
+            if not blank:
+                skipped.append((d.name, "文件非空，但没有一行能解析"))
             continue
         summary = next((e for e in reversed(evs) if e.get("type") == "summary"), None)
         if not summary:
