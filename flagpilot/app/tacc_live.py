@@ -19,11 +19,13 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -43,14 +45,67 @@ GONE = "\x00gone"
 CANCELLED = "\x00cancelled"
 _L = threading.Lock()
 S: dict = {"phase": "idle", "serve": None, "node": None, "url": "", "t0": 0.0, "ready": 0.0, "log": [], "busy": "", "error": "",
-           "queue": "", "prog": {}, "watch": 0.0, "gen": 0}
+           "queue": "", "prog": {}, "watch": 0.0, "gen": 0, "submitting": False}
+# submitting：正在跑 `tcloud submit`（上传/排队还没拿到作业号）。这几十秒里 tcloud 不打印任何东西，
+# 页面得知道它不是"卡死了"，而是还在交。
 # gen：每开一次会话加一。启动循环只管自己那一代：停了又马上重开时，旧循环晚到的作业号不会写进新会话（它只取消自己的作业）
 # 同时最多两条 SDK 连接：网关正是在一堆连接同时握手时开始断的，别自己再添一把火
 _SDK_SEM = threading.BoundedSemaphore(int(os.environ.get("FLAGPILOT_TACC_SDK_PARALLEL") or 2))
 
 
+def _tcloud_file() -> Path:
+    """记住"这台机器上 tcloud 在哪"。放在会话状态旁边（runs/ 不进版本库，每个副本各记各的）。"""
+    base = STATE_FILE.parent if STATE_FILE else ROOT / ".run"
+    return base / "tcloud.txt"
+
+
+def _saved_tcloud() -> str:
+    try:
+        p = _tcloud_file().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return p if p and os.access(p, os.X_OK) else ""
+
+
+def _remember_tcloud(path: str) -> None:
+    try:
+        f = _tcloud_file()
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(path + "\n", encoding="utf-8")
+    except OSError:
+        pass                          # 记不住也能用（这次运行有效），下次再问一次就是
+
+
 def _tc() -> str:
-    return os.environ.get("TCLOUD_BIN") or "tcloud"
+    """tcloud 在哪：环境变量 → 页面里给过并被记住的路径 → PATH。
+
+    刻意不去翻文件系统：别人的机器不一定是 macOS，glob 桌面/下载既猜不准，也容易越过权限边界。
+    一条都没有时由页面问用户（status() 里的 sdk.ok 为假）。
+    """
+    return os.environ.get("TCLOUD_BIN") or _saved_tcloud() or "tcloud"
+
+
+def tc_status() -> dict:
+    """给页面看的：这台机器上知道 tcloud 在哪吗？不知道就请用户给路径。"""
+    tc = _tc()
+    where = shutil.which(tc)
+    return {"ok": bool(where), "path": where or tc}
+
+
+def save_tcloud(raw: str) -> tuple[bool, str]:
+    """用户在页面上贴进来的路径。接受 tcloud 文件本身，也接受解压出来的 SDK 目录。"""
+    p = Path(os.path.expanduser((raw or "").strip().strip('"').strip("'"))).resolve()
+    if p.is_dir():
+        p = p / "tcloud"
+    if not p.exists():
+        return False, f"nothing at {p}"
+    if not os.access(p, os.X_OK):
+        return False, f"{p} is not executable (chmod +x it, or pick the file named tcloud)"
+    if p.name != "tcloud":
+        return False, f"{p.name} is not the SDK: pick the file named tcloud inside the folder you downloaded"
+    _remember_tcloud(str(p))
+    os.environ["TCLOUD_BIN"] = str(p)
+    return True, str(p)
 
 
 def _submit_path() -> Path:
@@ -70,6 +125,12 @@ def _read_timeout() -> float:
 
 def _retry_wait() -> float:
     return float(os.environ.get("FLAGPILOT_TACC_RETRY_WAIT") or 5)
+
+
+def _submit_cap() -> float:
+    """一次 `tcloud submit` 最多等多久：实测正常 27–56 s（挂题库最慢 ~79 s）。
+    以前给 600 s——网关卡住时页面就在那儿干计时、一条日志都没有（2026-11-23 00:05，卡了 3 分 41 秒还没作业号）。"""
+    return float(os.environ.get("FLAGPILOT_TACC_SUBMIT_TIMEOUT") or 180)
 
 
 def _clean(text: str) -> str:
@@ -99,6 +160,16 @@ def _sdk(*args: str, timeout: float | None = None) -> str:
 _SESSION_FLAKE = re.compile(r"Failed to create remote session|ssh: handshake failed|Failed to dial|Failed to upload (?:env )?repo", re.I)
 # 家目录所在的卷满了：重试没用（Known limitations 15），直说
 _DISK_FULL = re.compile(r"No space left on device|Disk quota exceeded", re.I)
+# 读不到私钥（沙箱、属主/权限不对）：tcloud 在同一处也打 "Failed to create remote session"，
+# 但那不是网关忙——重试一万次也不会好。2026-11-22 就这样白等了两分钟一轮、十几轮。
+_AUTH_MISS = re.compile(r"Failed to read AuthFile", re.I)
+_AUTH_WHY = ("tcloud cannot read the login key it is configured to use (the log says 'Failed to read AuthFile'): "
+             "this process is not allowed to read that file, which is not TACC being busy. Start the page from your "
+             "own terminal (not from a sandbox or an agent's shell), or fix the key's owner and mode (600).")
+# 这两类失败都可能已经把作业交上去了，只是本地没拿到号：先对账，别急着重交一个
+# （2026-11-23 00:05 就是这样：提交卡了 3 分多钟，页面上没有作业号，集群上却真的有 30858 在排队）
+_UNSURE_SUBMIT = ("tcloud submit did not answer", "tcloud could not open a session")
+SERVE_NAME = "qwen-public-serve"      # serve/tuxiv.conf 的 job.name：ps 里按它认自己的服务作业
 
 
 def _ps(tries: int = 3) -> list[list[str]] | None:
@@ -119,6 +190,47 @@ def _job_state(jid: str, tries: int = 3) -> str | None:
     if rows is None:
         return None
     return next((r[4] for r in rows if r[0] == jid and len(r) >= 5), "")
+
+
+def _serve_jobs(rows: list[list[str]] | None) -> list[tuple[str, str]]:
+    """ps 里还列着的服务作业 [(作业号, 状态)]，新的在前。查不到列表（None）就当没有。"""
+    out = [(r[0], r[4]) for r in rows or [] if len(r) >= 5 and r[2] == SERVE_NAME and r[0].isdigit()]
+    return sorted(out, key=lambda x: int(x[0]), reverse=True)
+
+
+def _serve_started(log: str, default: float) -> float:
+    """服务作业真正开跑的时刻（serve/job.sh 打 JOB_STARTED=<ISO>）；老日志里没有，就用 default。"""
+    m = re.search(r"JOB_STARTED=(\S+)", log or "")
+    if m:
+        try:
+            return datetime.fromisoformat(m.group(1)).timestamp()
+        except ValueError:
+            pass
+    return default
+
+
+def _adopt_serve() -> tuple[str, str, str] | None:
+    """TACC 上还有我自己的 qwen-public-serve、本页却不知道它：(作业号, 状态, 日志)。
+
+    为什么要有这一步：本地只有"提交那一刻拿到的作业号"这一个线索。提交其实成功了、回程却断了，
+    或者网页重启把 session.json 写成没有作业号的 failed，本地就再也找不到它——它照样占着两块 GPU 和
+    个人名额跑满一小时，之后每次提交都排在 QOSMaxJobsPerUserLimit 后面（2026-11-22 就是这样，页面说
+    "网关忙"，集群上却一直有我的作业在跑）。查不到列表、认不出名字都不算数：宁可报错，也不接一个
+    说不定不是自己的作业。刚被我们取消掉的不接（否则"停掉再开"会接回那个正在收尾的）。
+    """
+    rows = _ps(1)
+    if rows is None:
+        return None
+    for jid, state in _serve_jobs(rows):
+        if state not in ("R", "PD", "CF") or jid in _DROPPED:
+            continue
+        log = _sdk("cat", f"slurm_log/{SERVE_NAME}-{jid}.log")
+        if not tacc_log.is_log(log):
+            log = ""                  # 排队中、日志还没落盘：照样可以等它
+        if log and _SERVE_ENDED.search(log):
+            continue                  # 已经在收尾，别接
+        return jid, state, log
+    return None
 
 
 _NOT_WAITING = ("JobHeldUser", "JobHeldAdmin", "Dependency", "DependencyNeverSatisfied", "BeginTime")
@@ -155,6 +267,25 @@ def _pause(seconds: float, stop: Callable[[], bool]) -> bool:
     return stop()
 
 
+def _run_capped(cmd: list[str], timeout: float, env: dict) -> tuple[int, bytes, bytes]:
+    """跑一条命令，超时就把**整个进程组**杀掉。
+
+    只杀 bash 不够：`tcloud submit` 是它的子进程，会活下来把作业交上去，然后作业号没人知道——
+    正是要避免的孤儿作业。所以放进独立会话，超时按 pgid 一起收。"""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(ROOT), env=env,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return p.returncode, out or b"", err or b""
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.communicate()
+        raise
+
+
 def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], None] | None = None,
             cancelled: Callable[[], bool] | None = None) -> tuple[str, str]:
     """交一个作业。返回 (作业号, 失败原因)；成功时原因为空。
@@ -169,6 +300,12 @@ def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], Non
     接着重试了好几分钟，会话都停了还在往下一个作业要用的工作目录里上传。
     """
     env = {**os.environ, "LANG": os.environ.get("LANG") or "en_US.UTF-8", "FP_SUBMIT_TRIES": "1", **env_extra}
+    # submit.sh 是另一个进程：它只看环境变量，看不到 _tc() 在"环境变量 → 记住的路径 → PATH"里的解析结果。
+    # 少了这一行，页面明明知道 tcloud 在哪（会话能读日志、能跑起来），每一条 Run/Ask 却都被脚本判定为
+    # "not on PATH and TCLOUD_BIN is not set"（2026-11-23 00:57，会话 ready、47 分钟剩余，消息全是 Not sent）。
+    sdk = shutil.which(_tc())
+    if sdk:
+        env["TCLOUD_BIN"] = sdk
     stop = cancelled or (lambda: False)
     wait = _retry_wait()
     out = ""
@@ -177,14 +314,18 @@ def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], Non
             return "", CANCELLED
         try:
             with _SDK_SEM:
-                r = subprocess.run(["bash", str(_submit_path()), mode, *([url] if url else [])], capture_output=True,
-                                   timeout=600, cwd=str(ROOT), env=env)
-        except (OSError, subprocess.TimeoutExpired) as e:
+                _, ob, eb = _run_capped(["bash", str(_submit_path()), mode, *([url] if url else [])], _submit_cap(), env)
+        except subprocess.TimeoutExpired:
+            return "", (f"tcloud submit did not answer in {_submit_cap():.0f} s (the login gateway was probably stuck); "
+                        "it may still have been submitted, so TACC is asked for the job before another is sent")
+        except OSError as e:
             return "", type(e).__name__
-        out = _clean((r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace"))
+        out = _clean((ob or b"").decode("utf-8", "replace") + (eb or b"").decode("utf-8", "replace"))
         m = re.findall(r"Submitted batch job (\d+)", out)
         if m:
             return m[-1], ""
+        if _AUTH_MISS.search(out):
+            break                     # 读不到私钥：重试没有用，也不该让页面白等两分钟
         if attempt + 1 < SUBMIT_TRIES and _SESSION_FLAKE.search(out) and not _DISK_FULL.search(out):
             pause = wait * SUBMIT_BACKOFF[min(attempt, len(SUBMIT_BACKOFF) - 1)]
             msg = f"TACC's login gateway dropped the connection; trying again in {pause:.0f} s ({attempt + 2}/{SUBMIT_TRIES})"
@@ -197,6 +338,8 @@ def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], Non
             continue
         break
     print(f"[tacc] {mode} submission failed:\n{out[-1500:]}", flush=True)
+    if _AUTH_MISS.search(out):
+        return "", _AUTH_WHY
     if _DISK_FULL.search(out):
         return "", ("the TACC home volume is full (it is shared by every user of the cluster), so the job could not be "
                     "uploaded; free space with deploy/tcloud/submit.sh cleanup or try again later")
@@ -283,11 +426,18 @@ def _preflight(root: Path, name: str, scope: str | None) -> str:
     return ""
 
 
+_DROPPED: set[str] = set()            # 本进程主动取消过的作业号：对账时别再把它认领回来
+
+
 def _cancel(jid: str) -> bool:
     """取消并核实：作业从 Slurm 的列表里消失才算。以前只发一次 cancel、不看结果：SDK 一抖，作业就在后台占着 GPU 和
     个人名额跑满 1 小时。网关不稳时 cancel / ps 都可能一挂到读超时：每隔 CANCEL_EVERY 秒重发一次 cancel（重复取消
     无害），每轮只问一次 ps，最多 CANCEL_LIMIT 秒。以前每发一次 cancel 要等三次列表、每次最多三次重试，网关一抖一轮
     就是几分钟（2026-11-21，作业 30516：撤回的提问照样把回答写完了）。"""
+    _DROPPED.add(jid)                 # 主动取消的作业别在 _adopt_serve 里被认领回来
+    if len(_DROPPED) > 200:
+        _DROPPED.clear()
+        _DROPPED.add(jid)
     every = float(os.environ.get("FLAGPILOT_TACC_CANCEL_EVERY") or 8)
     t_end = time.time() + float(os.environ.get("FLAGPILOT_TACC_CANCEL_LIMIT") or 150)
     nap = min(2.0, float(os.environ.get("FLAGPILOT_TACC_POLL", "15")) / 5)
@@ -443,8 +593,10 @@ def status() -> dict:
     # 弹窗上于是显示成 0 s → 1 s → 0 s 来回跳，看着像卡死。
     since_start = round(time.time() - d["t0"]) if d["t0"] else 0
     pv["elapsed"] = max(pv.get("elapsed") or 0, since_start)
+    if d["phase"] == "starting" and not d.get("serve") and d.get("submitting"):
+        pv["uploading"] = True                        # 还在跑 tcloud submit：没有作业号，别显示成"排队"
     return {**d, "remaining": max(0, round(left)), "elapsed": since_start,
-            "progress": pv, "min_run_s": MIN_RUN_S, "min_chat_s": MIN_CHAT_S}
+            "progress": pv, "min_run_s": MIN_RUN_S, "min_chat_s": MIN_CHAT_S, "sdk": tc_status()}
 
 
 def session_left() -> float:
@@ -467,13 +619,17 @@ def too_late(kind: str) -> str:
 
 
 def start() -> dict:
+    # 这台机器上还不知道 tcloud 在哪：先问，别交一个注定失败的作业（页面收到 need_tcloud 就展开输入框）
+    if not tc_status()["ok"]:
+        return {"ok": False, "need_tcloud": True,
+                "error": "tell me where tcloud is (the course SDK) and the session can start"}
     with _L:
         if S["phase"] in ("starting", "ready"):
             return {"ok": True, "phase": S["phase"]}
         S["gen"] += 1
         gen = S["gen"]
         S.update(phase="starting", serve=None, node=None, url="", t0=time.time(), ready=0.0, error="", log=[], queue="",
-                 prog=_new_prog(time.time()))
+                 prog=_new_prog(time.time()), submitting=False)
     threading.Thread(target=_serve_loop, kwargs={"gen": gen}, daemon=True).start()
     return {"ok": True, "phase": "starting"}
 
@@ -547,6 +703,31 @@ def _serve_loop(adopt: tuple[str, float] | None = None, gen: int | None = None) 
         if mine():
             _save()
 
+    def take(jid: str, state: str, l0: str) -> str:
+        """把 TACC 上已有的服务作业接进这一代会话。返回 "" = 接上了；"stale" = 这代会话已经被停掉；
+        "ready" = 它早就在服务，直接算就绪。t_sub 设成它的开跑时刻，会话时长才对得上。"""
+        nonlocal t_sub
+        t_sub = _serve_started(l0, time.time())
+        with _L:
+            if not mine() or S["phase"] != "starting":
+                return "stale"
+            S.update(serve=jid, t0=t_sub, queue="")
+            S["prog"] = _new_prog(t_sub)
+        _save()
+        _log(f"reconnected to serve job {jid} ({state}) that this page had lost")
+        print(f"[tacc] adopted serve job {jid} ({state}) found on TACC", flush=True)
+        m = re.search(r"SERVICE_BASE_URL=(http://([^:\s]+):\d+/v1)", l0)
+        if state == "R" and m and "Application startup complete" in l0:
+            with _L:
+                if not mine() or S["phase"] != "starting":
+                    return "stale"
+                S.update(phase="ready", url=m.group(1), node=m.group(2), ready=time.time(), queue="")
+            _save()
+            _log(f"Qwen 27B already serving on {m.group(2)}")
+            threading.Thread(target=_watchdog, args=(jid,), daemon=True).start()
+            return "ready"
+        return ""
+
     for attempt in range(1, 5):
         if adopt and attempt == 1:
             jid, t_sub = adopt
@@ -561,20 +742,48 @@ def _serve_loop(adopt: tuple[str, float] | None = None, gen: int | None = None) 
                     S["prog"] = _new_prog(t_sub)
             if stale:
                 return abandon(None)
-            jid, why = _submit("serve", {"FP_EXCLUDE": excl}, note=lambda m: mine() and _log(m),
-                               cancelled=lambda: not mine() or S["phase"] != "starting")
-            with _L:
-                stale = not mine() or S["phase"] != "starting"
-                if not stale and jid:
-                    # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
-                    # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
-                    S.update(serve=jid, t0=t_sub)
-            if stale or why == CANCELLED:
-                return abandon(jid)
-            if not jid:
-                return _fail("serve submission failed" + (f": {why}" if why else ""), gen)
-            _save()                       # 提交了就落盘：此刻重启网页服务，也能把这个作业接回来，而不是留下孤儿作业
-            _log(f"serve job {jid} submitted (attempt {attempt})")
+            # 先问一句 TACC：本地没有作业号，不代表集群上没有我的服务作业（提交回程断了、会话状态丢了）。
+            # 只在第一次尝试查：重试说明已经对过账、决定重交了。
+            found = _adopt_serve() if attempt == 1 else None
+            jid, why = "", ""
+            if not found:
+                with _L:
+                    S["submitting"] = True          # 页面据此显示"正在交给 TACC"，而不是只跳秒数
+                _log("handing the job to TACC (uploading; no job id yet)")
+                try:
+                    jid, why = _submit("serve", {"FP_EXCLUDE": excl}, note=lambda m: mine() and _log(m),
+                                       cancelled=lambda: not mine() or S["phase"] != "starting")
+                finally:
+                    with _L:
+                        S["submitting"] = False
+                with _L:
+                    stale = not mine() or S["phase"] != "starting"
+                    if not stale and jid:
+                        # 1 小时从作业真正开跑算起。看到第一行输出之前先按提交时刻算（只会偏早，安全）；
+                        # 看到 SDK_BOOTSTRAP 后改成"上一次还没输出的那次查询 − 激活余量"，排队多久都不吃会话时长。
+                        S.update(serve=jid, t0=t_sub)
+                if stale or why == CANCELLED:
+                    return abandon(jid)
+                # 没回报作业号，也不代表没交上去（回程断了 / submit.sh 没打出那一行 / 传了一半超时）：再对一次账。
+                # 只在"可能是白交了一次"的失败上对：题目不存在这类明确的失败别拿旧作业糊过去。
+                if not jid and (not why or why.startswith(_UNSURE_SUBMIT)):
+                    found = _adopt_serve()
+            if found:
+                jid, state, l0 = found
+                got = take(jid, state, l0)
+                if got == "stale":
+                    return abandon(None)
+                if got == "ready":
+                    return
+            elif not jid:
+                # 原因为空：submit.sh 拒绝在"还没出门"的地方（例如找不到 tcloud），而它给的那一行是中文，
+                # 按本文件的规矩不上页面。别让页面只剩一句空话——指到日志去，那里有原话。
+                return _fail("serve submission failed" + (f": {why}" if why else
+                             ": nothing was sent to TACC; the server refused to submit. "
+                             "The reason is the last line of flagpilot/.run/web-8080.log"), gen)
+            else:
+                _save()                   # 提交了就落盘：此刻重启网页服务，也能把这个作业接回来，而不是留下孤儿作业
+                _log(f"serve job {jid} submitted (attempt {attempt})")
         deadline, retry, quiet, running, gone, last_ps = time.time() + 45 * 60, False, t_sub, False, 0, 0.0
         while time.time() < deadline:
             if not mine() or S["phase"] == "stopping":

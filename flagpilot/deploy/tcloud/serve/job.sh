@@ -31,6 +31,8 @@ trap 'exit 130' INT
 export QWEN_CACHE_HOME="$TACC_USERDIR/CSIT6000V-project-cache"
 mkdir -p -m 700 "$QWEN_CACHE_HOME"
 hostname
+# 作业真正开跑的时刻。网页在本地把会话状态丢了之后，靠它把"还剩多少分钟"算对（tacc_live._serve_started）。
+printf 'JOB_STARTED=%s\n' "$(date -Is)"
 printf 'SERVICE_BASE_URL=http://%s:8000/v1\n' "$(hostname)"
 # 第二处改动（2026-11-21）：经 supervise.sh 启动。作业不管怎么结束（vLLM 自己退出、被取消、到时限），
 # 都把 vLLM 整个进程组（API 服务 + GPU worker）停掉、等显存放出来再退出，并把停后的显存打进日志。

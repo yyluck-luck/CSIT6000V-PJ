@@ -1161,7 +1161,12 @@
 <!-- ======================= Challenge picker ======================= -->
 <div id="dlgWrap" hidden></div>
 <div id="qwWrap" hidden><div class="back" data-qwclose></div><div class="tp" role="dialog" aria-modal="true" aria-labelledby="qwTitle">
-  <div class="hd"><h3 id="qwTitle">Qwen 27B on TACC</h3><button class="close" type="button" data-qwclose aria-label="Close">Close</button></div><div id="qwBody"></div></div></div>
+  <div class="hd"><h3 id="qwTitle">Qwen 27B on TACC</h3><button class="close" type="button" data-qwclose aria-label="Close">Close</button></div><div id="qwBody"></div>
+  <div id="qwLocate" hidden>
+    <p class="qsub bad" style="margin-top:4px">The course SDK (<code>tcloud</code>) was not found on this machine, so nothing can be submitted to TACC from here. Paste the path of the <code>tcloud</code> file you downloaded — the folder it came in works too — and it is remembered for next time.</p>
+    <div class="goldin" style="margin-top:10px"><input id="tcPath" type="text" spellcheck="false" placeholder="the path of your tcloud" aria-label="Path to tcloud"><button class="btn primary" type="button" id="tcUse">Use this path</button></div>
+    <p class="qsub" id="tcNote"></p>
+  </div></div></div>
 <div id="tpWrap" hidden><div class="back" data-tpclose></div><div class="tp" role="dialog" aria-modal="true" aria-labelledby="tpTitle">
   <div class="hd"><h3 id="tpTitle"></h3><button class="close" type="button" data-tpclose>Close</button></div><p class="meta" id="tpMeta"></p><div id="tpBody"></div><div class="actions" id="tpActs"></div></div></div>
 <div id="sheetWrap" hidden>
@@ -2986,12 +2991,30 @@ $('#taccStart').onclick = () => startTacc({tiers: qs('[data-tier]').filter(x => 
 $('#taccStop').onclick = async () => { await fetch('/api/tacc/stop', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}); toast('Stopping: the GPU server job is being cancelled'); taccPoll(); };
 /* ---------------- Qwen on TACC: one server kept up to an hour; runs and chats go to it as small jobs ---------------- */
 let QW = {phase: 'idle'}, qwT = 0, pendingRun = null, pendingHint = '', qwAt = Date.now();
+/* 服务器每 2–5 秒才答一次；两次之间用本地时钟补足，否则秒数是一跳一跳的。
+   以前只有 chip 在轮询时改一次，弹出的菜单更是打开那一刻就冻住了：弹窗写 00:27，chip 已经 00:32。 */
+const qwElapsed = () => (QW.elapsed || 0) + (Date.now() - qwAt) / 1000;
+const qwLeft = () => Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000);
+function qwenChipLabel(){
+  const ph = QW.phase;
+  if (QW.sdk && QW.sdk.ok === false && (ph === 'idle' || ph === 'failed')) return 'Qwen on TACC · needs tcloud';
+  return ph === 'ready' ? `Qwen on TACC · ${Math.ceil(qwLeft() / 60)} min left`
+    : ph === 'starting' ? `Starting Qwen · ${fmtClock(qwElapsed())}${QW.queue ? ' · ' + (QSHORT[QW.queue] || QW.queue) : ''}`
+    : ph === 'failed' ? 'Qwen on TACC · retry' : 'Qwen on TACC · connect';
+}
+/* 每秒把还开着的那几处文字改掉（只改文字，不重绘、不打断选择） */
+function qwenTick(){
+  const ph = QW.phase;            // Ask's model menu no longer lists Qwen on TACC (2026-11-22): only Solve's chip counts
+  if (ph !== 'starting' && ph !== 'ready') return;
+  const c = $('#qwenChip'); if (c) c.querySelector('.tn').textContent = qwenChipLabel();
+  syncAskChip();
+}
+setInterval(qwenTick, 1000);
 async function qwenPoll(watch){
   try { QW = await (await fetch('/api/tacc/session' + (watch ? '?watch=1' : ''), {cache: 'no-store'})).json(); qwAt = Date.now(); }
   catch(_){ clearTimeout(qwT); if (QW.phase === 'starting' || QW.phase === 'ready') qwT = setTimeout(qwenPoll, 15000); return; }
-  const ph = QW.phase, mins = Math.ceil((QW.remaining || 0) / 60);
-  const label = ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(QW.elapsed)}${QW.queue ? ' · ' + (QSHORT[QW.queue] || QW.queue) : ''}`
-    : ph === 'failed' ? 'Qwen on TACC · retry' : 'Qwen on TACC · connect';
+  const ph = QW.phase;
+  const label = qwenChipLabel();
   syncAskChip();
   for (const id of ['#qwenChip']){ const c = $(id); c.classList.toggle('on', ph === 'ready'); c.classList.toggle('wait', ph === 'starting');
     c.querySelector('.g').className = 'g ' + (ph === 'ready' ? 'c blue' : ph === 'starting' ? 'spin' : ph === 'failed' ? 'red' : 'ring');
@@ -3000,6 +3023,8 @@ async function qwenPoll(watch){
       + (ph === 'ready' ? 'click to disconnect and free the GPUs' : 'click to start Qwen 27B on two TACC GPUs (about 5 minutes)'); }
   if (ph === 'ready' && pendingRun && !busy){ const t = pendingRun, h = pendingHint; pendingRun = null; pendingHint = ''; if (sel === t) runOnTacc(h); }
   if (ph === 'failed' && pendingRun){ pendingRun = null; toast('Could not start Qwen on TACC: ' + (QW.error || 'see the log')); }
+  // 还没给 tcloud 的路径：任何入口（Run on TACC、Ask 选 TACC）排着的活儿都等不到，直接把问路径的面板打开
+  if (pendingRun && QW.sdk && QW.sdk.ok === false){ pendingRun = null; pendingHint = ''; openQwenPanel(); }
   clearTimeout(qwT); if (ph === 'starting' || ph === 'ready') qwT = setTimeout(qwenPoll, ph === 'starting' ? 5000 : 15000);
 }
 /* ---- select boxes in the page's style: see .xsel in the CSS ---- */
@@ -3123,8 +3148,9 @@ function renderQwen(){
   let html;
   if (ph === 'starting' || ph === 'stopping'){
     const eta = p.eta != null ? Math.max(0, p.eta - since) : null, el = Math.max(p.elapsed || 0, QW.elapsed || 0) + since, pct = eta != null ? Math.min(99, el / Math.max(1, el + eta) * 100) : null;
-    const head = (ph === 'stopping' ? 'Stopping' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B') + (p.slow && ph === 'starting' ? ' · slower than usual today' : '');
+    const head = (ph === 'stopping' ? 'Stopping' : p.uploading ? 'Handing the job to TACC' : p.step === 'queue' ? 'Waiting for two free GPUs' : 'Starting Qwen 27B') + (p.slow && ph === 'starting' ? ' · slower than usual today' : '');
     html = `<p class="qline" aria-live="polite">${head} · ${clockS(el)} so far${eta != null ? ` · about ${clockS(eta)} left` : p.step === 'queue' ? ` · then about ${clockS(p.typical || 300)}` : ''}</p>`
+      + (p.uploading ? `<p class="qsub">The SDK is uploading the job; it has not reached the queue yet, so there is no job id to show. If the gateway stalls, this is abandoned after 3 minutes and tried again.</p>` : '')
       + `<div class="qbar${pct == null ? ' ind' : ''}" role="progressbar" aria-label="Start-up progress"${pct == null ? '' : ` aria-valuenow="${Math.round(pct)}" aria-valuemin="0" aria-valuemax="100"`}><i${pct == null ? '' : ` style="width:${pct.toFixed(1)}%"`}></i></div>`
       + `<ol class="qsteps">${steps}</ol>${log}<div class="actions"><button class="btn" type="button" data-qw="stop">Stop starting</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
   } else if (ph === 'ready'){
@@ -3133,15 +3159,39 @@ function renderQwen(){
       + `<p class="qsub">Runs and replies go to it as small jobs. The session ends by itself at the one-hour limit; a run needs about 7 minutes of it.</p>`
       + (steps ? `<ol class="qsteps">${steps}</ol>` : '') + `<div class="actions"><button class="btn" type="button" data-qw="stop">Disconnect and free the GPUs</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
   } else {
-    const failed = ph === 'failed';
-    html = `<p class="qline">${failed ? 'The last start did not work' : 'Not running'}</p>`
-      + (failed && QW.error ? `<p class="qsub bad">${esc(en(QW.error))}</p>` : '')
-      + `<p class="qsub">A session runs Qwen 27B on two GPUs of the course cluster for up to an hour. Starting takes about 5 to 6 minutes once two GPUs are free, and this panel shows every step as it happens.</p>`
+    const failed = ph === 'failed', noSdk = !!(QW.sdk && QW.sdk.ok === false);
+    html = `<p class="qline">${noSdk ? 'Where is tcloud?' : failed ? 'The last start did not work' : 'Not running'}</p>`
+      + (failed && QW.error && !noSdk ? `<p class="qsub bad">${esc(en(QW.error))}</p>` : '')
+      + `<p class="qsub">${noSdk
+        ? 'The course SDK is the program that submits jobs to TACC; this page starts it, so it needs to know where it is. Point me at it below (the folder you unpacked works too) and I will use that path from here on. The step-by-step start-up view (queue → weights → warm-up → ready) appears here once a session is running.'
+        : 'A session runs Qwen 27B on two GPUs of the course cluster for up to an hour. Starting takes about 5 to 6 minutes once two GPUs are free, and this panel shows every step as it happens.'}</p>`
       + ((QW.log || []).length ? `<details class="qlog"${logOpen ? ' open' : ''}><summary>What happened</summary><pre>${esc(QW.log.slice(-12).join('\n'))}</pre></details>` : '')
-      + `<div class="actions"><button class="btn primary" type="button" data-qw="start">${failed ? 'Try again' : 'Start the session'}</button><button class="btn plain" type="button" data-qwclose>Close</button></div>`;
+      + `<div class="actions">${noSdk ? '' : `<button class="btn primary" type="button" data-qw="start">${failed ? 'Try again' : 'Start the session'}</button>`}<button class="btn plain" type="button" data-qwclose>Close</button></div>`;
   }
   b.innerHTML = html;
+  syncLocate();
 }
+/* 这台机器上找不到 tcloud 时，面板里直接问路径（换机器/换终端时不用去翻环境变量）。
+   这块 DOM 在 #qwBody 之外：面板每秒重绘，输入到一半不能被清掉。 */
+function syncLocate(){
+  const el = $('#qwLocate'); if (!el || !qwOpen) return;
+  const show = !!(QW.sdk && QW.sdk.ok === false && QW.phase !== 'starting' && QW.phase !== 'ready');
+  el.hidden = !show;
+  if (show && el.dataset.was !== '1'){ el.dataset.was = '1'; const i = $('#tcPath'); if (i) setTimeout(() => i.focus({preventScroll: true}), 30); }
+  if (!show) el.dataset.was = '';
+}
+$('#tcUse').addEventListener('click', async () => {
+  const p = ($('#tcPath').value || '').trim(), note = $('#tcNote');
+  if (!p){ note.className = 'qsub bad'; note.textContent = 'Paste the path first.'; return; }
+  note.className = 'qsub'; note.textContent = 'Checking ' + p + ' …';
+  const r = await fetch('/api/tacc/tcloud', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path: p})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || d.error){ note.className = 'qsub bad'; note.textContent = en(d.error || 'That path did not work'); return; }
+  note.className = 'qsub'; note.textContent = 'Using ' + d.path + ' — starting the session';
+  await qwenPoll(true);
+  await post0('/api/tacc/session/start');
+  await qwenPoll(true); renderQwen();
+});
 async function qwWatch(){ if (!qwOpen) return; await qwenPoll(true); renderQwen(); clearTimeout(qwWT); qwWT = setTimeout(qwWatch, 2000); }
 function openQwenPanel(){
   const w = $('#qwWrap'); if (qwOpen){ return; } qwOpen = true; w.hidden = false; requestAnimationFrame(() => w.classList.add('open'));
@@ -3153,7 +3203,14 @@ function closeQwenPanel(){ const w = $('#qwWrap'); if (!qwOpen) return; qwOpen =
 $('#qwWrap').addEventListener('click', async e => {
   if (e.target.closest('[data-qwclose]')) return closeQwenPanel();
   const b = e.target.closest('[data-qw]'); if (!b) return;
-  if (b.dataset.qw === 'start'){ b.disabled = true; await post0('/api/tacc/session/start'); await qwenPoll(true); renderQwen(); return; }
+  if (b.dataset.qw === 'start'){
+    b.disabled = true;
+    const d = await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+      .then(r => r.json()).catch(() => ({}));
+    await qwenPoll(true); renderQwen();
+    if (d && d.need_tcloud){ const i = $('#tcPath'); if (i) i.focus({preventScroll: true}); }
+    return;
+  }
   if (b.dataset.qw === 'stop'){
     if (QW.phase === 'ready' && await choose({title: 'Disconnect from TACC?', body: 'The Qwen session ends now and its two GPUs are freed. Starting a new one takes about 5 to 6 minutes.',
       buttons: [{label: 'Disconnect', value: 'yes', primary: true}, {label: 'Keep it', value: null}]}) !== 'yes') return;
@@ -3242,7 +3299,12 @@ $('#runTacc').__go = async hint => { if (!sel) return;
   if (QW.phase === 'ready' && !late) return runOnTacc(hint || '');
   const t = sel;
   if (late){ if (!(await renewThen('run'))) return; }
-  else if (QW.phase !== 'starting'){ await post0('/api/tacc/session/start'); }
+  else if (QW.phase !== 'starting'){
+    const d = await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+      .then(r => r.json()).catch(() => ({}));
+    // 这台机器上还不知道 tcloud 在哪：别弹"正在启动"的假提示，直接把问路径的面板打开
+    if (d && d.need_tcloud){ pendingRun = null; pendingHint = ''; openQwenPanel(); return; }
+  }
   pendingRun = t; pendingHint = hint || '';
   toast('Starting Qwen 27B on TACC (about 5 to 6 minutes); the run starts by itself');
   runningVerdict('Waiting for Qwen 27B on TACC to start …');

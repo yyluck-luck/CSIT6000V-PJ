@@ -82,7 +82,15 @@ except Exception:
 PY
 }
 
-is_flagpilot() { ps -o command= -p "$1" 2>/dev/null | grep -q "flagpilot web"; }
+# Is pid $1 this copy's web server? Deliberately not `ps -o command=`: ps is refused in
+# sandboxes and some CI images ("operation not permitted"), and then pids() finds nothing -
+# --stop cannot stop the server while the port still answers, and --restart prints both
+# "not running" and "already running". A listener on our port whose cwd is this copy is the
+# same statement without ps.
+is_flagpilot() {
+  lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | grep -qx "$1" || return 1
+  [ "$(dir_of "$1")" = "$APP" ]
+}
 dir_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1; }
 
 # the folder of the FlagPilot listening on this port, whichever copy it belongs to (empty: none, or no lsof)
@@ -153,9 +161,66 @@ else
   fi
   set -- --host 127.0.0.1 --port "$PORT" --model "$MODEL"
   [ -d "$APP/runs/tacc" ] && set -- "$@" --replay runs/tacc        # finished TACC runs show up in Runs and the Lab
+  # Qwen-on-TACC needs the course SDK. It is not searched for (that guesses, and can cross
+  # permission boundaries on someone else's machine): the page asks for its path the first time,
+  # and remembers it in runs/tacc/tcloud.txt, so this note only appears until that has happened.
+  if ! command -v "${TCLOUD_BIN:-tcloud}" >/dev/null 2>&1 && [ ! -x "$(cat "$APP/runs/tacc/tcloud.txt" 2>/dev/null)" ]; then
+    echo "Note: tcloud (the course SDK) is not on PATH; the page will ask for its path on the first connect."
+  fi
+  # The server is put in its own session, not merely behind nohup: nohup only ignores SIGHUP,
+  # while the child stays in the caller's process group. Whatever tears that group down - an
+  # agent's shell, a CI step, a terminal closed while the group is still attached - takes the
+  # server with it a moment after "FlagPilot is running" was printed.
+  #
+  # The other half is the environment. A caller that wraps Python (a sandbox, an audit or
+  # coverage hook) leaves a sitecustomize on PYTHONPATH; inherited by a long-lived server, every
+  # open() goes through that caller's broker, and the day the caller exits the server keeps
+  # listening but answers nothing ("_BrokerProtocolError: execution attempt 不存在或已关闭",
+  # seen from httpcache.load). A server that outlives its caller must not inherit such a hook,
+  # so the shim entry is dropped here and the brokered-fs switch is turned off.
   ( cd "$APP" || exit 1
-    nohup "$PY" -m flagpilot web "$@" > "$RUN/web-$PORT.log" 2>&1 &       # $! is the server itself
-    echo $! > "$RUN/web-$PORT.pid" )
+    "$PY" - "$RUN/web-$PORT.log" "$RUN/web-$PORT.pid" "$PY" "$@" <<'PY'
+import os, subprocess, sys
+
+log, pidfile, py, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+env = dict(os.environ)
+
+
+def drop_caller_hooks(env):
+    """Remove what belongs to whoever launched us; nobody else's paths are touched."""
+    dropped, kept = [], []
+    for part in (env.get("PYTHONPATH") or "").split(os.pathsep):
+        if part and os.path.exists(os.path.join(part, "sitecustomize.py")):
+            dropped.append(part)
+        elif part:
+            kept.append(part)
+    if not dropped:
+        return env
+    env["PYTHONPATH"] = os.pathsep.join(kept)
+    if not kept:
+        del env["PYTHONPATH"]
+    # The same shim usually also sits in front of PATH (it wraps every executable and asks the
+    # caller's broker for permission - "Brokered program policy check unavailable" once that
+    # caller is gone, which is what stopped `tcloud submit`). Drop those entries with it.
+    env["PATH"] = os.pathsep.join(
+        p for p in (env.get("PATH") or "").split(os.pathsep)
+        if p and not any(p == d or p.startswith(d + os.sep) for d in dropped))
+    for k in [k for k in env if k.startswith("CODEBUDDY_SANDBOX_BROKER_")
+              or k.startswith("CODEBUDDY_BROKERED_")
+              or k in ("CODEBUDDY_SANDBOX_PROGRAM_POLICY_COMMAND", "SANDBOX_CENTER_IPC_ADDRESS",
+                       "TOYBOX_SANDBOX_SOCK", "CODEBUDDY_TOYBOX_BIN")]:
+        del env[k]
+    return env
+
+
+env = drop_caller_hooks(env)
+with open(log, "ab", buffering=0) as out:
+    proc = subprocess.Popen([py, "-m", "flagpilot", "web", *args], stdin=subprocess.DEVNULL,
+                            stdout=out, stderr=subprocess.STDOUT, env=env,
+                            start_new_session=True)
+open(pidfile, "w").write(f"{proc.pid}\n")
+PY
+  )
   i=0
   until up; do
     i=$((i + 1))
