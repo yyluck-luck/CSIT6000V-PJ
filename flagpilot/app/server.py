@@ -1357,8 +1357,16 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
     dirs = [base] if (base / "trace.jsonl").exists() else \
         sorted({p.parent for pat in ("*/trace.jsonl", "*/*/trace.jsonl", "*/*/*/trace.jsonl") for p in base.glob(pat)})
     mounted: list[tuple[str, str, str]] = []
+    skipped: list[tuple[str, str]] = []
     for d in dirs:
-        evs = read_jsonl(d / "trace.jsonl")
+        try:
+            evs = read_jsonl(d / "trace.jsonl")
+        except Exception as exc:
+            # 挂载是"有什么就回放什么"：加密过的 trace 没有密钥、拷贝传了一半、别的工具写的二进制，
+            # 都只说明这一条读不了。以前异常直接抛穿，`main()` 在启动阶段就死了，整页起不来；
+            # 一条坏 trace 不该让另外几百条也看不见。
+            skipped.append((d.name, f"{type(exc).__name__}: {exc}"))
+            continue
         if not evs:
             continue
         summary = next((e for e in reversed(evs) if e.get("type") == "summary"), None)
@@ -1370,6 +1378,13 @@ def _mount_replay(root: str) -> list[tuple[str, str, str]]:
         STATE[rid] = {"q": queue.Queue(), "summary": summary,
                       "events": evs, "kind": "replay"}
         mounted.append((rid, d.name, f"{summary.get('verdict')}/{summary.get('reason')}"))
+    if skipped:
+        # 跳过要说话：Run 页少了几条，得能分清是"坏了"还是"本来就没跑"
+        print(f"⚠ 回放：{len(skipped)} 条 trace 读不了，已跳过；其余 {len(mounted)} 条照常挂载", flush=True)
+        for name, why in skipped[:10]:
+            print(f"    {name}: {why}", flush=True)
+        if len(skipped) > 10:
+            print(f"    …另有 {len(skipped) - 10} 条", flush=True)
     return mounted
 
 
