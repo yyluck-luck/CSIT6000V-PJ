@@ -223,7 +223,9 @@ try {
               {id: 'ready', label: 'Ready', state: 'todo', s: 0}]}}`);
   const pStart = await until("document.querySelectorAll('#qwBody .qsteps li').length === 9 && document.querySelector('#qwBody .qsteps li.current') && /60%/.test(document.querySelector('#qwBody').textContent) && /about (1:\\d\\d|\\d+ s) left/.test(document.querySelector('#qwBody .qline').textContent) && document.querySelector('#qwBody .qlog')", 6000);
   await js("window.__QW.progress.slow = true; window.__QW.progress.eta = 80; qwenPoll()");
-  const pSlow = await until("/slower than usual today/.test(document.querySelector('#qwBody .qline').textContent)", 4000);
+  const pSlow = await until("/slower than usual today/.test(document.querySelector('#qwBody .qline').textContent)", 4000)
+    && await js(`taccStage({stage: 'retrying', message: "TACC's login gateway dropped the connection; trying again in 20 s (4/6)"}).startsWith("TACC's")
+      && taccStage({stage: 'retrying', message: 'The upload to TACC did not arrive whole'}).startsWith('the upload')`);
   await js("window.__QW.progress.slow = false; window.__QW.progress.eta = 70; qwenPoll()");
   const smallPanel = await js(SMALL);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
@@ -654,6 +656,39 @@ try {
   await js("window.fetch = window.__F3; newChat()");
   check("Solve and Ask keep their own challenge (new conversation from Solve; Ask's choice never changes Solve; threads keep theirs)",
     sxNew && sxOwn && sxSent && sxKept && sxSplit && sxBack && sxAgain, JSON.stringify({sxNew, sxOwn, sxSent, sxKept, sxSplit, sxBack, sxAgain, tA, tB, tC}));
+
+  // Ask: a conversation can be left while its reply is still coming in; its row in Threads blinks until the reply is done,
+  // the reply never lands in another conversation, and opening the conversation again shows it (live, then finished)
+  await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()"); await sleep(250);
+  await js(`(() => { window.__F5 = window.fetch; window.__ES5 = window.EventSource; window.__gate5 = null; window.__aDone = false;
+    const json = x => Promise.resolve(new Response(JSON.stringify(x), {headers: {'Content-Type': 'application/json'}}));
+    window.fetch = (u, o) => { u = String(u);
+      if (u === '/api/chat' && o && o.method === 'POST' && JSON.parse(o.body).message === 'long question') return json({session_id: 'aaaaaaaaaaaa', turn: 1});
+      if (u.startsWith('/api/chat/sessions')) return window.__F5(u, o).then(r => r.json()).then(d => json({sessions: [{id: 'aaaaaaaaaaaa', title: 'long question', turns: 1, ts: Date.now() / 1000}].concat((d.sessions || []).filter(x => x.id !== 'aaaaaaaaaaaa'))}));
+      if (u.startsWith('/api/chat/history?id=aaaaaaaaaaaa')) return json({session_id: 'aaaaaaaaaaaa', model: '', task: '', exists: true,
+        messages: [{type: 'user', turn: 1, text: 'long question'}].concat(window.__aDone ? [{type: 'reply', turn: 1, answer: 'Long answer'}] : [])});
+      return window.__F5(u, o); };
+    window.EventSource = class { constructor(url){ if (!String(url).includes('aaaaaaaaaaaa')) return new window.__ES5(url);
+      window.__gate5 = () => { window.__aDone = true; this.onmessage && this.onmessage({data: JSON.stringify({type: 'chat_done', answer: 'Long answer', turns: 1, session_id: 'aaaaaaaaaaaa'})}); }; } close(){} }; })()`);
+  await js("newChat()"); await sleep(150);
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'long question'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const swBlink = await until("window.__gate5 && document.querySelector('#threadList .thread[data-sid=\"aaaaaaaaaaaa\"].replying') && /Replying/.test(document.querySelector('#threadList .thread[data-sid=\"aaaaaaaaaaaa\"]').textContent)", 5000);
+  const otherSid = await js("(() => { const b = [...document.querySelectorAll('#threadList .thread')].find(x => x.dataset.sid !== 'aaaaaaaaaaaa'); return b && b.dataset.sid; })()");
+  const toastsBefore = await js("document.querySelectorAll('.toast').length");
+  await js(`document.querySelector('#threadList .thread[data-sid="${otherSid}"]').click()`);
+  const swAway = await until(`chatId === ${JSON.stringify(otherSid)} && !/long question/.test(document.querySelector('#chatLog').textContent) && !chatBusy`, 5000);
+  const swNoRefuse = !(await js("[...document.querySelectorAll('.toast')].some(t => /still coming in/.test(t.textContent))"));
+  await js(`document.querySelector('#threadList .thread[data-sid="aaaaaaaaaaaa"]').click()`);
+  const swBack = await until("chatId === 'aaaaaaaaaaaa' && /long question/.test(document.querySelector('#chatLog').textContent) && document.querySelector('#chatLog .bub.bot .typing') && chatBusy", 5000);
+  await js(`document.querySelector('#threadList .thread[data-sid="${otherSid}"]').click()`);
+  await until(`chatId === ${JSON.stringify(otherSid)}`, 5000); await sleep(200);
+  await js("window.__gate5()");
+  const swDone = await until("!document.querySelector('#threadList .thread.replying') && !/Long answer/.test(document.querySelector('#chatLog').textContent) && chatId !== 'aaaaaaaaaaaa'", 5000);
+  await js(`document.querySelector('#threadList .thread[data-sid="aaaaaaaaaaaa"]').click()`);
+  const swFinal = await until("chatId === 'aaaaaaaaaaaa' && /Long answer/.test(document.querySelector('#chatLog').textContent) && !document.querySelector('#chatLog .typing') && !chatBusy", 5000);
+  await js("window.fetch = window.__F5; window.EventSource = window.__ES5; newChat()");
+  check("Ask: a conversation can be left while it is being answered; it blinks in Threads, and the reply stays in it",
+    swBlink && !!otherSid && swAway && swNoRefuse && swBack && swDone && swFinal, JSON.stringify({swBlink, otherSid, swAway, swNoRefuse, swBack, swDone, swFinal, toastsBefore}));
 
   // turns per run: the drawer offers 20/40/60/100 (40 by default, remembered); a run uses the choice; a run that used all
   // its turns offers to run again with more (2026-11-21: "why only 20 rounds?")

@@ -671,6 +671,10 @@
   .thread.on{background:var(--ink);color:#fff}
   .thread b{display:block;font:600 15px var(--font);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .thread span{display:block;font:13px var(--mono);color:var(--ink3);margin-top:3px}
+  .thread.replying span::before{content:'';display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--blue);margin-right:8px;vertical-align:1px;animation:thrBlink 1.1s steps(1, end) infinite}
+  .thread.on.replying span::before{background:#fff}
+  @keyframes thrBlink{50%{opacity:0}}
+  @media (prefers-reduced-motion: reduce){.thread.replying span::before{animation:none}}
   .thread.on span{color:rgba(255,255,255,.6)}
   .conv{position:relative;display:flex;flex-direction:column;min-height:0;padding:84px max(44px,calc((100% - 1040px) / 2)) 26px;overflow:hidden}
   #matrix{position:absolute;inset:0;width:100%;height:100%;display:block;pointer-events:none;z-index:0}
@@ -1139,6 +1143,11 @@ const EASE = 'cubic-bezier(.16,1,.3,1)';
 let sel = null, selTask = null, ablation = 'B3', busy = false, run = null;
 let chatId = null, chatBusy = false, chatTurns = 0, chatSteps = 0, LOCALMODEL = 'mock';
 let askTask = null, askChosen = false;          // Ask's own challenge (see setAskTask); never Solve's sel
+/* Ask: the conversation on screen (curKey: its session id, or "new-N" before its first message has one) and the replies still
+   coming in, per conversation (LIVE). Switching conversations never waits for a reply: the reply goes on into its own
+   bubbles, off screen, and is put back when its conversation is opened again; its row in Threads blinks until it is done. */
+let curKey = 'new-0', draftN = 0;
+const LIVE = new Map();
 let turnBudget = 40, turnChoices = [20, 40, 60, 100];   // turns per run on Solve (the server sends the choices and the default)
 const SCRIPT_NOTE_DEFAULT = $('#scriptNote').innerHTML;
 const CHAT_KEY = 'fp.chat.sid';
@@ -1822,7 +1831,6 @@ function setAskTask(t, chosen = false){
 function askSwitch(t){
   if (askTask && t && askTask.name === t.name) return;
   if (chatId || chatTurns){
-    if (chatBusy){ toast('A reply is still coming in; choose another challenge when it is done'); return; }
     newChat(t, true); toast('New conversation about ' + taskLabel(t) + '; the last one is in Threads'); return;
   }
   setAskTask(t, true);
@@ -2448,7 +2456,6 @@ function awaitShow(ev){
 function awaitHide(){ const c = $('#awaitCard'); if (c && !c.hidden){ c.hidden = true; c.innerHTML = ''; if (busy) setStatus('Running', '', sel || ''); } awaitTurn = null; }
 /* "Explain this step": the step's command and output go to Ask as a question about this challenge */
 document.addEventListener('click', e => { const b = e.target.closest('[data-explain]'); if (!b || !run) return; const t = run.byKey.get(b.dataset.explain); if (!t || !t.act) return;
-  if (chatBusy){ toast('A reply is still coming in Ask; try again in a moment'); return; }
   const a = t.act, what = a.cmd || a.code || a.path || [a.scheme, a.text].filter(Boolean).join(' ') || a.action, out = t.tool ? en(String(t.tool.obs || '')).slice(0, 700) : '';
   const msg = `Explain step ${t.n} of my run on ${sel || 'this challenge'}. The agent did a ${a.action} action:\n${String(what).slice(0, 600)}` + (out ? `\nIt got this output:\n${out}` : '') + '\nWhy was this a sensible step, and what does the output tell us?';
   chatRestored = true; go('chat'); $('#newChat').click(); const box = $('#chatInput'); box.value = msg; box.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); });
@@ -2562,7 +2569,7 @@ async function comeBack(h){
 addEventListener('beforeunload', e => {
   const typed = ['#chatInput', '#upTitle', '#upQuery', '#upGold', '#impUrl', '#goldIn'].some(q => { const el = $(q); return !!(el && el.value && el.value.trim()); })
     || qs('.cust').some(b => b.dataset.dirty === '1');
-  if (busy || chatBusy || typed){ e.preventDefault(); e.returnValue = ''; }
+  if (busy || LIVE.size || typed){ e.preventDefault(); e.returnValue = ''; }   // a reply still coming in, in any conversation
 });
 
 /* ---------------- lab ---------------- */
@@ -3458,7 +3465,10 @@ function started(on){ if (chatStarted === on) return; chatStarted = on; $('#chat
 function bubble(role, html, animate = true, after = null){
   started(true);
   const el = document.createElement('div'); el.className = 'bub ' + (role === 'user' ? 'me' : 'bot') + (animate && !reduced() ? ' in' : '');
-  el.innerHTML = html; if (after && after.isConnected) after.after(el); else $('#chatLog').appendChild(el); scrollChat(true); return el;
+  el.innerHTML = html;
+  if (after){ if (after.isConnected) after.after(el); }   // its conversation is not on screen: it is put back with it (openThread)
+  else $('#chatLog').appendChild(el);
+  scrollChat(true); return el;
 }
 function scrollChat(force){ const l = $('#chatLog'); if (force || nearBottom(l)) l.scrollTop = l.scrollHeight; }
 function saveChatId(id){ chatId = id || null; try { id ? localStorage.setItem(CHAT_KEY, id) : localStorage.removeItem(CHAT_KEY); } catch(_){} $('#rcStore').textContent = id ? ('runs/chat/' + id) : '—'; }
@@ -3466,17 +3476,22 @@ let THREADS = [];
 async function loadThreads(){
   if (!THREADS.length && !$('#threadList .thread')) $('#threadList').innerHTML = '<div style="padding:14px 22px"><div class="skel" style="height:15px;width:80%"></div><div class="skel" style="height:15px;width:60%;margin-top:18px"></div><div class="skel" style="height:15px;width:70%;margin-top:18px"></div></div>';
   try { THREADS = (await (await fetch('/api/chat/sessions', {cache: 'no-store'})).json()).sessions || []; } catch(_){ THREADS = []; }
-  $('#threadList').innerHTML = THREADS.length ? THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}" data-sid="${esc(t.id)}"${t.model ? ` data-tip="${esc(prettyModel(t.model))}"` : ''}><b>${t.model ? `<i class="g ${modelGlyph(t.model)}"></i>` : ''}${esc(t.title)}</b><span>${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}</span></button>`).join('')
+  $('#threadList').innerHTML = THREADS.length ? THREADS.map(t => `<button class="thread${t.id === chatId ? ' on' : ''}${LIVE.has(t.id) ? ' replying' : ''}" data-sid="${esc(t.id)}"${t.model ? ` data-tip="${esc(prettyModel(t.model))}"` : ''}><b>${t.model ? `<i class="g ${modelGlyph(t.model)}"></i>` : ''}${esc(t.title)}</b><span>${LIVE.has(t.id) ? 'Replying…' : `${t.turns} ${t.turns === 1 ? 'message' : 'messages'} · ${ago(t.ts)}`}</span></button>`).join('')
     : '<p class="hint" style="padding:20px 22px">No threads yet.</p>';
   $('#threadsShow .n').textContent = $('#threadsBtn .n').textContent = THREADS.length || '';
 }
 async function openThread(sid){
-  if (chatBusy){ toast('A reply is still coming in; open another conversation when it is done'); return; }
+  curKey = sid; syncBusy();
   $('#chatLog').innerHTML = ''; chatTurns = 0; chatSteps = 0;
   try {
     const d = await (await fetch('/api/chat/history?id=' + encodeURIComponent(sid))).json();
-    const msgs = (d.messages || []).filter(m => m.type === 'user' || m.type === 'reply' || m.type === 'error');
-    if (!msgs.length){ started(false); saveChatId(null); loadThreads(); return; }
+    if (curKey !== sid) return;                              // another conversation was opened meanwhile
+    const live = LIVE.get(sid), queued = chatQ.filter(q => q.key === sid);
+    const back = it => { const log = $('#chatLog'); [it.me, it.state === 'replied' ? null : it.rc, it.bot].forEach(n => { if (n) log.appendChild(n); }); };
+    const msgs = (d.messages || []).filter(m => m.type === 'user' || m.type === 'reply' || m.type === 'error')
+      .filter(m => !(live && live.turn != null && m.turn === live.turn));   // the reply in flight is shown live, below
+    if (!msgs.length && !live && !queued.length){ started(false); saveChatId(null); loadThreads(); return; }
+    if (live || queued.length) started(true);
     let cur = null;
     for (let i = 0; i < msgs.length; i++){ const m = msgs[i], nx = msgs[i + 1];
       if (m.type === 'user'){ const b = bubble('user', esc(m.text || ''), false); let rc = null;
@@ -3489,6 +3504,8 @@ async function openThread(sid){
         const rb = bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + ((m.picked || m.model) ? `<p class="who">${esc(prettyModel(m.picked || m.model))}</p>` : ''), false);
         if (cur && cur.turn === m.turn) cur.bot = rb; chatTurns++; chatSteps += (m.steps || []).length; }
     }
+    if (live) back(live);
+    queued.forEach(back);
     saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true);
     setAskTask(d.task ? taskByName(d.task) : null, true);
     if (d.task && !askTask) boot.then(() => { if (chatId === sid && !askTask) setAskTask(taskByName(d.task) || null, true); });   // opened before the list loaded
@@ -3519,7 +3536,9 @@ function taccStage(ev){ const why = queueWhy(ev.reason);
     : ev.stage === 'uploading' ? 'uploading to TACC'
     : ev.stage === 'queued' ? `queued on TACC${ev.job ? ' · job ' + ev.job : ''}${why ? ' · ' + why : ''}`
     : ev.stage === 'running' ? `running on ${ev.node || 'TACC'}${ev.job ? ' · job ' + ev.job : ''}`
-    : ev.stage === 'retrying' ? (ev.message ? ev.message.charAt(0).toLowerCase() + ev.message.slice(1) : 'TACC is busy; trying again') : String(ev.stage || ''); }
+    : ev.stage === 'retrying' ? (ev.message ? lowerFirst(ev.message) : 'TACC is busy; trying again') : String(ev.stage || ''); }
+/* "The upload …" reads "the upload …" mid-sentence, but an acronym keeps its case ("TACC's …", not "tACC's …") */
+const lowerFirst = t => /^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t;
 function syncThreadsChip(){ const w = $('#chatWrap'), c = $('#threadsBtn'), shown = innerWidth <= 1100 ? w.classList.contains('showthreads') : !w.classList.contains('collapsed');
   c.setAttribute('aria-pressed', shown ? 'true' : 'false'); c.querySelector('.ar').textContent = shown ? '‹' : '›'; }
 function setThreads(show){ const w = $('#chatWrap'); if (innerWidth <= 1100){ w.classList.toggle('showthreads', show); syncThreadsChip(); return; }
@@ -3643,23 +3662,26 @@ async function recall(it){
   if (turn != null && sid){ try { await fetch('/api/chat/recall', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: sid, turn})}); } catch(_){} }
   toast(it.state === 'queued' ? 'Taken back before it went out; the text is in the box' : 'Recalled: the message and its reply are gone; the text is in the box');
   loadThreads();
-  if (live) pump();
+  if (live) pump(it.key);
 }
 $('#chatLog').addEventListener('click', e => { const b = e.target.closest('.recall'); if (b) recall((b.closest('.bub.me') || {})._it); });
-function pump(){ if (chatBusy) return; const nx = chatQ.shift(); if (nx) exchange(nx); }
+function pump(key){ if (LIVE.has(key)) return; const i = chatQ.findIndex(q => q.key === key); if (i >= 0) exchange(chatQ.splice(i, 1)[0]); }
 async function sendChat(){
   const box = $('#chatInput'), text = box.value.trim();
   if (!text) return;
   initChatFx(); vanish(text); box.value = ''; growInput();
   const me = bubble('user', esc(text)), rc = document.createElement('div'); me.classList.add('hold'); rc.className = 'rcpt'; me.after(rc);
   const it = chatItem(me, text, {rc});
-  if (chatBusy){ me.classList.add('queued'); rc.innerHTML = '<span class="dot"></span>Queued · goes out after the reply above'; chatQ.push(it); return; }
+  Object.assign(it, {key: curKey, sid: chatId, task: askTask, pick: threadPick});
+  if (LIVE.has(curKey)){ me.classList.add('queued'); rc.innerHTML = '<span class="dot"></span>Queued · goes out after the reply above'; chatQ.push(it); return; }
   exchange(it);
 }
 async function exchange(it){
-  const {text, me, rc} = it, sb = $('#sendChat');
-  chatBusy = true; it.state = 'live'; me.classList.remove('queued');
-  initChatFx(); sendPix.busy(true); pixLabel(sb, 'Queue ↵'); railMark('chat', 'working');
+  const {text, me, rc} = it;
+  /* this reply belongs to its own conversation (it.key): global state follows it only while that conversation is on screen */
+  const isCur = () => curKey === it.key, status = (...a) => { if (isCur()) setStatus(...a); };
+  it.state = 'live'; me.classList.remove('queued');
+  initChatFx(); LIVE.set(it.key, it); syncBusy(); loadThreads(); railMark('chat', 'working');
   let acc = '', shownTxt = '', closed = false, raf = 0, attached = false, es = null, over = false, fetching = false, resolveSent = () => {};
   it.sentP = new Promise(r => { resolveSent = r; });
   /* dashed until the reply is complete; the receipt under it says what the conversation is waiting for */
@@ -3684,46 +3706,52 @@ async function exchange(it){
   const tick = setInterval(() => { const el = live.querySelector('.el'); if (el) el.textContent = ' · ' + Math.round((Date.now() - t0) / 1000) + ' s'; }, 1000);
   const finish = () => { clearInterval(tick); typing.remove(); const ls = live.querySelector('.lstat'); if (ls) ls.remove(); live.hidden = false; live.classList.add('done'); };
   const fail = (html, why) => { clearInterval(tick); bot.innerHTML = html; settle(false, why); };
-  setStatus('Thinking', '', askTask ? askTask.name : 'concept question');
+  status('Thinking', '', it.task ? it.task.name : 'concept question');
   const done = ok => { if (over) return; over = true; clearInterval(tick); if (!fetching) resolveSent(null);
-    chatBusy = false; ok ? sendPix.done() : sendPix.busy(false); pixLabel(sb, 'Send ↵'); railMark('chat', ok === false ? 'bad' : 'ok'); loadThreads();
-    if (!it.recalled) pump(); };
-  it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) setStatus('Ready'); };
+    LIVE.delete(it.key); syncBusy(); if (ok && isCur() && sendPix) sendPix.done(); railMark('chat', ok === false ? 'bad' : 'ok'); loadThreads();
+    if (ok && !isCur() && !it.recalled){ const t = THREADS.find(x => x.id === it.key); toast('The reply in “' + ((t && t.title) || 'another conversation') + '” is ready'); }
+    if (!it.recalled) pump(it.key); };
+  it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) status('Ready'); };
   let r;
   /* this conversation's pick decides who answers. Qwen still starting: hold the message until it is up, unless this conversation is switched to another model */
-  const pick = threadPick;
+  const pick = it.pick || threadPick;
   if (pick.route === 'tacc' && QW.phase !== 'ready' && QW.phase !== 'starting'){
     await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {}); await qwenPoll(); }
   if (it.recalled) return;
   if (askRouteOf(pick) === 'tacc' && QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_chat_s || 180)){
     if (!(await renewThen('chat'))){ fail('<span class="bad">Not sent: this Qwen session on TACC is about to end. Start a new one from the menu, or pick another model, and send again.</span>', 'Qwen session ending');
-      done(false); setStatus('Ready'); return; } }
+      done(false); status('Ready'); return; } }
   if (it.recalled) return;
   const waited = askRouteOf(pick) === 'tacc' && QW.phase === 'starting';
   stage(waited ? 'Waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
   onHold(waited ? 'waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'sending to Qwen 27B on TACC' : 'sending');
-  if (waited){ setStatus('Thinking', '', 'waiting for Qwen 27B on TACC to start');
+  if (waited){ status('Thinking', '', 'waiting for Qwen 27B on TACC to start');
     const now = document.createElement('button'); now.type = 'button'; now.className = 'now'; now.textContent = 'Use ' + prettyModel(pick.model || LOCALMODEL) + ' now';
-    now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(chatId, pick); if (pick === threadPick) syncAskChip(); };
+    now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(it.sid || chatId, pick); if (pick === threadPick) syncAskChip(); };
     rc.appendChild(now);
     await new Promise(res => { const tw = Date.now(), wait = () => (!it.recalled && QW.phase === 'starting' && askRouteOf(pick) === 'tacc' && Date.now() - tw < 47 * 60000) ? setTimeout(wait, 300) : res(); wait(); }); }
   if (it.recalled) return;
   const viaTacc = askRouteOf(pick) === 'tacc' && QW.phase === 'ready', switched = waited && pick.route === 'local';
-  if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); setStatus('Ready'); return; }
-  if (viaTacc){ setStatus('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
+  if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); status('Ready'); return; }
+  if (viaTacc){ status('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
   else if (switched){ stage('Sending to ' + prettyModel(modelOf(pick))); onHold('sending to ' + prettyModel(modelOf(pick))); }
   fetching = true;
-  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: askTask ? askTask.name : '', session_id: chatId, tools: $('#chatTools').checked,
+  try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: it.task ? it.task.name : '', session_id: it.sid, tools: $('#chatTools').checked,
     backend: viaTacc ? 'tacc' : '', ...(viaTacc ? {} : {model: modelOf(pick)})})}); }
-  catch(e){ fetching = false; resolveSent(null); if (it.recalled) return; fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); setStatus('Ready'); return; }
+  catch(e){ fetching = false; resolveSent(null); if (it.recalled) return; fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); status('Ready'); return; }
   const d = await r.json().catch(() => ({}));
   fetching = false; resolveSent(r.ok ? d : null);
   if (it.recalled) return;                                  // recall() takes it from here: it now knows which turn to drop
-  if (!r.ok){ fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); setStatus('Ready'); return; }
-  it.turn = d.turn ?? null; it.sid = d.session_id || null; if (it.turn != null) me.dataset.turn = it.turn;
-  saveChatId(d.session_id); if (pick.route !== 'auto') rememberPick(d.session_id, pick);
+  if (!r.ok){ fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); status('Ready'); return; }
+  it.turn = d.turn ?? null; if (it.turn != null) me.dataset.turn = it.turn;
+  /* the conversation's id from the server: a new conversation gets one now (and so do its queued messages) */
+  const sidNow = d.session_id || it.sid;
+  if (sidNow && it.key !== sidNow){ const old = it.key; LIVE.delete(old); it.key = sidNow; LIVE.set(sidNow, it);
+    chatQ.forEach(q => { if (q.key === old){ q.key = sidNow; q.sid = sidNow; } }); if (curKey === old) curKey = sidNow; }
+  it.sid = sidNow;
+  if (isCur()) saveChatId(sidNow); if (pick.route !== 'auto') rememberPick(sidNow, pick); loadThreads();
   if (viaTacc) onHold('uploading to TACC'); else { sent(); onHold('replying'); }
-  es = new EventSource('/api/stream?id=' + chatId);
+  es = new EventSource('/api/stream?id=' + it.sid);
   const attach = () => { if (attached) return; attached = true; live.appendChild(body); };
   /* Markdown as it streams; Text Generate (Aceternity): only the newly arrived characters fade in */
   const paint = () => { raf = 0; if (closed) return; attach(); const stick = nearBottom($('#chatLog')); shownTxt = mdPaint(body, stripRuns(acc), shownTxt); if (stick) scrollChat(true); };
@@ -3737,17 +3765,17 @@ async function exchange(it){
       stage('That flag did not check out; deriving it'); onHold('checking the flag'); }
     else if (ev.type === 'chat_tool'){ const holder = document.createElement('div'); holder.className = 'toolcall';
       holder.innerHTML = termBlock(ev.cmd, en(ev.output || '(no output)'), ev.cached ? {note: 'reused'} : {exit: ev.exit_code, ms: ev.duration_ms, note: ev.timed_out ? 'timed out' : ''});
-      live.insertBefore(holder, attached ? body : null); stage('Ran ' + String(ev.cmd || '').slice(0, 48)); sent(); onHold('running commands'); chatSteps += 1; scrollChat(); }
+      live.insertBefore(holder, attached ? body : null); stage('Ran ' + String(ev.cmd || '').slice(0, 48)); sent(); onHold('running commands'); if (isCur()) chatSteps += 1; scrollChat(); }
     else if (ev.type === 'chat_done'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = markFlags(mdLite(ev.answer || '(no content)'), ev.flag_checks); if (ev.model) body.insertAdjacentHTML('afterend', `<p class="who">${esc(prettyModel(ev.model))}</p>`); finish(); settle(true);
-      chatTurns = ev.turns || (chatTurns + 1); chatSteps = ev.total_steps || chatSteps; if (ev.session_id) saveChatId(ev.session_id);
-      setStatus('Ready'); closed = true; es.close(); done(true); scrollChat(); }
+      if (isCur()){ chatTurns = ev.turns || (chatTurns + 1); chatSteps = ev.total_steps || chatSteps; if (ev.session_id) saveChatId(ev.session_id); }
+      status('Ready'); closed = true; es.close(); done(true); scrollChat(); }
     else if (ev.type === 'error'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } attach(); body.innerHTML = `<span class="bad">${esc(en(ev.message))}</span>`; finish(); settle(false, ev.message);
-      setStatus('Error', 'bad', en(ev.message)); closed = true; es.close(); done(false); }
+      status('Error', 'bad', en(ev.message)); closed = true; es.close(); done(false); }
   };
   /* the stream dropped: the server keeps going and writes the reply into the thread, so pick it up from there instead of giving up */
   es.onerror = () => { if (closed) return; es.close(); stage('Connection dropped; picking the reply up again'); onHold('reconnecting'); resume(); };
   const resume = async () => {
-    const t0r = Date.now(), sid = chatId, turn = it.turn;
+    const t0r = Date.now(), sid = it.sid, turn = it.turn;
     while (!closed && Date.now() - t0r < 12 * 60000){
       await sleep(2000);
       let d; try { d = await (await fetch('/api/chat/history?id=' + encodeURIComponent(sid), {cache: 'no-store'})).json(); } catch(_){ continue; }
@@ -3755,18 +3783,21 @@ async function exchange(it){
       const r = ms.find(m => (m.type === 'reply' || m.type === 'error') && m.turn === want); if (!r || closed) continue;
       closed = true; if (raf){ cancelAnimationFrame(raf); raf = 0; }
       if (r.type === 'reply'){ attach(); body.innerHTML = markFlags(mdLite(r.answer || '(no content)'), r.flag_checks) + ((r.picked || r.model) ? `<p class="who">${esc(prettyModel(r.picked || r.model))}</p>` : '');
-        finish(); settle(true); chatTurns += 1; done(true); }
+        finish(); settle(true); if (isCur()) chatTurns += 1; done(true); }
       else { attach(); body.innerHTML = `<span class="bad">${esc(en(r.error || 'the request failed'))}</span>`; finish(); settle(false, r.error); done(false); }
-      setStatus('Ready'); scrollChat(); return;
+      status('Ready'); scrollChat(); return;
     }
     if (!closed){ closed = true; done(false); if (!acc){ attach(); body.innerHTML = '<span class="bad">The connection dropped and the reply did not come back in time. Reopen this conversation later to see it.</span>'; }
-      finish(); settle(false, 'stream interrupted'); setStatus('Ready'); }
+      finish(); settle(false, 'stream interrupted'); status('Ready'); }
   };
 }
 $('#sendChat').onclick = sendChat;
 $('#chatTools').onchange = showMount;
-function newChat(t = selTask, chosen = false){ if (chatBusy){ toast('A reply is still coming in; start a new conversation when it is done'); return false; }
-  chatId = null; chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); setAskTask(t, chosen); $('#chatLog').innerHTML = ''; started(false); loadThreads(); $('#chatInput').focus(); return true; }
+function newChat(t = selTask, chosen = false){
+  curKey = 'new-' + (++draftN); chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); setAskTask(t, chosen);
+  $('#chatLog').innerHTML = ''; started(false); syncBusy(); loadThreads(); $('#chatInput').focus(); return true; }
+/* the conversation on screen has a reply coming in: new messages queue under it, and Send says so */
+function syncBusy(){ chatBusy = LIVE.has(curKey); if (sendPix) sendPix.busy(chatBusy); pixLabel($('#sendChat'), chatBusy ? 'Queue ↵' : 'Send ↵'); }
 $('#newChat').onclick = () => newChat();
 
 /* ---------------- keyboard: / to search, Enter to run or send, Esc to close ---------------- */
