@@ -4,6 +4,8 @@ runs/
 
 # 题库（体积大且含答案哈希；按 docs/TASKS.md 自行放置）
 tasks/
+# 同一位置的软链（本机把 tasks 指向仓库外的题库时，`tasks/` 匹配不到它，git add -A 会把它带进仓库）
+tasks
 # 运行时拉取的公开数据集（GPL-2.0，按 proposal 不分发）
 datasets/
 
@@ -13,6 +15,9 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.coverage
+.coverage.*
+htmlcov/
 
 # 编辑器 / 系统
 .DS_Store
