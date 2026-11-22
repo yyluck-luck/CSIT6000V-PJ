@@ -753,6 +753,31 @@ try {
   check("Ask's context: what the model sees is shown; an exchange can be left out and put back, a fresh start made and undone",
     !!cxSid && cxShown && cxOut && cxBack && cxFresh && cxReset && cxAuto && cxNew, JSON.stringify({cxSid, cxShown, cxOut, cxBack, cxFresh, cxReset, cxAuto, cxNew}));
 
+  // a challenge that needs its original network service: Run asks first (once per challenge), Cancel runs nothing, and a
+  // failed run says the failure was expected
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  const svName = await js(`fetch('/api/upload', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({title: 'service check', query: 'This challenge ran as a network service at chal.example.org 31337. Connect and get the flag.', category: 'misc', files: [{name: 'server.py', data_b64: btoa('print(1)')}]})}).then(r => r.json()).then(d => d.task.name)`);
+  await js("loadTasks()"); await sleep(300);
+  await js(`pick(MINE.find(t => t.name === ${JSON.stringify(svName)}))`); await sleep(150);
+  const svFlag = await js("!!(selTask && selTask.service) && !document.querySelector('#sgSvc').hidden");
+  await js("window.__svRuns = 0; window.__F8 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/run') window.__svRuns++; return window.__F8(u, o); }");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  const svAsk = await until("!document.querySelector('#dlgWrap').hidden && /needs its original server/.test(document.querySelector('#dlgT').textContent)", 3000);
+  await js("[...document.querySelectorAll('#dlgWrap .btn')].find(b => /Cancel/.test(b.textContent)).click()"); await sleep(400);
+  const svCancel = await js("window.__svRuns === 0 && !busy");
+  await js("document.querySelector('#run').click()");
+  await until("!document.querySelector('#dlgWrap').hidden", 3000);
+  await js("[...document.querySelectorAll('#dlgWrap .btn')].find(b => /Run anyway/.test(b.textContent)).click()");
+  const svRan = await until("window.__svRuns === 1", 5000) && await until("!busy && run && run.done", 30000);
+  const svNote = await js("run.done.verdict === 'verified' || /expected: this challenge needs its original server/.test(document.querySelector('#verdict').textContent)");
+  await js("document.querySelector('#run').click()"); await sleep(400);
+  const svOnce = await js("document.querySelector('#dlgWrap').hidden") && await until("window.__svRuns === 2", 5000);
+  await until("!busy", 30000);
+  await js("window.fetch = window.__F8");
+  check("a challenge that needs its original server asks before its first run, and a failure is called expected",
+    !!svName && svFlag && svAsk && svCancel && svRan && svNote && svOnce, JSON.stringify({svName, svFlag, svAsk, svCancel, svRan, svNote, svOnce}));
+
   // the bottom of a finished run holds still (steps used content-visibility, and the page bounced 32 px there: "the whole page
   // shakes with Add the answer"); the answer form's warning is about one value and "Save it anyway" saves that value
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);

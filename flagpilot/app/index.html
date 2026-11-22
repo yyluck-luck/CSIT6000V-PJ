@@ -2258,6 +2258,7 @@ function showDone(ev){
   if (rsn) said.push(esc(rsn === 'max_turns' && run && run.maxTurns ? `all ${run.maxTurns} turns used` : (STOPPED[rsn] || rsn.replace(/_/g, ' '))));
   const moreTurns = ev.reason === 'max_turns' ? turnChoices.find(n => n > ((run && run.maxTurns) || turnBudget)) : null;
   if (why) said.push('likely cause: ' + esc(why.replace(/^ · /, '')));
+  if (selTask && selTask.service && ev.verdict !== 'verified' && !R.bulk) said.push('expected: this challenge needs its original server');
   const bare = ev.verdict === 'error' && !(ev.turns > 0);          // nothing ran: the label already says why
   if (!(run && run.turns && run.turns.length)) $('#traceEmpty').innerHTML = '';
   $('#verdict').innerHTML = verdictHTML(code, label, tone, flag ? '<div class="vflag" id="vflag"></div>' : '')
@@ -2506,8 +2507,21 @@ function lockRun(on){ busy = on; if (on){ runPage = page; rsEditing = false; } r
 function beginRun(label){ run = fresh(); run.tacc = lastBackend === 'tacc'; openSteps.clear(); resetView(); renderFlow(); viewMode(); runningVerdict(label); $('#scriptNote').innerHTML = SCRIPT_NOTE_DEFAULT; startClock(); syncRunSet(); }
 function clearRunParam(){ if (new URLSearchParams(location.search).has('run')) history.replaceState(null, '', location.pathname + '#/' + page); }
 let lastBackend = 'local';
+/* a challenge that ran as a network service in its CTF: its server cannot be reached from the offline sandbox and its real
+   flag never shipped with the files, so the agent can only study them and a flag it prints cannot be confirmed (2026-11-21,
+   "it still doesn't work with challenges found online"). Asked once per challenge before its first run. */
+const SVC_OK = new Set();
+async function svcConfirm(){
+  const t = selTask; if (!t || !t.service || SVC_OK.has(t.name)) return true;
+  const v = await choose({title: 'This challenge needs its original server',
+    body: 'In its CTF it ran as a network service (a host and port, or a Dockerfile). The sandbox here is offline, so the agent can only study the files, and a flag it prints cannot be confirmed: expect it to fail. Run it anyway?',
+    buttons: [{label: 'Run anyway', value: 'run', primary: true}, {label: 'Cancel', value: null}]});
+  if (v !== 'run') return false;
+  SVC_OK.add(t.name); return true;
+}
 async function runLocal(hint){
   if (!sel || busy) return;
+  if (!(await svcConfirm()) || busy) return;
   lastBackend = 'local'; clearRunParam(); lockRun(true); beginRun(`${sel} · ${ablation}`);
   setStatus('Running', '', `${sel} · 00/${run.maxTurns}`);
   try { await runOne(sel, ablation, onEvent, () => { run = fresh(); openSteps.clear(); resetView(); }, '', hint); }
@@ -3113,6 +3127,7 @@ async function runOnTacc(hint){
   finally { clearInterval(tick); lockRun(false); }
 }
 $('#runTacc').__go = async hint => { if (!sel) return;
+  if (!(await svcConfirm())) return;
   lastBackend = 'tacc';
   const late = QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_run_s || 420);
   if (QW.phase === 'ready' && !late) return runOnTacc(hint || '');
