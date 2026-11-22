@@ -3,7 +3,7 @@
 [![tests (CI)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml/badge.svg)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml)
 ![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-2b4fd8)
 ![runtime dependencies: none (standard library)](https://img.shields.io/badge/runtime%20dependencies-none%20%28standard%20library%29-141414)
-![unit tests: 761 passing](https://img.shields.io/badge/unit%20tests-761%20passing-2b4fd8)
+![unit tests: 762 passing](https://img.shields.io/badge/unit%20tests-762%20passing-2b4fd8)
 ![browser checks: 105 passing](https://img.shields.io/badge/browser%20checks-105%20passing-2b4fd8)
 ![runs on: macOS | Linux | TACC Slurm](https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20TACC%20Slurm-141414)
 ![model: Qwen 3.8 27B on TACC](https://img.shields.io/badge/model-Qwen%203.8%2027B%20on%20TACC-f4b400)
@@ -657,7 +657,7 @@ including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 761 tests (17 of them need the optional `cryptography`)
+python3 -m unittest discover -s tests -t . -q     # 762 tests (17 of them need the optional `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web app)
 node scripts/ui_check.mjs                         # 105 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 91 controls

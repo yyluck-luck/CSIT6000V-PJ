@@ -35,7 +35,11 @@ if [[ -n "${FAKE_UPLOAD_CUT:-}" ]]; then c=$(( $(cat "$st/upcut" 2>/dev/null || 
   if (( c <= FAKE_UPLOAD_CUT )); then printf 'Connection closed by 143.89.228.130 port 30041\nrsync(70523): error: unexpected end of file\n[Tcloud Error] 2026/11/21 tcloudcli.go:356: Failed to upload repo to  u@gw:/mnt/home/u/WORKDIR\n[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository\n' >&2; exit 1; fi; fi
 if [[ -n "${FAKE_DISK_FULL:-}" ]]; then printf 'rsync(98800): error: write failed on "x": No space left on device (28)\n[Tcloud Error] 2026/11/21 tcloudcli.go:356: Failed to upload repo to  u@gw:/mnt/home/u/WORKDIR\n[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository\n' >&2; exit 1; fi
 if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f 2>/dev/null) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
+# job ids are unique, as Slurm's are: two submissions ending at the same moment must not both read 500 and both be 501
+# (mkdir is atomic and works on macOS and Linux alike; flock is not on macOS)
+until mkdir "$st/jobn.lock" 2>/dev/null; do sleep 0.01; done
 n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
+rmdir "$st/jobn.lock"
 name=run.slur; [[ "$1" == serve ]] && name=qwen-public-serve    # 与 serve/tuxiv.conf 的 job.name 一致
 printf '%18s      tacc %-16s yliutz  R       0:01      1 10-0-9-9\n' "$n" "$name" >> "$st/ps"
 echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-} excl=${FP_EXCLUDE:-}" >> "$st/record"
@@ -851,6 +855,16 @@ class TestRobustness(TaccHarness):
         self.assertNotIn("cancel 502", self.record())
         time.sleep(0.3)
         self.assertEqual(tacc_live.status()["serve"], "502", "the old loop never writes over the new session")
+
+    def test_two_submissions_ending_together_get_two_job_ids(self):
+        """The fake SDK must not hand out one job id twice (CI, 2026-11-22: two serve submissions ending within a few ms
+        both read the counter at 500, both became 501, and the stop-and-start test failed for a reason TACC never has)."""
+        os.environ["FAKE_SUBMIT_SLEEP"] = "0.3"
+        self.addCleanup(os.environ.pop, "FAKE_SUBMIT_SLEEP", None)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            ids = sorted(j for j, _ in pool.map(lambda _: tacc_live._submit("serve", {}), range(2)))
+        self.assertEqual(ids, ["501", "502"])
 
     def test_a_new_session_does_not_adopt_the_job_an_older_submission_is_still_landing(self):
         """2026-11-22: a submission can land on TACC (the job is in `tcloud ps`) well before its job id comes back (27-79 s
