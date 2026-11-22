@@ -127,7 +127,7 @@ dependency degrades to an explicit "not available" message rather than a crash; 
 #### Setup
 
 ```bash
-git clone <repository-url> flagpilot-artifact
+git clone https://github.com/yyluck-luck/CSIT6000V-PJ.git flagpilot-artifact
 cd flagpilot-artifact/flagpilot
 export FLAGPILOT_TASKS="$PWD/demo-tasks"
 export FLAGPILOT_RUNS="$PWD/runs"        # optional; defaults to ./runs
@@ -328,7 +328,9 @@ sandbox as `./challenge/`. Only `gold_sha256` is stored: plaintext flags never e
 **The evaluation task set is not redistributed.** It is derived from picoCTF through InterCode-CTF (General Skills 25,
 Cryptography 16, Forensics 12; network-dependent tasks removed): **53 tasks**, 43 `core` and 10 `extra-gs`, with a
 frozen dev / test split (`docs/splits-picoctf-53.json`). There are no reverse-engineering tasks (Known limitations,
-item 5). `./start.sh` fetches it; to rebuild it by hand:
+item 5). `./start.sh` fetches it, pinned to InterCode-CTF commit `c3e46d8`: rebuilding from that commit reproduces
+`index/tasks.jsonl` byte for byte, so the recorded results and the frozen split stay valid even if upstream moves
+(`FLAGPILOT_INTERCODE_REF=<commit>` builds a different set deliberately). To rebuild it by hand:
 
 ```bash
 python3 scripts/build_taskset.py --src /path/to/intercode/data/ctf --out ./ctf-tasks
