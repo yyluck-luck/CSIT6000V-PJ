@@ -125,6 +125,23 @@ class TestSubmitStageCleanup(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual((self.tmp / "n").read_text().strip(), "1")
 
+    def test_an_upload_cut_off_is_retried_but_a_full_volume_is_not(self):
+        """2026-11-21: the gateway closed the connection in the middle of the upload ("Failed to upload env repository");
+        nothing was submitted, so it is retried. A full home volume ("No space left on device") is not: it stays full."""
+        flaky = self.bin / "tcloud"
+        flaky.write_text('#!/bin/sh\nn=$(( $(cat "$FAKE_DIR/n" 2>/dev/null || echo 0) + 1 )); echo $n > "$FAKE_DIR/n"\n'
+                         'if [ $n -le 1 ]; then echo "Connection closed by 143.89.228.130 port 30041"; echo "rsync(1): error: unexpected end of file"; '
+                         'if [ -n "$FAKE_FULL" ]; then echo "rsync(1): error: write failed: No space left on device (28)"; fi; '
+                         'echo "[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository"; exit 1; fi\n'
+                         'echo "Submitted batch job 4343"\n', encoding="utf-8")
+        r, _ = self.submit(mode="serve", FP_SUBMIT_WAIT="0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Submitted batch job 4343", r.stdout)
+        (self.tmp / "n").write_text("0")
+        r, _ = self.submit(mode="serve", FP_SUBMIT_WAIT="0", FAKE_FULL="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual((self.tmp / "n").read_text().strip(), "1", "a full volume is reported, not retried")
+
     def test_other_submit_errors_are_not_retried(self):
         (self.bin / "tcloud").write_text('#!/bin/sh\nn=$(( $(cat "$FAKE_DIR/n" 2>/dev/null || echo 0) + 1 )); echo $n > "$FAKE_DIR/n"\n'
                                          'echo "quota exceeded"; exit 4\n', encoding="utf-8")

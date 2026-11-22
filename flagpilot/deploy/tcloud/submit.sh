@@ -221,7 +221,9 @@ for (( i = 1; i <= TRIES; i++ )); do
   rc=0; out=$(tcloud submit 2>&1) || rc=$?
   printf '%s\n' "$out"
   grep -q 'Submitted batch job' <<<"$out" && exit "$rc"      # submitted: report tcloud's own status, as before
-  if (( i < TRIES )) && grep -q -e 'Failed to create remote session' -e 'ssh: handshake failed' <<<"$out"; then
+  # 上传途中断线（"Failed to upload env repository"）同样还没交上去；卷满了（No space left on device）重试没用
+  if (( i < TRIES )) && grep -q -e 'Failed to create remote session' -e 'ssh: handshake failed' -e 'Failed to upload' <<<"$out" \
+     && ! grep -q -e 'No space left on device' -e 'Disk quota exceeded' <<<"$out"; then
     wait_s=$(( i * i * ${FP_SUBMIT_WAIT:-5} ))
     echo "[tcloud] TACC's login gateway dropped the connection; trying again in ${wait_s} s ($(( i + 1 ))/${TRIES})" >&2
     sleep "$wait_s"

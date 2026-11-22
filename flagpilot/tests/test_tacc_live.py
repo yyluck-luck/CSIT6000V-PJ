@@ -29,6 +29,9 @@ if [[ -n "${FAKE_SUBMIT_FAIL:-}" ]]; then echo "[tcloud] staging"; echo "$FAKE_S
 if [[ -n "${FAKE_SUBMIT_SLEEP:-}" ]]; then sleep "$FAKE_SUBMIT_SLEEP"; fi
 if [[ -n "${FAKE_SESSION_FAILS:-}" ]]; then c=$(( $(cat "$st/sessfail" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/sessfail"
   if (( c <= FAKE_SESSION_FAILS )); then echo "[Tcloud Error] 2026/11/20 tcloudcli.go:140: Failed to create remote session" >&2; exit 1; fi; fi
+if [[ -n "${FAKE_UPLOAD_CUT:-}" ]]; then c=$(( $(cat "$st/upcut" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/upcut"
+  if (( c <= FAKE_UPLOAD_CUT )); then printf 'Connection closed by 143.89.228.130 port 30041\nrsync(70523): error: unexpected end of file\n[Tcloud Error] 2026/11/21 tcloudcli.go:356: Failed to upload repo to  u@gw:/mnt/home/u/WORKDIR\n[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository\n' >&2; exit 1; fi; fi
+if [[ -n "${FAKE_DISK_FULL:-}" ]]; then printf 'rsync(98800): error: write failed on "x": No space left on device (28)\n[Tcloud Error] 2026/11/21 tcloudcli.go:356: Failed to upload repo to  u@gw:/mnt/home/u/WORKDIR\n[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository\n' >&2; exit 1; fi
 if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
 n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
 printf '%18s      tacc run.slur   yliutz  R       0:01      1 10-0-9-9\n' "$n" >> "$st/ps"
@@ -117,6 +120,19 @@ class TestFlakySession(unittest.TestCase):
         self.assertIn("could not open a session", why)
         self.assertIn("try again in a minute", why)
         self.assertEqual((self.tmp / "state" / "sessfail").read_text().strip(), str(tacc_live.SUBMIT_TRIES))
+
+    def test_an_upload_the_gateway_cut_off_is_retried(self):
+        # 2026-11-21 20:2x: "Connection closed by 143.89.228.130 ... Failed to upload env repository" failed a run at once:
+        # nothing had been submitted, so it is safe to try again, as for a dropped handshake
+        os.environ["FAKE_UPLOAD_CUT"] = "2"
+        self.assertEqual(tacc_live._submit("batch", {}), ("501", ""))
+        self.assertEqual((self.tmp / "state" / "upcut").read_text().strip(), "3")
+
+    def test_a_full_home_volume_is_named_and_not_retried(self):
+        os.environ["FAKE_DISK_FULL"] = "1"
+        jid, why = tacc_live._submit("batch", {})
+        self.assertEqual(jid, "")
+        self.assertIn("TACC home volume is full", why)
 
     def test_other_failures_are_not_retried(self):
         os.environ["FAKE_SUBMIT_FAIL"] = "unknown challenge: nope"

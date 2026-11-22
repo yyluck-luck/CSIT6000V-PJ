@@ -95,7 +95,10 @@ def _sdk(*args: str, timeout: float | None = None) -> str:
 
 
 # tcloud 没能和平台建立 SSH 会话：什么都还没交，稍等再试不会重复交作业
-_SESSION_FLAKE = re.compile(r"Failed to create remote session|ssh: handshake failed|Failed to dial", re.I)
+# 上传途中网关断开（"Connection closed by … Failed to upload env repository"，2026-11-21 20:2x）也一样：作业还没交上去
+_SESSION_FLAKE = re.compile(r"Failed to create remote session|ssh: handshake failed|Failed to dial|Failed to upload (?:env )?repo", re.I)
+# 家目录所在的卷满了：重试没用（Known limitations 15），直说
+_DISK_FULL = re.compile(r"No space left on device|Disk quota exceeded", re.I)
 
 
 def _ps(tries: int = 3) -> list[list[str]] | None:
@@ -182,7 +185,7 @@ def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], Non
         m = re.findall(r"Submitted batch job (\d+)", out)
         if m:
             return m[-1], ""
-        if attempt + 1 < SUBMIT_TRIES and _SESSION_FLAKE.search(out):
+        if attempt + 1 < SUBMIT_TRIES and _SESSION_FLAKE.search(out) and not _DISK_FULL.search(out):
             pause = wait * SUBMIT_BACKOFF[min(attempt, len(SUBMIT_BACKOFF) - 1)]
             msg = f"TACC's login gateway dropped the connection; trying again in {pause:.0f} s ({attempt + 2}/{SUBMIT_TRIES})"
             print(f"[tacc] {mode}: {msg}", flush=True)
@@ -194,6 +197,9 @@ def _submit(mode: str, env_extra: dict, url: str = "", note: Callable[[str], Non
             continue
         break
     print(f"[tacc] {mode} submission failed:\n{out[-1500:]}", flush=True)
+    if _DISK_FULL.search(out):
+        return "", ("the TACC home volume is full (it is shared by every user of the cluster), so the job could not be "
+                    "uploaded; free space with deploy/tcloud/submit.sh cleanup or try again later")
     if _SESSION_FLAKE.search(out):
         return "", (f"tcloud could not open a session with TACC ({SUBMIT_TRIES} tries over about 2 minutes). "
                     "TACC's login gateway is overloaded: try again in a minute")
