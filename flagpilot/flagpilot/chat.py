@@ -204,6 +204,9 @@ CONTEXT_SHARE = 0.6          # 历史问答最多占模型窗口的这么多；�
 SYSTEM_TOKENS = 1500         # 系统提示 + 题面，粗估
 REPLY_TOKENS = 4096          # 给回答留的位置
 CHARS_PER_TOKEN = 3.5        # 没有 tokenizer：按字数估，宁可估多
+SUMMARY_CHARS = 2400         # 放不下的最早几段问答压成的摘要最多这么长（约 700 token），预算里先给它留出位置
+SUMMARY_Q, SUMMARY_A = 160, 240     # 摘要里每段问答留下的问题、回答的字数
+_FLAGISH = re.compile(r"[A-Za-z0-9_]{2,20}\{[^}\n]{1,120}\}")
 
 
 def context_window(model: str) -> int:
@@ -220,12 +223,33 @@ def est_tokens(text: str) -> int:
     return int(len(text or "") / CHARS_PER_TOKEN) + 4
 
 
+def digest(pairs: list[dict]) -> str:
+    """放不下的最早几段问答压成的摘要：每段留问题的开头、回答的开头和回答里出现过的 flag 形状的串，从最近的往前放，
+    放满 SUMMARY_CHARS 为止；更早还放不下的只报个数。不调模型：结果确定、不花钱、不让这一问多等一轮。"""
+    lines: list[str] = []
+    used = 0
+    for p in reversed(pairs):
+        q = " ".join(str(p["user"]).split())[:SUMMARY_Q]
+        a = " ".join(str(p["answer"]).split())
+        flags = [f for f in dict.fromkeys(_FLAGISH.findall(a)) if f not in a[:SUMMARY_A]][:3]
+        line = (f"- turn {p['turn']}: Q: {q} | A: {a[:SUMMARY_A]}{'…' if len(a) > SUMMARY_A else ''}"
+                + (f" [flags mentioned: {', '.join(flags)}]" if flags else ""))
+        if lines and used + len(line) + 1 > SUMMARY_CHARS:
+            break
+        lines.append(line[:SUMMARY_CHARS])
+        used += len(lines[-1]) + 1
+    lines.reverse()
+    more = len(pairs) - len(lines)
+    return "\n".join(([f"- {more} older exchange(s), not summarised"] if more else []) + lines)
+
+
 def context_plan(rows: list[dict], window: int) -> dict:
     """从会话日志算出下一问带哪些之前的问答。
 
     撤回的轮次从不带。用户"不带"的轮次（context / exclude，可 include 收回）、"从这里重新开始"之前的轮次
     （context / fresh，reset 全部恢复）不带。剩下的从最新往回装，装满 CONTEXT_SHARE 份窗口（扣掉系统提示和回答的位置）
-    为止，更早的连续一段自动不带；最新的一问一答总是带上。
+    为止；更早的连续一段装不下（auto），压成一段摘要（digest）放进系统提示——预算里先给摘要留出位置，再决定装哪几段。
+    最新的一问一答总是带上。
     """
     gone = recalled_turns(rows)
     excluded: set[int] = set()
@@ -253,32 +277,42 @@ def context_plan(rows: list[dict], window: int) -> dict:
         elif r.get("type") == "reply" and t in pending and str(r.get("answer") or "").strip():
             pairs.append({"turn": int(t), "user": pending.pop(t), "answer": str(r["answer"])})
     budget = max(0, int(window * CONTEXT_SHARE) - SYSTEM_TOKENS - REPLY_TOKENS)
-    state: dict[int, str] = {}
-    chosen: list[dict] = []
-    used, full = 0, False
-    for p in reversed(pairs):
-        t = p["turn"]
-        if t in excluded:
-            state[t] = "excluded"
-            continue
-        if fresh and t < fresh:
-            state[t] = "before_fresh"
-            continue
-        cost = est_tokens(p["user"]) + est_tokens(p["answer"])
-        if full or (chosen and used + cost > budget):
-            full = True
-            state[t] = "auto"
-            continue
-        chosen.append(p)
-        used += cost
-        state[t] = "in"
+
+    def fill(room: int) -> tuple[dict, list, int]:
+        state: dict[int, str] = {}
+        chosen: list[dict] = []
+        used, full = 0, False
+        for p in reversed(pairs):
+            t = p["turn"]
+            if t in excluded:
+                state[t] = "excluded"
+                continue
+            if fresh and t < fresh:
+                state[t] = "before_fresh"
+                continue
+            cost = est_tokens(p["user"]) + est_tokens(p["answer"])
+            if full or (chosen and used + cost > room):
+                full = True
+                state[t] = "auto"
+                continue
+            chosen.append(p)
+            used += cost
+            state[t] = "in"
+        return state, chosen, used
+
+    state, chosen, used = fill(budget)
+    summary = ""
+    if any(v == "auto" for v in state.values()):
+        state, chosen, used = fill(max(0, budget - est_tokens("x" * SUMMARY_CHARS)))   # 给摘要留出位置
+        summary = digest([p for p in pairs if state[p["turn"]] == "auto"])
     chosen.reverse()
-    return {"pairs": chosen, "window": window, "budget": budget, "tokens": SYSTEM_TOKENS + used, "fresh": fresh,
+    return {"pairs": chosen, "summary": summary, "window": window, "budget": budget,
+            "tokens": SYSTEM_TOKENS + used + (est_tokens(summary) if summary else 0), "fresh": fresh,
             "turns": [{"turn": p["turn"], "state": state[p["turn"]]} for p in pairs]}
 
 
 def context_note(plan: dict) -> str:
-    """给模型的一句说明：之前有几段问答没带、为什么。什么都没少就是空串。"""
+    """给模型的说明：之前有几段问答没有原样带上、为什么；放不下的那几段附上摘要。什么都没少就是空串。"""
     left = [t for t in plan.get("turns", []) if t["state"] != "in"]
     if not left:
         return ""
@@ -288,9 +322,12 @@ def context_note(plan: dict) -> str:
     if n_user:
         why.append(f"{n_user} left out by the user")
     if n_auto:
-        why.append(f"{n_auto} of the oldest left out to fit your context window")
-    return (f"Note: {len(left)} earlier exchange(s) of this conversation are not shown ({'; '.join(why)}). "
-            "If the question depends on them, say so and ask the user to repeat what you need.")
+        why.append(f"{n_auto} of the oldest summarised below to fit your context window")
+    note = (f"Note: {len(left)} earlier exchange(s) of this conversation are not shown in full ({'; '.join(why)}). "
+            "If the question depends on one that is not shown, say so and ask the user to repeat what you need.")
+    if plan.get("summary"):
+        note += "\nSummary of the oldest exchanges:\n" + plan["summary"]
+    return note
 
 
 def context_summary(plan: dict) -> dict:

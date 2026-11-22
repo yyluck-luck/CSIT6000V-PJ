@@ -3,8 +3,9 @@
 [![tests (CI)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml/badge.svg)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml)
 ![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-2b4fd8)
 ![runtime dependencies: none (standard library)](https://img.shields.io/badge/runtime%20dependencies-none%20%28standard%20library%29-141414)
-![unit tests: 751 passing](https://img.shields.io/badge/unit%20tests-751%20passing-2b4fd8)
-![browser checks: 103 passing](https://img.shields.io/badge/browser%20checks-103%20passing-2b4fd8)
+![unit tests: 761 passing](https://img.shields.io/badge/unit%20tests-761%20passing-2b4fd8)
+![browser checks: 105 passing](https://img.shields.io/badge/browser%20checks-105%20passing-2b4fd8)
+![runs on: macOS | Linux | TACC Slurm](https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20TACC%20Slurm-141414)
 ![model: Qwen 3.8 27B on TACC](https://img.shields.io/badge/model-Qwen%203.8%2027B%20on%20TACC-f4b400)
 ![v7 full agent: 36/40 verified](https://img.shields.io/badge/v7%20full%20agent-36%2F40%20verified-2b4fd8)
 ![verifier: clean replay + 4 gates](https://img.shields.io/badge/verifier-clean%20replay%20%2B%204%20gates-e0332e)
@@ -36,9 +37,19 @@ check each one. Artifact for **CSIT6000V Advanced AI Computing and Systems**, HK
 [`course_project.pdf`](course_project.pdf) and the proposal this artifact implements is [`proposal.pdf`](proposal.pdf).
 Group contributions are listed in the submitted PDF, not here.
 
+**The course's requirements, and where this README covers them:**
+
+| Requirement | What FlagPilot does | Where |
+|---|---|---|
+| 1. A task or scenario | Solve offline CTF challenges and prove each answer with a script that is replayed; a tutor for the same challenges | [Task set](#1-task-set) |
+| 2. Frontend: task input, visible progress, review of the result | A web app: pick, upload or import a challenge; watch each step as it happens; verdict, replay and write-up | [The web app](#what-you-can-do-in-the-web-app) |
+| 3. Backend: agent workflow, model API, tools and data | Agent loop, model client (vLLM on TACC, hosted APIs with fail-over), tools in a sandbox, replay verifier | [Architecture](#architecture), [Judging](#how-an-attempt-is-judged) |
+| 4. Evaluation: representative cases, metrics, at least one failure analysed | 20 dev challenges × 4 tiers × 2 attempts on TACC; Wilson intervals and paired tests; replies that stop mid-JSON analysed | [§3](#3-reproducing-the-evaluation), claims C2–C4 |
+| 5. Demo: setup, configuration, known limitations | One-command start; models, keys and TACC; known limitations | [Getting started](#getting-started-instructions), [§2](#2-model-backends), [§4](#4-deployment-on-tacc), [§7](#7-known-limitations-and-expected-variation) |
+
 | Getting started | Detailed instructions |
 |---|---|
-| [One command](#fastest-path-one-command) · [The web app](#what-you-can-do-in-the-web-app) · [Step by step, offline](#step-by-step-path-no-model-no-network) | [Claims](#claims-and-how-to-check-them) · [Judging](#how-an-attempt-is-judged) · [Tasks](#1-task-set) · [Models](#2-model-backends) · [Evaluation](#3-reproducing-the-evaluation) · [TACC](#4-deployment-on-tacc) · [Keys](#keys) · [Metrics](#5-metrics) · [Tests](#6-tests) · [Limitations](#7-known-limitations-and-expected-variation) · [Troubleshooting](#8-troubleshooting) |
+| [One command](#fastest-path-one-command) · [The web app](#what-you-can-do-in-the-web-app) · [Step by step, offline](#step-by-step-path-no-model-no-network) | [Claims](#claims-and-how-to-check-them) · [Architecture](#architecture) · [Judging](#how-an-attempt-is-judged) · [Tasks](#1-task-set) · [Models](#2-model-backends) · [Evaluation](#3-reproducing-the-evaluation) · [TACC](#4-deployment-on-tacc) · [Keys](#keys) · [Metrics](#5-metrics) · [Tests](#6-tests) · [Limitations](#7-known-limitations-and-expected-variation) · [Troubleshooting](#8-troubleshooting) |
 
 ---
 
@@ -107,7 +118,12 @@ nothing here can submit jobs on someone else's account.
 | **Runs** | Every past attempt, replayable step by step. |
 | **Lab** | Experiments on the agent with 95% intervals and paired tests: *Compare* tiers and models on one challenge, *Batch* over many, *Diff* two runs, and a memorization *Probe*. |
 | **Upload** | Upload your own challenge, or find one in a public archive of past CTFs and import it by search or link (a link that is a little wrong is corrected). An import can be previewed, customised and drafted by the AI, which never sees the answer. A challenge that needs its original network service is marked, and asks before its first run. |
-| **Ask** | A tutor that can run commands in the challenge's sandbox; every flag it states is checked. A new conversation is about Solve's challenge, and choosing another in Ask never changes Solve's. Messages queue while a reply comes in and can be recalled; a conversation can be left while it is answered (its row in **Threads** blinks, even before its first message has gone out). A bar above the box shows what the model sees: leave an exchange out, put it back, or start fresh from a message; past 60% of the model's window the oldest exchanges are left out by themselves. |
+| **Ask** | A tutor that can run commands in the challenge's sandbox; every flag it states is checked. A new conversation is about Solve's challenge, and choosing another in Ask never changes Solve's. Messages queue while a reply comes in and can be recalled; a conversation can be left while it is answered (its row in **Threads** blinks, even before its first message has gone out). A bar above the box shows what the model sees: leave an exchange out, put it back, or start fresh from a message; past 60% of the model's window the oldest exchanges are compressed into a summary. Ask answers with the hosted models; Qwen on TACC runs challenges from Solve. |
+
+![The Solve page replaying one of v7's verified attempts](docs/figures/app-solve.png)
+
+*Solve replaying one of `v7`'s verified attempts (`crypto-074`, Qwen 3.8 27B on TACC, tier B3): the settings the run used,
+its five steps, the replay of its script and the verdict. The flag is hidden in this picture.*
 
 ### Step-by-step path (no model, no network)
 
@@ -212,8 +228,8 @@ and the same script; only the gold hash changed, and the verdict flipped.
 
 Open <http://127.0.0.1:8080>, pick a challenge and press **Run**: the middle column streams the agent's turns (thought,
 action, real tool output), the right column shows the verdict, the replay and the budget counters, and a `writeup.md`
-download appears at the end. The pages are described in [the table above](#what-you-can-do-in-the-web-app);
-screenshots are in `flagpilot/docs/screenshots/`.
+download appears at the end. The pages are described in [the table above](#what-you-can-do-in-the-web-app), with a
+screenshot.
 
 #### Step 5 — replay a finished run without a model
 
@@ -257,7 +273,7 @@ Total time on a laptop: under a minute. No GPU, no API key, no network.
 | C2 | On the 20-challenge dev split, Qwen 3.8 27B verifies 33 of 40 attempts as the bare model (B0) and 36 of 40 as the full agent (B3), re-scored (as run: 33 and 35); B1 and B2 verify 33 each. No step of the ladder is significant (B0 to B3: exact McNemar p = 0.25); showing a gain of this size with 80% power would take about 190 paired attempts per tier | [§3](#3-reproducing-the-evaluation) | Offline from the records in `flagpilot/results/tacc/v7`; rerun on TACC with `deploy/tcloud/pipeline.sh` |
 | C3 | The verifier's rejections are checked, not assumed: replaying every recorded submission through today's verifier found 20 correct solutions rejected in `v6` and one in `v7`; re-scored, B3 goes from 31 (`v6`) to 36 (`v7`). The third stage of gate 4 changes none of the 320 verdicts | §3; [evaluation notes](flagpilot/docs/EVALUATION_NOTES.md) | `python3 scripts/rescore.py results/tacc/v6` and `results/tacc/v7` |
 | C4 | Failures are attributed from the traces: every one of `v7`'s 51 protocol breaks is a reply the model ended on its own, 48 of them inside their JSON, and 47 came after one of its own replies had been shown to it cut short (`v6`: 85, 81, 81) | §3; Known limitations, item 14 | `python3 scripts/protocol_breaks.py results/tacc/v7` |
-| C5 | The system works end to end: web app, live runs, replays, Lab statistics, hosted models with fail-over, and Qwen on TACC through the course SDK | Getting Started; §4 | `./start.sh`, `./start.sh --check`, `bash scripts/verify.sh` (14 checks, including 103 browser checks and 90 controls); on the cluster, `scripts/live_tacc_check.py` (20 checks) |
+| C5 | The system works end to end: web app, live runs, replays, Lab statistics, hosted models with fail-over, and Qwen on TACC through the course SDK | Getting Started; §4 | `./start.sh`, `./start.sh --check`, `bash scripts/verify.sh` (14 checks, including 105 browser checks and 91 controls); on the cluster, `scripts/live_tacc_check.py` (17 checks) |
 
 **Not claimed.** An order of the four tiers: no step from B0 to B3 is significant in `v6` or `v7`, so the ladder shows
 what each tier adds, not that it helps. The E3 efficiency grid and the E4 escalation study are implemented and tested
@@ -279,8 +295,22 @@ single DeepSeek baseline in `docs/EVALUATION_BASELINE.md` is reported as measure
 | `flagpilot/scripts/` | Self-check, browser tests, live TACC check, re-scoring, protocol-break counts, figures, secret scan, split and task-set builders |
 | `flagpilot/deploy/` | TACC jobs through the course SDK (`tcloud/`: serving, client, clean-up, pipeline), the sandbox container image (`container/`), Slurm templates |
 | `flagpilot/docs/` | Design, dataset contract, TACC deployment and [reliability notes](flagpilot/docs/TACC_RELIABILITY.md), [evaluation notes](flagpilot/docs/EVALUATION_NOTES.md), screenshots |
-| `docs/figures/`, `docs/submission/` | The README's figures (`scripts/make_figures.py`) and the build of the submission PDF |
+| `docs/figures/`, `docs/submission/` | The README's figures (charts and diagrams from `flagpilot/scripts/make_figures.py`, one screenshot) and the build of the submission PDF |
 | `.github/workflows/` | CI: the unit tests on Python 3.11–3.13 and syntax checks, on every push |
+
+### Architecture
+
+![The system along the course's required execution path](docs/figures/architecture.png)
+
+The figure follows the course's required execution path. The **web app** (`flagpilot/app/index.html`, one page, no build
+step) submits a challenge and follows the run over a live event stream. The **application backend** (`app/server.py`, a
+standard-library HTTP server) runs the **agent loop** (`flagpilot/agent.py`): each turn the model picks one action, a
+**tool** runs it in the challenge's **sandbox** (`flagpilot/sandbox.py`, `flagpilot/tools.py`), and the trimmed output
+goes back into the context. The **model client** (`flagpilot/client.py`) talks to Qwen 3.8 27B served by vLLM on TACC
+(through the course SDK) or to hosted APIs, retrying and handing a turn to the next provider when one fails. A submission
+goes to the **replay verifier** (`flagpilot/verify.py`); its verdict, the replay and a write-up return to the page. Every
+event of every attempt is written to its `trace.jsonl`; batches of attempts on the frozen task split become the metrics
+and results of §3.
 
 ### How an attempt is judged
 
@@ -323,8 +353,9 @@ them (1,600 tokens and 75 s a turn), and a running local attempt can be given 20
 
 A task-set root holds `index/tasks.jsonl` (fields `task_id`, `name`, `category`, `title`, `query`, `gold_sha256`,
 `assets`, `assets_dir`, `suggested_tools`, `scope`) and one directory of files per task, copied read-only into the
-sandbox as `./challenge/`. Only `gold_sha256` is stored: plaintext flags never enter the repository or the sandbox
-(contract: `flagpilot/docs/TASKS.md`).
+sandbox as `./challenge/`. The task set stores only `gold_sha256`, and plaintext flags never enter the sandbox (contract:
+`flagpilot/docs/TASKS.md`). The committed run records do contain the flags the model submitted: they are the evidence of
+each verdict.
 
 **The evaluation task set is not redistributed.** It is derived from picoCTF through InterCode-CTF (General Skills 25,
 Cryptography 16, Forensics 12; network-dependent tasks removed): **53 tasks**, 43 `core` and 10 `extra-gs`, with a
@@ -361,6 +392,10 @@ python3 -m flagpilot batch --batch local --model qwen3:8b --base-url http://127.
 ```
 
 `--track H` fills in the endpoint and the price table, and prices cache hits, cache misses and output separately.
+Replies follow a JSON protocol. The same action written as a model's own tool-call markup (DeepSeek's DSML), as
+function-call JSON, with raw tabs or newlines inside a string, or after a stray `</think>` is read as that action: runs of
+imported challenges on 2026-11-22 lost turns, and two runs ended, on such replies from DeepSeek (the fail-over target) and
+GLM. None of `v7`'s 51 protocol breaks is of these kinds; 2 of `v6`'s 85 are.
 `--sample-seed N` sends seed N+s with every request of attempt s (vLLM and OpenAI honour it; a server that rejects the
 field stops getting it); the evaluated batches did not send one.
 
@@ -551,7 +586,8 @@ submits SDK jobs and reads their Slurm logs, so nothing is forwarded.
   three places.
 - **Connecting** reconnects to the account's `qwen-public-serve` job when TACC already has one (a click whose reply was
   lost, or a session from before a restart) and submits one only when there is none: two jobs would share one fixed
-  working directory and both seats of the two-job quota. The job is kept for the partition's hour (cancelled three
+  working directory and both seats of the two-job quota. The one exception is a job that a start stopped a moment ago
+  is still submitting: it is cancelled when its id comes back, never taken over. The job is kept for the partition's hour (cancelled three
   minutes before the limit, or when the chip is clicked again). The session panel lists the start-up step by step with
   an estimate of the time left: about 5 minutes from two free GPUs to ready, up to 17 when the shared storage is slow.
 - **A submission that goes wrong says which way**: a login key the process cannot read fails at once with that reason
@@ -559,13 +595,15 @@ submits SDK jobs and reads their Slurm logs, so nothing is forwarded.
   process group killed, so no job is left running whose id nobody saw. Before anything is sent again, the page asks
   TACC whether the job landed.
 - **Run on TACC** submits a small client job with that challenge; its events stream into the page as it runs (read
-  every 4 s), and the finished run is downloaded and mounted as a replay. An **Ask** message is one small job too.
-  Measured: a reply in about 27–31 s, `general-004` (B3) from click to `verified` in 64 s.
+  every 4 s), and the finished run is downloaded and mounted as a replay. Measured: `general-004` (B3) from click to
+  `verified` in 64 s. Ask does not use TACC (since 2026-11-22): a reply there was a Slurm job of half a minute or more
+  that held one of the account's two job slots, so Ask answers with the hosted models.
 - A request waits ("on hold") while another job of the account runs, with Slurm's reason for any queue; too close to
   the session's end, the page offers a new session first. **Finish** and recalling a question cancel the job at once.
-- Checked on the real cluster with `scripts/live_tacc_check.py` (20 checks through the page's own API: start-up, a
-  solve, an upload, a hint, Finish while a job runs, Ask in two languages, recall, ending the session); the third pass
-  passed 19 of 20, and its one failure led to the payload check in the next item.
+- Checked on the real cluster with `scripts/live_tacc_check.py` (17 checks through the page's own API: start-up, a
+  solve, an upload, a hint, Finish while a job runs, Ask refusing TACC, ending the session). Its three passes of
+  2026-11-21 ran the earlier version, whose 20 checks still included Ask on TACC; the third passed 19 of 20, and its one
+  failure led to the payload check in the next item.
 - The SDK goes through an unreliable login gateway and a home volume shared by every user. Reads give up after 25 s
   and reconnect; a dropped handshake is retried for about two minutes; a cut-off upload is retried and a job whose
   payload did not arrive is sent again once; a full volume is named. Measurements, the failures found on the cluster
@@ -619,18 +657,18 @@ including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 751 tests (17 of them need the optional `cryptography`)
+python3 -m unittest discover -s tests -t . -q     # 761 tests (17 of them need the optional `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web app)
-node scripts/ui_check.mjs                         # 103 browser checks in headless Chrome
-node scripts/click_all.mjs                        # clicks every control on every page: 90 controls
-python3 scripts/live_tacc_check.py --base http://127.0.0.1:8080   # optional: 20 checks on the real cluster
+node scripts/ui_check.mjs                         # 105 browser checks in headless Chrome
+node scripts/click_all.mjs                        # clicks every control on every page: 91 controls
+python3 scripts/live_tacc_check.py --base http://127.0.0.1:8080   # optional: 17 checks on the real cluster
 ```
 
 The suite is hermetic: it builds synthetic tasks in temporary directories and fakes every model, GitHub and TACC, so
 it needs no keys; four tests that read the evaluation task set skip without it. The unit tests run on every push on
 Python 3.11–3.13. `verify.sh` is the end-to-end gate (CLI, verdict logic, replay paths, web API, offline replay,
 packaging), one line per check. `ui_check` drives every page with a mock model, including the run settings from start
-to finish, Ask's context and its waiting conversations; `click_all` clicks each visible control once and fails on any
+to finish, the select boxes, Ask's context and its waiting conversations; `click_all` clicks each visible control once and fails on any
 error or any control that does nothing (controls that start TACC jobs, delete, stop or reach the internet are left
 out). `live_tacc_check` is the one check that is not hermetic: it starts a Qwen session (two GPUs for about 25 minutes)
 and drives the page against the real cluster. Run it only when no other job of your account is on TACC.

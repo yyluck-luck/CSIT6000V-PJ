@@ -6,6 +6,7 @@
   judging.png   how an attempt is judged: the four gates and the verdict each one gives
   startup.png   where the Qwen start-up time goes (step times from results/live/2026-11-21-pass*.log)
   power.png     how many paired attempts a B0 vs B3 difference of v7's size needs (exact McNemar, from v7's rescore.csv)
+  architecture.png  the system along the course's required execution path: interface, backend, model serving, results
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch  # noqa: E402
 APP = Path(__file__).resolve().parent.parent
 OUT = APP.parent / "docs" / "figures"
 INK, BLUE, YELLOW, RED, GREY, PAPER = "#141414", "#2b4fd8", "#f4b400", "#e0332e", "#c9c9c4", "#f4f3ef"
+INK2 = "#55554f"
 TIERS = [("B0", "bare model"), ("B1", "+ trimming"), ("B2", "+ structured\ntools"), ("B3", "+ full rules")]
 
 plt.rcParams.update({
@@ -216,10 +218,57 @@ def power() -> None:
     plt.close(fig)
 
 
+def architecture() -> None:
+    """The course's required execution path (user interface -> application backend -> model serving; logs and traces ->
+    test cases -> results), with FlagPilot's parts in each place."""
+    fig, ax = plt.subplots(figsize=(12, 6.1))
+    ax.set_xlim(0, 120)
+    ax.set_ylim(0, 61)
+    ax.axis("off")
+    # user interface
+    box(ax, 1, 30, 22, 22, "Web app\n\nSolve · Runs · Lab\nUpload · Ask\n\nsubmit · watch live\nreview", PAPER, size=11)
+    ax.text(12, 53.5, "USER INTERFACE", ha="center", fontsize=10.5, fontweight="bold", color=INK2)
+    # application backend
+    ax.add_patch(FancyBboxPatch((28, 18), 62, 38, boxstyle="square,pad=0", facecolor="white", edgecolor=INK, linewidth=1.6))
+    ax.text(59, 53.2, "APPLICATION BACKEND  (app/server.py, flagpilot/)", ha="center", fontsize=10.5, fontweight="bold", color=INK2)
+    box(ax, 31, 41.5, 27, 9, "request API · live stream (SSE)\nsessions · run controls", PAPER, size=10)
+    box(ax, 61, 41.5, 26, 9, "agent loop: one action\na turn, trimmed context", PAPER, size=10)
+    box(ax, 31, 30.5, 27, 8.5, "tools in a sandbox: shell,\npython, file, strings, decode …", PAPER, size=10)
+    box(ax, 61, 30.5, 26, 8.5, "model client: providers,\nretries, fail-over chain", PAPER, size=10)
+    box(ax, 31, 20.5, 27, 7.5, "replay verifier: 4 gates", BLUE, color="white", size=10.5, bold=True)
+    box(ax, 61, 20.5, 26, 7.5, "state: runs, memory, chats", PAPER, size=10)
+    arrow(ax, 23, 41, 31, 46)
+    arrow(ax, 58, 46, 61, 46)
+    arrow(ax, 74, 41.5, 74, 39)
+    arrow(ax, 61, 34.75, 58, 34.75)
+    arrow(ax, 44.5, 30.5, 44.5, 28)
+    arrow(ax, 31, 24.25, 17, 30)
+    ax.text(1, 26.6, "verdict, replay, write-up", ha="left", va="center", fontsize=9.5)
+    # model serving
+    box(ax, 95, 40, 24, 12, "Qwen 3.8 27B AWQ\nvLLM on TACC\n(course SDK, 2 GPUs)", PAPER, size=10.5)
+    box(ax, 95, 25, 24, 11, "hosted APIs: Gemini,\nDeepSeek, GLM, Qwen,\nGPT (fail-over)", PAPER, size=10.5)
+    ax.text(107, 53.5, "MODEL SERVING", ha="center", fontsize=10.5, fontweight="bold", color=INK2)
+    arrow(ax, 87, 36, 95, 44)
+    arrow(ax, 87, 33, 95, 31)
+    # logs -> test cases -> results
+    y = 3
+    steps = [("traces: every event of\nevery attempt (trace.jsonl)", 1), ("test cases: 53 challenges,\nfrozen dev / test split", 31),
+             ("metrics: verified rate, Wilson\nintervals, paired McNemar", 61), ("results: §3, failure\nattribution, re-scoring", 91)]
+    for i, (text, x) in enumerate(steps):
+        box(ax, x, y, 27 if i < 3 else 28, 10, text, "white" if i < 3 else YELLOW, size=10)
+        if i < 3:
+            arrow(ax, x + 27, y + 5, steps[i + 1][1], y + 5)
+    ax.text(119, 14.8, "LOGS / TRACES → TEST CASES → RESULTS", ha="right", fontsize=10.5, fontweight="bold", color=INK2)
+    ax.annotate("", xy=(14, 13), xytext=(38, 20.5), arrowprops=dict(arrowstyle="-|>", color=INK, lw=1.4, connectionstyle="arc3,rad=0.12"))
+    fig.savefig(OUT / "architecture.png")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     results()
     judging()
     startup()
     power()
+    architecture()
     print("wrote", ", ".join(sorted(p.name for p in OUT.glob("*.png"))), "in", OUT)

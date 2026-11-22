@@ -144,31 +144,121 @@ def parse_action(text: str, allowed: tuple[str, ...] = BASE_ACTIONS) -> tuple[Ac
         return None, "空回复"
     obj = json_object(text)
     if obj is None:
+        obj = markup_call(text)
+    if obj is None:
         return None, "没有解析到合法的 JSON 动作"
     try:
-        return Action.from_obj(obj, allowed), None
+        return Action.from_obj(as_action(obj), allowed), None
     except ValueError as e:
         return None, str(e)
 
 
+# 有的模型不按约定写 JSON，而是把自家的工具调用标记当正文写出来。DeepSeek V4（经中转、请求里不带 tools）写的是 DSML：
+#   <｜DSML｜ invoke name="python"><｜DSML｜ parameter name="code" string="true">…</｜DSML｜ parameter></｜DSML｜ invoke>
+# 意思就是 {"action": "python", "code": "…"}。2026-11-22 导入题 AdultCSP：Gemini 过载、回退到 DeepSeek 后连着三轮这样写，
+# 三次都判成协议错误，运行就此结束。照此转成动作；Qwen（评测用的模型）不写这种标记，v7 不受影响。
+_DSML = r"<\s*[｜|]\s*DSML\s*[｜|]\s*"
+_DSML_END = r"<\s*/\s*[｜|]\s*DSML\s*[｜|]\s*"
+_DSML_INVOKE = re.compile(_DSML + r"invoke\s+name\s*=\s*\"([^\"]+)\"[^>]*>(.*?)" + _DSML_END + r"invoke\s*>", re.S | re.I)
+_DSML_PARAM = re.compile(_DSML + r"parameter\s+name\s*=\s*\"([^\"]+)\"([^>]*)>(.*?)" + _DSML_END + r"parameter\s*>", re.S | re.I)
+# 写乱了的：<invoke name="action">shell</parameter> 之后才是参数（AXOVI 第 18 轮）。名字和值一对一对地取
+_DSML_PAIR = re.compile(_DSML + r"(?:invoke|parameter)\s+name\s*=\s*\"([^\"]+)\"([^>]*)>(.*?)" + _DSML_END + r"(?:parameter|invoke)\s*>", re.S | re.I)
+
+
+def _dsml_value(attrs: str, value: str):
+    if re.search(r'string\s*=\s*"false"', attrs, re.I):      # 非字符串参数（数字、布尔）是 JSON
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return value
+
+
+def markup_call(text: str) -> dict | None:
+    """工具调用写成了标记（DSML）：第一个 invoke 转成动作对象，标记之前的文字当 thought。没有就返回 None。
+
+    规范的写法是 invoke 的名字即动作、里面是参数；写乱了的（invoke 被当成名为 action 的参数）按"名字 → 值"一对对地读，
+    其中有 action 就用它。"""
+    text = text or ""
+    obj: dict | None = None
+    m = _DSML_INVOKE.search(text)
+    if m and m.group(1).strip().lower() != "action":
+        obj = {"action": m.group(1).strip()}
+        for p in _DSML_PARAM.finditer(m.group(2)):
+            obj[p.group(1).strip()] = _dsml_value(p.group(2), p.group(3))
+    else:
+        pairs: dict = {}
+        for p in _DSML_PAIR.finditer(text):
+            pairs.setdefault(p.group(1).strip(), _dsml_value(p.group(2), p.group(3)))
+        if isinstance(pairs.get("action"), str):
+            obj = pairs
+    if obj is None:
+        return None
+    lead = re.split(_DSML, text, maxsplit=1)[0].strip()
+    if lead and "thought" not in obj:
+        obj["thought"] = lead
+    return obj
+
+
+def as_action(obj: dict) -> dict:
+    """函数调用的 JSON 写法 {"name": "shell", "arguments": {...}}（arguments 也可能是一段 JSON 字符串）当作同一个动作。"""
+    if "action" in obj or "name" not in obj or "arguments" not in obj:
+        return obj
+    args = obj["arguments"]
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            return obj
+    if not isinstance(args, dict):
+        return obj
+    return {**args, "action": obj["name"], **({"thought": obj["thought"]} if "thought" in obj else {})}
+
+
 def json_object(text: str) -> dict | None:
-    """回复里的 JSON 对象：先看 markdown 围栏里的、再看整段，最后从第一个 { 开始做括号配平。找不到返回 None。"""
+    """回复里的 JSON 对象：先看 markdown 围栏里的、再看整段，最后从第一个 { 开始做括号配平。找不到返回 None。
+
+    推理只剩一个结尾标签 </think>（开头的 <think> 被服务端吃掉了；DeepSeek 经中转常这样）时，标签之前是推理里打的草稿，
+    之后才是回答：先在之后找，找不到再看全文（2026-11-22 导入题 AXOVI 第 10 轮：草稿和回答各一个 JSON）。
+    """
     text = _THINK.sub("", text or "")
+    if "</think>" in text.lower():
+        tail = re.split(r"</think\s*>", text, flags=re.I)[-1]
+        if tail.strip():
+            obj = _first_object(tail)
+            if obj is not None:
+                return obj
+    return _first_object(text)
+
+
+def _first_object(text: str) -> dict | None:
     for cand in [*_FENCE.findall(text), text.strip()]:
         obj = _try_json(cand)
         if isinstance(obj, dict):
             return obj
     start = text.find("{")
-    if start >= 0:
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    obj = _try_json(text[start : i + 1])
-                    return obj if isinstance(obj, dict) else None
+    if start < 0:
+        return None
+    # 括号配平要跳过字符串里的括号（命令里常有 grep '\\{'），否则第一个对象永远配不平
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                obj = _try_json(text[start : i + 1])
+                return obj if isinstance(obj, dict) else None
     return None
 
 
@@ -206,7 +296,9 @@ def _try_json(s: str):
     if not s.startswith("{") and not s.startswith("["):
         return None
     try:
-        return json.loads(s)
+        # strict=False：字符串里直接写了换行、制表符（JSON 要求写成 \\n、\\t）也收下。GLM 写 shell 命令时常这样
+        # （2026-11-22 导入题 pemu：三条这样的回复判成协议错误，运行就此结束）；结构本身没错，意思也没有歧义
+        return json.loads(s, strict=False)
     except json.JSONDecodeError:
         return None
 

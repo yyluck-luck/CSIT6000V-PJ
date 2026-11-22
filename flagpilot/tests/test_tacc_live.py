@@ -595,11 +595,12 @@ class TaccLiveCase(TaccHarness):
         self.assertIn("tcloud cancel -j 778", tacc_live.status()["log"][-1])     # 告诉人怎么手动收尾
 
 
-class TaccChatHTTP(unittest.TestCase):
-    """/api/chat 带 backend=tacc：回复经 SSE 回来，问答写进本机会话日志（线程列表照常可用）。"""
+class AskIsNotOnTacc(unittest.TestCase):
+    """2026-11-22: Ask answers with the hosted models only; /api/chat refuses backend=tacc and writes nothing."""
 
-    def test_chat_over_tacc_is_logged(self):
+    def test_a_question_for_tacc_is_refused_with_a_reason(self):
         import threading
+        import urllib.error
         import urllib.request
         from http.server import ThreadingHTTPServer
         from app import server as S
@@ -607,55 +608,22 @@ class TaccChatHTTP(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp(prefix="fp-tacc-http-"))
         saved = config.RUNS_ROOT
         config.RUNS_ROOT = tmp
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
-            def fake_chat(m, h, t, tools, on_delta, on_tool, on_stage=None, cancelled=None):
-                on_stage({"stage": "queued", "job": "7"})
-                on_delta("Hi")
-                return {"answer": "Hi there", "steps": []}
-            with mock.patch.object(tacc_live, "chat", fake_chat):
-                srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
-                threading.Thread(target=srv.serve_forever, daemon=True).start()
-                base = f"http://127.0.0.1:{srv.server_address[1]}"
+            base = f"http://127.0.0.1:{srv.server_address[1]}"
+            with mock.patch.object(tacc_live, "chat", side_effect=AssertionError("must not be called")):
                 req = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "hello", "backend": "tacc"}).encode(),
                                              headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    sid = json.loads(r.read())["session_id"]
-                got = []
-                with urllib.request.urlopen(base + f"/api/stream?id={sid}", timeout=10) as r:
-                    for line in r:
-                        if line.startswith(b"data:"):
-                            ev = json.loads(line[5:])
-                            got.append(ev["type"])
-                            if ev["type"] in ("chat_done", "error"):
-                                break
-                srv.shutdown()
-                srv.server_close()
-            self.assertEqual(got, ["chat_stage", "chat_delta", "chat_done"])
-            rows = [json.loads(l) for l in (tmp / "chat" / sid / "chat.jsonl").read_text().splitlines()]
-            self.assertEqual([r["type"] for r in rows], ["meta", "user", "reply"])
-            self.assertEqual(rows[-1]["answer"], "Hi there")
-            # 失败的一轮也落盘：重开线程能看到原因；之后的问答配对不受影响
-            with mock.patch.object(tacc_live, "chat", lambda *a, **k: {"error": "TACC submission failed", "answer": ""}):
-                srv = ThreadingHTTPServer(("127.0.0.1", 0), S.Handler)
-                threading.Thread(target=srv.serve_forever, daemon=True).start()
-                base = f"http://127.0.0.1:{srv.server_address[1]}"
-                req = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "again", "backend": "tacc", "session_id": sid}).encode(),
-                                             headers={"Content-Type": "application/json"})
-                urllib.request.urlopen(req, timeout=10).close()
-                last = {}
-                with urllib.request.urlopen(base + f"/api/stream?id={sid}", timeout=10) as r:
-                    for line in r:
-                        if line.startswith(b"data:"):
-                            last = json.loads(line[5:])
-                            if last.get("type") in ("chat_done", "error"):
-                                break
-                hist = json.loads(urllib.request.urlopen(base + f"/api/chat/history?id={sid}", timeout=10).read())
-                srv.shutdown()
-                srv.server_close()
-            self.assertEqual((last["type"], last["message"]), ("error", "TACC submission failed"))
-            self.assertEqual([m["type"] for m in hist["messages"]], ["user", "reply", "user", "error"])
-            self.assertEqual(hist["messages"][-1]["error"], "TACC submission failed")
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(req, timeout=10)
+            self.assertEqual(ctx.exception.code, 400)
+            self.assertIn("hosted models", json.loads(ctx.exception.read())["error"])
+            ctx.exception.close()
+            self.assertFalse((tmp / "chat").exists() and any((tmp / "chat").iterdir()), "no conversation was started")
         finally:
+            srv.shutdown()
+            srv.server_close()
             config.RUNS_ROOT = saved
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -905,7 +873,12 @@ class TestRobustness(TaccHarness):
     def test_a_session_started_again_is_not_taken_over_by_the_old_submission(self):
         os.environ["FAKE_SUBMIT_SLEEP"] = "0.6"         # each serve submission takes 0.6 s
         self.assertTrue(tacc_live.start()["ok"])        # submits job 501 ...
-        time.sleep(0.2)
+        # wait until that submission is really on its way: since the page asks `tcloud ps` before submitting
+        # (3273d1a), a fixed 0.2 s could pass before it starts on a slow machine, and the stop then came first
+        submits = self.tmp / "state" / "submits"
+        t = time.time()
+        while time.time() - t < 5 and "serve" not in (submits.read_text() if submits.exists() else ""):
+            time.sleep(0.01)
         tacc_live.stop()                                # ... stopped while that try is in flight ...
         self.assertTrue(tacc_live.start()["ok"])        # ... and started again at once: job 502
         t = time.time()
@@ -917,6 +890,28 @@ class TestRobustness(TaccHarness):
         self.assertNotIn("cancel 502", self.record())
         time.sleep(0.3)
         self.assertEqual(tacc_live.status()["serve"], "502", "the old loop never writes over the new session")
+
+    def test_a_new_session_does_not_adopt_the_job_an_older_submission_is_still_landing(self):
+        """2026-11-22: a submission can land on TACC (the job is in `tcloud ps`) well before its job id comes back (27-79 s
+        on the real gateway). Stopped and started again in that window, the new session's look at `tcloud ps` found the
+        old job, not yet known as dropped, and took it; the old loop then got its id and cancelled it under the new
+        session. While an older session's submission is on its way, the new one adopts nothing."""
+        os.environ["FAKE_SUBMIT_LAND_THEN_HANG"] = "1.2"     # the job lands, then the submit hangs before printing its id
+        self.addCleanup(os.environ.pop, "FAKE_SUBMIT_LAND_THEN_HANG", None)
+        self.assertTrue(tacc_live.start()["ok"])
+        ps = self.tmp / "state" / "ps"
+        t = time.time()
+        while time.time() - t < 5 and "501" not in (ps.read_text() if ps.exists() else ""):
+            time.sleep(0.01)                                # job 501 is on TACC; its id has not come back
+        tacc_live.stop()
+        self.assertTrue(tacc_live.start()["ok"])
+        t = time.time()
+        while time.time() - t < 10 and not ("cancel 501" in self.record() and tacc_live.status()["phase"] == "ready"):
+            time.sleep(0.02)
+        s = tacc_live.status()
+        self.assertEqual((s["phase"], s["serve"]), ("ready", "502"), s.get("log"))
+        self.assertIn("cancel 501", self.record(), "the old session's job is cancelled")
+        self.assertFalse(any("reconnected to serve job 501" in line for line in s["log"]), "and never adopted")
 
     def test_a_log_read_that_hangs_is_given_up_quickly(self):
         # 2026-11-21: 1 in 38 `tcloud cat` calls hung for 142 s (the gateway never opened the SSH session); with a 120 s
