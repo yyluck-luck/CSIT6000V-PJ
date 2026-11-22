@@ -11,3 +11,4 @@ build.log
 *.fdb_latexmk
 *.xdv
 *.toc
+.ref/

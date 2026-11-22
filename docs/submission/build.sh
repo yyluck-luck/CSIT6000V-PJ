@@ -41,15 +41,36 @@ cat > stats.tex <<TEX
 \\newcommand{\\LiuSpan}{$LS}\\newcommand{\\ZhangSpan}{$ZS}\\newcommand{\\HongSpan}{$HS}\\newcommand{\\TotalCommits}{$TOTAL}
 TEX
 
-# the README at that commit; links to files in the repository become links to that commit on GitHub
+# the README and its figures at that commit; links to files in the repository become links to that commit on GitHub,
+# images stay local (pandoc embeds them from .ref/)
 git -C "$ROOT" show "$REF:README.md" > readme-src.md
+rm -rf .ref && mkdir -p .ref
+git -C "$ROOT" archive "$REF" docs/figures 2>/dev/null | tar -x -C .ref 2>/dev/null || true
 python3 - "$BLOB" <<'PY'
 import re, sys
 blob = sys.argv[1]
 s = open("readme-src.md", encoding="utf-8").read()
-# a badge is a remote image: in the PDF it becomes a plain link to the same page
-s = re.sub(r"\[!\[([^\]]*)\]\([^)]*\)\]\((https?://[^)\s]+)\)", lambda m: f"[Continuous integration: {m.group(1)}]({m.group(2)})", s)
-s = re.sub(r"\]\((?!https?://|#|mailto:)([^)\s]+)\)", lambda m: f"]({blob}/{m.group(1).lstrip('./')})", s)
+# badges are remote SVG images: a line made only of badges becomes one line of their labels (a linked badge keeps its link)
+BADGE = re.compile(r"\[!\[([^\]]*)\]\([^)\s]+\)\]\((https?://[^)\s]+)\)|!\[([^\]]*)\]\((https?://[^)\s]+)\)")
+lines, start = s.split("\n"), None
+def only_badges(line):
+    return bool(line.strip()) and BADGE.sub("", line).strip() == ""
+out, i = [], 0
+while i < len(lines):
+    if only_badges(lines[i]):
+        j, labels = i, []
+        while j < len(lines) and only_badges(lines[j]):
+            for m in BADGE.finditer(lines[j]):
+                labels.append(f"[{m.group(1)}]({m.group(2)})" if m.group(2) else m.group(3))
+            j += 1
+        out.append(" · ".join(labels))
+        i = j
+        continue
+    out.append(lines[i])
+    i += 1
+s = "\n".join(out)
+# relative links (not images) point at the commit on GitHub; relative images are embedded from the checkout of that commit
+s = re.sub(r"(?<!!)\[([^\]]*)\]\((?!https?://|#|mailto:)([^)\s]+)\)", lambda m: f"[{m.group(1)}]({blob}/{m.group(2).lstrip('./')})", s)
 
 # pipe tables: give each column a width that follows its content (pandoc reads the widths from the dashes of the
 # separator line), so long cells wrap inside the page instead of running off it
@@ -94,8 +115,8 @@ while i < len(lines):
 open("readme-src.md", "w", encoding="utf-8").write("\n".join(out))
 PY
 
-pandoc readme-src.md -f markdown+gfm_auto_identifiers+autolink_bare_uris+lists_without_preceding_blankline-yaml_metadata_block-smart \
-  --columns=70 -t latex -s -o flagpilot-submission.tex \
+pandoc readme-src.md -f markdown+gfm_auto_identifiers+autolink_bare_uris+lists_without_preceding_blankline-yaml_metadata_block-smart-implicit_figures \
+  --resource-path=.ref --columns=70 -t latex -s -o flagpilot-submission.tex \
   -H header.tex -B front.tex \
   -V documentclass=article -V fontsize=10pt -V geometry:margin=2cm -V block-headings \
   -V mainfont="Helvetica Neue" -V monofont="Menlo" -V CJKmainfont="PingFang SC" \
