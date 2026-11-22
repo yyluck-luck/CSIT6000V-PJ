@@ -186,7 +186,8 @@ PY
     cp "$HERE"/cleanup/job.sh "$STAGE"/job.sh
     [[ -z "${FP_DROP:-}" || "$FP_DROP" =~ ^[A-Za-z0-9._-]+([[:space:]]+[A-Za-z0-9._-]+)*$ ]] \
       || { echo "FP_DROP: batch names separated by spaces" >&2; exit 1; }
-    printf 'FP_MODE=cleanup\nFP_DROP=%q\n' "${FP_DROP:-}" > "$STAGE/run.env"
+    [[ "${FP_PRUNE_LOGS:-0}" =~ ^[01]$ ]] || { echo "FP_PRUNE_LOGS: 0 or 1" >&2; exit 1; }
+    printf 'FP_MODE=cleanup\nFP_DROP=%q\nFP_PRUNE_LOGS=%s\n' "${FP_DROP:-}" "${FP_PRUNE_LOGS:-0}" > "$STAGE/run.env"
     perl -pi -e "s/time=00:45:00/time=00:10:00/" "$STAGE/tuxiv.conf"
     ;;
   *)

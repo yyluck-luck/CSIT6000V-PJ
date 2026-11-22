@@ -67,12 +67,15 @@ class TestCleanup(unittest.TestCase):
                 pass
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def test_the_cleanup_job_drops_named_batches_and_keeps_only_records(self):
-        self.work.mkdir()
+    def cleanup(self, env_lines: str) -> subprocess.CompletedProcess:
+        self.work.mkdir(exist_ok=True)
         shutil.copy(DEPLOY / "cleanup" / "job.sh", self.work / "job.sh")
-        (self.work / "run.env").write_text("FP_MODE=cleanup\nFP_DROP='tacc-dev-v5-B0 not-there ../evil'\n")
-        r = subprocess.run(["bash", str(self.work / "job.sh")], capture_output=True, text=True, timeout=60,
-                           env={**os.environ, "TACC_USERDIR": str(self.user), "TACC_WORKDIR": str(self.work), "SLURM_JOB_ID": "1"})
+        (self.work / "run.env").write_text("FP_MODE=cleanup\n" + env_lines)
+        return subprocess.run(["bash", str(self.work / "job.sh")], capture_output=True, text=True, timeout=60,
+                              env={**os.environ, "TACC_USERDIR": str(self.user), "TACC_WORKDIR": str(self.work), "SLURM_JOB_ID": "1"})
+
+    def test_the_cleanup_job_drops_named_batches_and_keeps_only_records(self):
+        r = self.cleanup("FP_DROP='tacc-dev-v5-B0 not-there ../evil'\n")
         self.assertIn("[fp] done: cleanup", r.stdout, r.stderr)
         self.assertIn("[fp] dropped tacc-dev-v5-B0", r.stdout)
         self.assertFalse((self.runs / "tacc-dev-v5-B0").exists())
@@ -82,10 +85,17 @@ class TestCleanup(unittest.TestCase):
             self.assertEqual(files_of(self.runs / "tacc-dev-v7-B0" / a), KEEP)
         self.assertTrue((self.runs / "tacc-dev-v7-B0" / "runs.jsonl").exists())
         self.assertTrue((self.runs / "tacc-dev-v7-B0.md").exists())
-        self.assertFalse((self.user / "slurm_log" / "old.log").exists())
-        self.assertTrue((self.user / "slurm_log" / "new.log").exists())
+        self.assertTrue((self.user / "slurm_log" / "old.log").exists(), "job logs stay unless asked for")
+        self.assertIn("[fp] slurm_log kept", r.stdout)
         self.assertTrue((self.user / "CSIT6000V-project-cache" / "vllm" / "graph.bin").exists(), "the compile cache stays")
         self.assertTrue(self.tmp.exists() and not (self.tmp / "evil").exists())
+
+    def test_old_job_logs_go_only_when_asked_for(self):
+        r = self.cleanup("FP_DROP=''\nFP_PRUNE_LOGS=1\n")
+        self.assertIn("[fp] done: cleanup", r.stdout, r.stderr)
+        self.assertFalse((self.user / "slurm_log" / "old.log").exists())
+        self.assertTrue((self.user / "slurm_log" / "new.log").exists())
+        self.assertTrue((self.runs / "tacc-dev-v5-B0" / "runs.jsonl").exists(), "no batch is dropped without FP_DROP")
 
     def test_the_client_job_prunes_a_batch_after_its_report(self):
         src = (DEPLOY / "client" / "job.sh").read_text(encoding="utf-8")
@@ -111,8 +121,12 @@ class TestCleanup(unittest.TestCase):
         stage = next(self.tmp.glob("fp-tcloud-*/flagpilot-client"))
         self.assertEqual(sorted(p.name for p in stage.iterdir()), ["job.sh", "run.env", "tuxiv.conf"])
         self.assertIn("time=00:10:00", (stage / "tuxiv.conf").read_text())
+        self.assertIn("FP_PRUNE_LOGS=0", (stage / "run.env").read_text(), "logs are kept by default")
         bad = subprocess.run(["bash", str(DEPLOY / "submit.sh"), "cleanup"], capture_output=True, text=True,
                              env={**env, "FP_DROP": "x; rm -rf /"}, timeout=60)
+        self.assertNotEqual(bad.returncode, 0)
+        bad = subprocess.run(["bash", str(DEPLOY / "submit.sh"), "cleanup"], capture_output=True, text=True,
+                             env={**env, "FP_PRUNE_LOGS": "yes"}, timeout=60)
         self.assertNotEqual(bad.returncode, 0)
 
 

@@ -9,7 +9,8 @@
 #   FP_DROP   whole batches to delete (space separated; their records are kept locally or in the repository)
 #   every other attempt keeps only its records, as scripts/export_records.py does: trace.jsonl, writeup.md and
 #   replay/solve.py; its working directory and the copies of the challenge made for the replay checks go.
-#   Logs in slurm_log older than two days go. The course model's compile cache stays (it lets the server start in ~5 min).
+#   FP_PRUNE_LOGS=1  also delete job logs in slurm_log older than two days (off by default: they are small, and old
+#   runs may still be read from them). The course model's compile cache stays (it lets the server start in ~5 min).
 set -u
 : "${TACC_USERDIR:?Submit with tcloud submit}"
 cd "${TACC_WORKDIR:?Submit with tcloud submit}" || exit 1
@@ -33,7 +34,11 @@ for a in "$R"/*/*/; do
   n=$((n + 1))
 done
 echo "[fp] pruned $n attempts to their records"
-find "$TACC_USERDIR/slurm_log" -type f -mtime +2 -delete 2>/dev/null
+if [ "${FP_PRUNE_LOGS:-0}" = 1 ]; then
+  find "$TACC_USERDIR/slurm_log" -type f -mtime +2 -delete 2>/dev/null && echo "[fp] deleted job logs older than two days"
+else
+  echo "[fp] slurm_log kept"
+fi
 du -sh "$TACC_USERDIR"/* "$R" 2>/dev/null | sed 's/^/[fp] du-after /'
 df -h "$TACC_USERDIR" 2>/dev/null | sed 's/^/[fp] df-after /'
 echo "[fp] done: cleanup"
