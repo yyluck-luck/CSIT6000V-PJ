@@ -15,6 +15,10 @@ replays inherit.
   python3 scripts/rescore.py runs/tacc/v6 --only hardcoded_no_material
   python3 scripts/rescore.py runs/tacc/v6 --csv out.csv  # one row per attempt
 
+The replays run the python3 on PATH. The cluster's jobs carried pycryptodome and gmpy2 (deploy/tcloud/submit.sh): a
+python3 without them fails every script that imports them, and verified attempts read as script_error (2026-11-22:
+six crypto-079 attempts did). The script stops unless that python3 has both, or --lenient is given.
+
 Attempts that never submitted (budget, errors) keep their verdict: there is nothing to replay.
 """
 
@@ -25,6 +29,7 @@ import csv
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -34,6 +39,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.lab import wilson  # noqa: E402
 from flagpilot import config, verify  # noqa: E402
 from flagpilot.config import SandboxLimits  # noqa: E402
+from flagpilot.sandbox import probe_capabilities  # noqa: E402
+
+VENDORED = ("Crypto", "gmpy2")       # what the TACC jobs carried (FP_VENDOR, deploy/tcloud/submit.sh)
+
+
+def replay_python_lacks() -> tuple[str, list[str]]:
+    """The python3 the replays use, and which of the cluster's vendored modules it cannot import."""
+    py = probe_capabilities().python
+    return py, [m for m in VENDORED if subprocess.run([py, "-c", f"import {m}"], capture_output=True).returncode != 0]
 from flagpilot.tasks import load_index  # noqa: E402
 
 
@@ -128,7 +142,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", default="", help="re-check only attempts that ended with this reason")
     ap.add_argument("--csv", default="", help="write one row per attempt here")
     ap.add_argument("--tasks", default="", help="the task set (default: the configured one)")
+    ap.add_argument("--lenient", action="store_true", help="go on although the replays' python3 lacks pycryptodome or gmpy2")
     args = ap.parse_args(argv)
+    py, lacking = replay_python_lacks()
+    if lacking:
+        print(f"the replays run {py}, which cannot import {', '.join(lacking)} (pycryptodome / gmpy2, carried by the cluster's "
+              "jobs): scripts that need them would fail here and not there. Put a python3 that has them first on PATH, "
+              "or pass --lenient.", file=sys.stderr)
+        if not args.lenient:
+            return 2
     tasks_root = Path(args.tasks) if args.tasks else config.TASKS_ROOT
     tasks = {t.name: t for t in load_index(tasks_root)}
     attempts = sorted(p.parent for p in Path(args.folder).glob("*/*/trace.jsonl"))

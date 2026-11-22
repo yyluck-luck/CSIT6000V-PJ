@@ -5,6 +5,8 @@
     2. solve.py 里不能出现 flag 的字面量及其变体        → 否则 unverified:literal_flag
     3. 在一个全新目录（只含题目附件）里重跑 solve.py    → 输出含该 flag 才算 verified
     4. 把题目附件清空再跑一次                          → 还能打印出该 flag 就是没在用材料
+       然后换成同名、等长的填充文字，再换成开头 / 长度 / 字符类都与原文件相同的"保形"假材料，各跑一次：
+       任何一次还打印出该 flag，答案就不是从材料内容推出来的
 
 只有占位文件（.placeholder）的题算"没有附件"，不做第 4 条。第 4 条还有一个例外（5）：材料只写在**题面**里的题（如 ROT13 题把密文写在题目描述里，附件只是个
 工具脚本），脚本只能把题面里的密文抄进来——清空附件当然还能打印 flag。这时改做"题面依赖检验"：
@@ -296,6 +298,96 @@ def _stage_decoy(dest: Path, task: Task, tasks_root: Path) -> None:
         out.write_bytes(_decoy_bytes(n))
 
 
+# ---------- 第三段：保形假材料 ----------
+
+_HEAD = 8                 # 文件开头最多保留这么多字节：常见格式的魔数（PNG 8、ZIP 4、gzip 2、ELF 4、%PDF- 5）都在里面
+_TEXT_SHAPE_MAX = 2_000_000   # 更大的文本文件按二进制处理（逐字符挪在 Python 里太慢）
+
+
+def _keystream(seed: str, n: int) -> bytes:
+    """由 seed 决定的 n 个字节（SHAKE-256）：同一题同一文件每次一样，跨 Python 版本也一样。"""
+    return hashlib.shake_256(seed.encode("utf-8")).digest(n) if n > 0 else b""
+
+
+def _looks_text(data: bytes) -> bool:
+    if b"\x00" in data:
+        return False
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return sum(c.isprintable() or c in "\t\n\r" for c in text) >= 0.95 * max(1, len(text))
+
+
+def _shift_classes(body: bytes, stream: bytes) -> bytes:
+    """字母仍是字母、数字仍是数字、符号仍是符号，各自只在本文件用到的那些字符里挪 1..k 位（按位置不同，见 _step 的理由：
+    统一挪同样的位数等于换了个凯撒密钥，穷举密钥的正确脚本照样解得出）。某一类只用到一个字符时：字母和数字在整类里挪，
+    符号不动。换行、回车和非 ASCII 字节不动。"""
+    classes = {"lower": range(97, 123), "upper": range(65, 91), "digit": range(48, 58),
+               "symbol": [b for b in range(32, 127) if not chr(b).isalnum()] + [9]}
+    group_of: dict[int, list[int]] = {}
+    for name, members in classes.items():
+        used = sorted({b for b in body if b in members})
+        if len(used) < 2:
+            if name == "symbol":
+                continue
+            used = list(members)
+        for b in used:
+            group_of[b] = used
+    out = bytearray(body)
+    for i, b in enumerate(body):
+        g = group_of.get(b)
+        if g is None:                             # 换行、回车、非 ASCII 字节：不在任何一类里，不动
+            continue
+        k = 1 + stream[i] % (len(g) - 1)          # 1 .. len(g)-1：每个字母、数字（和多于一种的符号）都会变
+        out[i] = g[(g.index(b) + k) % len(g)]
+    return bytes(out)
+
+
+def _shaped_bytes(data: bytes, seed: str) -> bytes:
+    """与原文件同长、开头相同、"形状"相同的假材料。
+
+    开头 min(8, n/4) 个字节（文件魔数）不动；文本文件按字符类挪（hex 仍是 hex、base64 仍是合法 base64、摩尔斯电码仍是点和划），
+    二进制文件逐字节异或一个非零值。只查格式（魔数、长度、能否按 UTF-8 读、是不是合法 base64）再打印硬编码答案的脚本，
+    在这份材料上照样打印 flag，于是被抓住；真从内容算答案的脚本在这里算出别的东西或报错。
+    """
+    n = len(data)
+    head = min(_HEAD, n // 4)
+    body = data[head:]
+    stream = _keystream(seed, len(body))
+    if len(body) <= _TEXT_SHAPE_MAX and _looks_text(data):
+        out = _shift_classes(body, stream)
+        if out != body:
+            return data[:head] + out
+    nonzero = stream.translate(bytes([1]) + bytes(range(1, 256)))
+    mixed = int.from_bytes(body, "big") ^ int.from_bytes(nonzero, "big")
+    return data[:head] + mixed.to_bytes(len(body), "big")
+
+
+def _stage_shaped(dest: Path, task: Task, tasks_root: Path) -> bool:
+    """同名附件，内容换成 _shaped_bytes。返回是否真有内容被换掉（附件全是空文件时这一段不必跑）。"""
+    target = dest / "challenge"
+    target.mkdir(parents=True, exist_ok=True)
+    base = Path(tasks_root) / task.assets_dir
+    if not base.exists():
+        return False
+    changed = False
+    for f in sorted(base.rglob("*")):
+        if not f.is_file() or f.name == "task.json":
+            continue
+        rel = f.relative_to(base)
+        out = target / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = f.read_bytes()
+        except OSError:
+            data = b""
+        fake = _shaped_bytes(data, f"{task.name}\0{rel.as_posix()}")
+        changed = changed or fake != data
+        out.write_bytes(fake)
+    return changed
+
+
 def survives_without_material(
     task: Task,
     script: str,
@@ -357,6 +449,19 @@ def survives_without_material(
             return False, note
         return True, ("把 challenge/ 换成同名的假材料后仍打印出同一个 flag："
                       "脚本读了材料却没有用它，答案仍是硬编码的")
+
+    # 第三段：保形假材料。第二段的填充文字过不了"先查格式"的脚本（查魔数、按 UTF-8 读、校验 base64……）：
+    # 查不过就退回硬编码答案的脚本在填充文字上算出别的、在真材料上打印 flag，以前因此漏过（README 已知局限 13）。
+    shaped = _dir("shaped-material")
+    if _stage_shaped(shaped, task, tasks_root):
+        res3 = _run_script(shaped, script, timeout_s, limits)
+        if not res3.timed_out and flag in (res3.stdout or ""):
+            note = derived_from_text(task, script, flag, _dir("text-material-shaped"), timeout_s, limits,
+                                     stage=lambda d: _stage_shaped(d, task, tasks_root), lead="脚本只用到附件的格式")
+            if note:
+                return False, note
+            return True, ("把 challenge/ 换成开头、长度和字符类都与原文件相同而内容不同的假材料后仍打印出同一个 flag："
+                          "脚本只用到了材料的格式，答案仍是硬编码的")
     return False, ""
 
 
