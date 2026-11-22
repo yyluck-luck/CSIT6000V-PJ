@@ -3,7 +3,7 @@
 [![tests (CI)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml/badge.svg)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml)
 ![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-2b4fd8)
 ![runtime dependencies: none (standard library)](https://img.shields.io/badge/runtime%20dependencies-none%20%28standard%20library%29-141414)
-![unit tests: 606 passing](https://img.shields.io/badge/unit%20tests-606%20passing-2b4fd8)
+![unit tests: 739 passing](https://img.shields.io/badge/unit%20tests-739%20passing-2b4fd8)
 ![browser checks: 103 passing](https://img.shields.io/badge/browser%20checks-103%20passing-2b4fd8)
 ![model: Qwen 3.8 27B on TACC](https://img.shields.io/badge/model-Qwen%203.8%2027B%20on%20TACC-f4b400)
 ![v7 full agent: 36/40 verified](https://img.shields.io/badge/v7%20full%20agent-36%2F40%20verified-2b4fd8)
@@ -605,7 +605,7 @@ including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 606 tests (17 skip without the optional `cryptography`)
+python3 -m unittest discover -s tests -t . -q     # 739 tests (17 skip without the optional `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web app)
 node scripts/ui_check.mjs                         # 103 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 90 controls
