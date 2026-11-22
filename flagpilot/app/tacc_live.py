@@ -379,8 +379,15 @@ def status() -> dict:
         d = {k: (list(v) if isinstance(v, list) else v) for k, v in S.items() if k not in ("prog", "watch")}
         prog = json.loads(json.dumps(S.get("prog") or {}))
     left = (d["t0"] + SESSION_S - time.time()) if d["phase"] == "ready" else 0
-    return {**d, "remaining": max(0, round(left)), "elapsed": round(time.time() - d["t0"]) if d["t0"] else 0,
-            "progress": _progress_view(prog, d["phase"]), "min_run_s": MIN_RUN_S, "min_chat_s": MIN_CHAT_S}
+    pv = _progress_view(prog, d["phase"])
+    # 已用时间必须单调。进度还没建起来时（刚开始那一瞬间，或网页进程是改代码之前起的、
+    # S 里根本没有 prog），只有 t0 可用；而进度里的 elapsed 缺字段时也会算成 0。
+    # 页面拿这个值当基准，缺了就只能用本地计时，而本地计时每次轮询都清零——
+    # 弹窗上于是显示成 0 s → 1 s → 0 s 来回跳，看着像卡死。
+    since_start = round(time.time() - d["t0"]) if d["t0"] else 0
+    pv["elapsed"] = max(pv.get("elapsed") or 0, since_start)
+    return {**d, "remaining": max(0, round(left)), "elapsed": since_start,
+            "progress": pv, "min_run_s": MIN_RUN_S, "min_chat_s": MIN_CHAT_S}
 
 
 def session_left() -> float:
