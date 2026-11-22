@@ -181,18 +181,28 @@ env = dict(os.environ)
 
 
 def drop_caller_hooks(env):
-    """Remove a sitecustomize that belongs to whoever launched us, nobody else's paths."""
-    kept = []
+    """Remove what belongs to whoever launched us; nobody else's paths are touched."""
+    dropped, kept = [], []
     for part in (env.get("PYTHONPATH") or "").split(os.pathsep):
         if part and os.path.exists(os.path.join(part, "sitecustomize.py")):
-            continue
-        if part:
+            dropped.append(part)
+        elif part:
             kept.append(part)
+    if not dropped:
+        return env
     env["PYTHONPATH"] = os.pathsep.join(kept)
     if not kept:
         del env["PYTHONPATH"]
+    # The same shim usually also sits in front of PATH (it wraps every executable and asks the
+    # caller's broker for permission - "Brokered program policy check unavailable" once that
+    # caller is gone, which is what stopped `tcloud submit`). Drop those entries with it.
+    env["PATH"] = os.pathsep.join(
+        p for p in (env.get("PATH") or "").split(os.pathsep)
+        if p and not any(p == d or p.startswith(d + os.sep) for d in dropped))
     for k in [k for k in env if k.startswith("CODEBUDDY_SANDBOX_BROKER_")
-              or k in ("CODEBUDDY_BROKERED_FS_HOOK_ENABLED", "SANDBOX_CENTER_IPC_ADDRESS")]:
+              or k.startswith("CODEBUDDY_BROKERED_")
+              or k in ("CODEBUDDY_SANDBOX_PROGRAM_POLICY_COMMAND", "SANDBOX_CENTER_IPC_ADDRESS",
+                       "TOYBOX_SANDBOX_SOCK", "CODEBUDDY_TOYBOX_BIN")]:
         del env[k]
     return env
 
