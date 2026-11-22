@@ -82,7 +82,15 @@ except Exception:
 PY
 }
 
-is_flagpilot() { ps -o command= -p "$1" 2>/dev/null | grep -q "flagpilot web"; }
+# Is pid $1 this copy's web server? Deliberately not `ps -o command=`: ps is refused in
+# sandboxes and some CI images ("operation not permitted"), and then pids() finds nothing -
+# --stop cannot stop the server while the port still answers, and --restart prints both
+# "not running" and "already running". A listener on our port whose cwd is this copy is the
+# same statement without ps.
+is_flagpilot() {
+  lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | grep -qx "$1" || return 1
+  [ "$(dir_of "$1")" = "$APP" ]
+}
 dir_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1; }
 
 # the folder of the FlagPilot listening on this port, whichever copy it belongs to (empty: none, or no lsof)
@@ -153,9 +161,50 @@ else
   fi
   set -- --host 127.0.0.1 --port "$PORT" --model "$MODEL"
   [ -d "$APP/runs/tacc" ] && set -- "$@" --replay runs/tacc        # finished TACC runs show up in Runs and the Lab
+  # The server is put in its own session, not merely behind nohup: nohup only ignores SIGHUP,
+  # while the child stays in the caller's process group. Whatever tears that group down - an
+  # agent's shell, a CI step, a terminal closed while the group is still attached - takes the
+  # server with it a moment after "FlagPilot is running" was printed.
+  #
+  # The other half is the environment. A caller that wraps Python (a sandbox, an audit or
+  # coverage hook) leaves a sitecustomize on PYTHONPATH; inherited by a long-lived server, every
+  # open() goes through that caller's broker, and the day the caller exits the server keeps
+  # listening but answers nothing ("_BrokerProtocolError: execution attempt 不存在或已关闭",
+  # seen from httpcache.load). A server that outlives its caller must not inherit such a hook,
+  # so the shim entry is dropped here and the brokered-fs switch is turned off.
   ( cd "$APP" || exit 1
-    nohup "$PY" -m flagpilot web "$@" > "$RUN/web-$PORT.log" 2>&1 &       # $! is the server itself
-    echo $! > "$RUN/web-$PORT.pid" )
+    "$PY" - "$RUN/web-$PORT.log" "$RUN/web-$PORT.pid" "$PY" "$@" <<'PY'
+import os, subprocess, sys
+
+log, pidfile, py, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+env = dict(os.environ)
+
+
+def drop_caller_hooks(env):
+    """Remove a sitecustomize that belongs to whoever launched us, nobody else's paths."""
+    kept = []
+    for part in (env.get("PYTHONPATH") or "").split(os.pathsep):
+        if part and os.path.exists(os.path.join(part, "sitecustomize.py")):
+            continue
+        if part:
+            kept.append(part)
+    env["PYTHONPATH"] = os.pathsep.join(kept)
+    if not kept:
+        del env["PYTHONPATH"]
+    for k in [k for k in env if k.startswith("CODEBUDDY_SANDBOX_BROKER_")
+              or k in ("CODEBUDDY_BROKERED_FS_HOOK_ENABLED", "SANDBOX_CENTER_IPC_ADDRESS")]:
+        del env[k]
+    return env
+
+
+env = drop_caller_hooks(env)
+with open(log, "ab", buffering=0) as out:
+    proc = subprocess.Popen([py, "-m", "flagpilot", "web", *args], stdin=subprocess.DEVNULL,
+                            stdout=out, stderr=subprocess.STDOUT, env=env,
+                            start_new_session=True)
+open(pidfile, "w").write(f"{proc.pid}\n")
+PY
+  )
   i=0
   until up; do
     i=$((i + 1))
