@@ -78,12 +78,19 @@ def _clean(text: str) -> str:
 
 
 def _sdk(*args: str, timeout: float | None = None) -> str:
+    """一次 tcloud 调用。慢（> 8 s）或放弃了就在服务器日志里记一行：网关的毛病只能从这里看出来。"""
     timeout = _read_timeout() if timeout is None else timeout
     with _SDK_SEM:
+        t0 = time.time()
         try:
             r = subprocess.run([_tc(), *args], capture_output=True, timeout=timeout, cwd=str(ROOT))
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            print(f"[tacc] tcloud {' '.join(args[:3])}: no answer in {timeout:.0f} s; gave up", flush=True)
             return ""
+        except OSError:
+            return ""
+    if time.time() - t0 > 8:
+        print(f"[tacc] tcloud {' '.join(args[:3])}: took {time.time() - t0:.0f} s", flush=True)
     return _clean((r.stdout or b"").decode("utf-8", "replace") + (r.stderr or b"").decode("utf-8", "replace"))
 
 
@@ -271,13 +278,23 @@ def _preflight(root: Path, name: str, scope: str | None) -> str:
 
 
 def _cancel(jid: str) -> bool:
-    """取消并核实。以前只发一次 cancel、不看结果：SDK 一抖，作业就在后台占着 GPU 和个人名额跑满 1 小时。"""
-    for _ in range(3):
-        _sdk("cancel", "-j", jid)
-        for _ in range(3):
-            if _gone(jid):
-                return True
-            time.sleep(float(os.environ.get("FLAGPILOT_TACC_POLL", "15")) / 5)
+    """取消并核实：作业从 Slurm 的列表里消失才算。以前只发一次 cancel、不看结果：SDK 一抖，作业就在后台占着 GPU 和
+    个人名额跑满 1 小时。网关不稳时 cancel / ps 都可能一挂到读超时：每隔 CANCEL_EVERY 秒重发一次 cancel（重复取消
+    无害），每轮只问一次 ps，最多 CANCEL_LIMIT 秒。以前每发一次 cancel 要等三次列表、每次最多三次重试，网关一抖一轮
+    就是几分钟（2026-11-21，作业 30516：撤回的提问照样把回答写完了）。"""
+    every = float(os.environ.get("FLAGPILOT_TACC_CANCEL_EVERY") or 8)
+    t_end = time.time() + float(os.environ.get("FLAGPILOT_TACC_CANCEL_LIMIT") or 150)
+    nap = min(2.0, float(os.environ.get("FLAGPILOT_TACC_POLL", "15")) / 5)
+    sent = 0.0
+    while True:
+        if time.time() - sent >= every:
+            sent = time.time()
+            _sdk("cancel", "-j", jid)
+        if _job_state(jid, tries=1) == "":
+            return True
+        if time.time() >= t_end:
+            break
+        time.sleep(nap)
     _log(f"job {jid} may still be running; cancel it with: tcloud cancel -j {jid}")
     return False
 
@@ -698,6 +715,36 @@ def _session_gone(serve: str | None) -> Callable[[], bool]:
     return lambda: S["phase"] != "ready" or S["serve"] != serve
 
 
+class _Stopper:
+    """Finish / 撤回一到就取消作业，不等主循环：主循环可能正卡在一次读日志或查列表上（最多一个读超时）。
+
+    只取消一次；名额由取消它的线程在作业真没了之后放（_cancel_then_release）。close()：主循环结束时调用，返回是否已经
+    开始取消——是的话主循环不能再放名额（否则放两次，可能把下一个作业刚占到的名额也放掉）。"""
+
+    def __init__(self, jid: str, cancelled: Callable[[], bool]):
+        self.jid, self.cancelled, self.started = jid, cancelled, False
+        self._lock, self._over = threading.Lock(), threading.Event()
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _watch(self) -> None:
+        while not self._over.wait(0.1):
+            if self.cancelled():
+                self.fire()
+                return
+
+    def fire(self) -> None:
+        with self._lock:
+            if self.started or self._over.is_set():
+                return
+            self.started = True
+        threading.Thread(target=_cancel_then_release, args=(self.jid,), daemon=True).start()
+
+    def close(self) -> bool:
+        with self._lock:
+            self._over.set()
+            return self.started
+
+
 def _cancel_then_release(jid: str) -> None:
     """用户点了 Finish / 撤回：页面上立刻结束，这里在后台把作业取消干净再放出名额——
     下一个作业要等这个真的停了才交，否则两个作业会在同一个工作目录里互相覆盖。"""
@@ -784,7 +831,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
     if err:
         on_event({"type": "error", "message": err})
         return None
-    release = True
+    release, stopper = True, None
     ended = _session_gone(S["serve"])
     try:
         late = too_late("run")                     # 等名额可能等掉了时间
@@ -822,6 +869,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
             on_event({"type": "error", "message": "TACC submission failed" + (f": {why}" if why else "")})
             return None
         on_event({"type": "tacc", "stage": "queued", "job": jid})
+        stopper = _Stopper(jid, cancelled)         # Finish 一到就取消，不等下面可能卡住的读
         seen, flags, last, L, end = {"ev": 0, "pd": 0}, {"summary": False, "started": False}, {}, "", ""
         t_end = time.time() + 30 * 60
 
@@ -852,8 +900,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
         while time.time() < t_end:
             _tick()
             if cancelled():
-                release = False
-                threading.Thread(target=_cancel_then_release, args=(jid,), daemon=True).start()
+                stopper.fire()
                 return None
             w = _watch(jid, flags["started"], last, lambda why: on_event({"type": "tacc", "stage": "queued", "job": jid, "reason": why}))
             if w and w != GONE:
@@ -877,6 +924,8 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
             _cancel(jid)
             on_event({"type": "error", "message": "no result within 30 minutes; the job was cancelled"})
             return None
+        if stopper.close():                        # Finish 恰好在作业结束时按下：页面已结束，取消线程放名额
+            return None
         if not flags["summary"]:                   # 作业结束了却一次也没跑：把日志里的原因说出来，别只说"没有结果"
             on_event({"type": "error", "message": f"the TACC job {jid} ran no attempt: {tacc_log.why_no_result(L, jid)}"})
             return None
@@ -885,7 +934,7 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
         _download(f"flagpilot-runs/{batch}-{tier}", out, expect="runs.jsonl")
         return out / f"{batch}-{tier}"
     finally:
-        if release:
+        if release and not (stopper and stopper.close()):
             _release()
 
 
@@ -908,7 +957,7 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
         return {"error": "recalled", "answer": "", "cancelled": True}
     if err:
         return {"error": err, "answer": ""}
-    release = True
+    release, stopper = True, None
     ended = _session_gone(S["serve"])
     try:
         stage({"stage": "uploading"})
@@ -941,12 +990,12 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
         if not jid:
             return {"error": "TACC submission failed" + (f": {why}" if why else ""), "answer": ""}
         stage({"stage": "queued", "job": jid})
+        stopper = _Stopper(jid, cancelled)         # 撤回一到就取消，不等下面可能卡住的读
         seen, running, t_end, last, L, gone_seen = {"delta": 0, "ev": 0}, False, time.time() + 15 * 60, {}, "", False
         while time.time() < t_end:
             _tick()
             if cancelled():
-                release = False
-                threading.Thread(target=_cancel_then_release, args=(jid,), daemon=True).start()
+                stopper.fire()
                 return {"error": "recalled", "answer": "", "cancelled": True}
             w = _watch(jid, running, last, lambda why: stage({"stage": "queued", "job": jid, "reason": why}))
             if w and w != GONE:
@@ -973,6 +1022,8 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
             seen["ev"] = max(seen["ev"], len(evs))
             rep = [r for r in (tacc_log.parse(x) for x in tacc_log.marked(L, "@@reply ")) if r is not None]
             if rep:
+                if stopper.close():                # 撤回恰好在回答写完时到：照撤回算
+                    return {"error": "recalled", "answer": "", "cancelled": True}
                 return rep[-1]
             if "[fp] done: chat" in L or "srun: error" in L or "CANCELLED" in L or (w == GONE and gone_seen):
                 return {"error": "the TACC job ended without a reply: " + tacc_log.why_no_result(L, jid), "answer": ""}
@@ -980,5 +1031,5 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
         _cancel(jid)                                     # 别让它之后开跑、白占名额
         return {"error": "no reply within 15 minutes; the job was cancelled", "answer": ""}
     finally:
-        if release:
+        if release and not (stopper and stopper.close()):
             _release()

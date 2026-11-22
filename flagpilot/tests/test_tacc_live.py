@@ -72,6 +72,8 @@ case "$1" in
             k=$(( $(cat "$st/dl" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$st/dl"
             if [[ -z "${FAKE_DL_PARTIAL:-}" || "$k" -gt 1 ]]; then echo '{}' > "$d/runs.jsonl"; fi ;;
   cancel) echo "cancel $3" >> "$st/record"
+          if [[ -n "${FAKE_CANCEL_FAILS:-}" ]]; then k=$(( $(cat "$st/cfail" 2>/dev/null || echo 0) + 1 )); echo "$k" > "$st/cfail"
+            if (( k <= FAKE_CANCEL_FAILS )); then echo "[Tcloud Error] tcloudcli.go:140: Failed to create remote session"; exit 1; fi; fi
           if [[ -z "${FAKE_CANCEL_STUCK:-}" && -f "$st/ps" ]]; then grep -v "^ *$3 " "$st/ps" > "$st/ps.new"; mv "$st/ps.new" "$st/ps"; fi ;;
   ps) echo "             JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)"; cat "$st/ps" 2>/dev/null ;;
 esac
@@ -125,7 +127,8 @@ class TaccHarness(unittest.TestCase):
             f.chmod(f.stat().st_mode | stat.S_IEXEC)
         self.env = mock.patch.dict(os.environ, {
             "FLAGPILOT_TACC_SUBMIT": str(self.tmp / "submit.sh"), "TCLOUD_BIN": str(self.tmp / "tcloud"),
-            "FAKE_STATE": str(self.tmp / "state"), "FLAGPILOT_TACC_POLL": "0.02", "FLAGPILOT_TACC_TICK": "0.02"})
+            "FAKE_STATE": str(self.tmp / "state"), "FLAGPILOT_TACC_POLL": "0.02", "FLAGPILOT_TACC_TICK": "0.02",
+            "FLAGPILOT_TACC_CANCEL_EVERY": "0.05", "FLAGPILOT_TACC_CANCEL_LIMIT": "1"})
         self.env.start()
         os.environ["FLAGPILOT_TASKS"] = str(Path(__file__).resolve().parent.parent / "demo-tasks")   # 核对题目用的本机题库（固定，不受 verify.sh 影响）
         tacc_live.STATE_FILE = self.tmp / "session.json"
@@ -714,6 +717,68 @@ class TestRobustness(TaccHarness):
         self.assertTrue(tacc_live._download("flagpilot-runs/web-x-B3", dest, expect="runs.jsonl"))
         self.assertEqual(self.record().count("download -r"), 2, "the folder without its ledger did not count")
         self.assertTrue((dest / "web-x-B3" / "runs.jsonl").exists())
+
+    # 2026-11-21, job 30516: a question recalled while TACC's gateway was dropping calls replied anyway. The loop only
+    # looked at the recall between reads (each can hang up to the read timeout), and each cancel waited for three
+    # Slurm listings with up to three tries each before the next cancel.
+    def test_a_recall_cancels_the_job_at_once_even_while_a_read_hangs(self):
+        self.ready()
+        os.environ.update(FAKE_CAT_HANG="3", FLAGPILOT_TACC_READ_TIMEOUT="10", FLAGPILOT_TACC_TICK="0.02")
+        (self.tmp / "state" / "hang").write_text("0")
+        flag = {"x": False}
+
+        def stage(ev):
+            if ev.get("stage") == "queued":             # recalled while the first log read hangs
+                threading.Timer(0.4, lambda: flag.update(x=True)).start()
+        t = {}
+        threading.Thread(target=lambda: t.update(rep=tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None, stage,
+                                                                   cancelled=lambda: flag["x"])), daemon=True).start()
+        t0 = time.time()
+        while time.time() - t0 < 5 and not flag["x"]:
+            time.sleep(0.01)
+        t_rec = time.time()
+        while time.time() - t_rec < 5 and "cancel 502" not in self.record():
+            time.sleep(0.01)
+        self.assertIn("cancel 502", self.record())
+        self.assertLess(time.time() - t_rec, 1.5, "cancelled without waiting for the hung read")
+        t0 = time.time()
+        while time.time() - t0 < 8 and ("rep" not in t or tacc_live.S["busy"]):
+            time.sleep(0.02)
+        self.assertTrue(t["rep"].get("cancelled"), t.get("rep"))
+        self.assertEqual(tacc_live.S["busy"], "", "the slot is freed once, after the job is gone")
+
+    def test_a_finished_run_is_cancelled_at_once_even_while_a_read_hangs(self):
+        self.ready()
+        os.environ.update(FAKE_CAT_HANG="3", FLAGPILOT_TACC_READ_TIMEOUT="10", FLAGPILOT_TACC_TICK="0.02")
+        (self.tmp / "state" / "hang").write_text("0")
+        flag, evs = {"x": False}, []
+
+        def on_event(ev):
+            evs.append(ev)
+            if ev.get("stage") == "queued":
+                threading.Timer(0.4, lambda: flag.update(x=True)).start()
+        threading.Thread(target=lambda: tacc_live.run_task("demo-001", "B3", self.tmp / "runs", on_event,
+                                                           cancelled=lambda: flag["x"]), daemon=True).start()
+        t0 = time.time()
+        while time.time() - t0 < 5 and not flag["x"]:
+            time.sleep(0.01)
+        t_fin = time.time()
+        while time.time() - t_fin < 5 and "cancel 502" not in self.record():
+            time.sleep(0.01)
+        self.assertIn("cancel 502", self.record())
+        self.assertLess(time.time() - t_fin, 1.5, "cancelled without waiting for the hung read")
+        t0 = time.time()
+        while time.time() - t0 < 8 and tacc_live.S["busy"]:
+            time.sleep(0.02)
+        self.assertEqual(tacc_live.S["busy"], "")
+        self.assertNotIn("error", [e["type"] for e in evs])
+
+    def test_a_cancel_the_gateway_drops_is_sent_again(self):
+        st = self.tmp / "state"
+        (st / "ps").write_text("             779      tacc run.slur   yliutz  R      10:00      1 10-0-3-11\n")
+        os.environ["FAKE_CANCEL_FAILS"] = "2"
+        self.assertTrue(tacc_live._cancel("779"))
+        self.assertEqual(self.record().count("cancel 779"), 3)
 
     def test_the_watchdog_notices_a_service_that_died(self):
         self.ready()
