@@ -13,7 +13,6 @@ Exit status 0 when every listed provider has a model that answers.
 from __future__ import annotations
 
 import re
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -21,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import server  # noqa: E402
+from app import tacc_live  # noqa: E402
 from flagpilot import client as llm_client  # noqa: E402
 
 PROMPT = [{"role": "user", "content": "Reply with the single word OK."}]
@@ -72,8 +72,10 @@ def main() -> int:
             print(f"  FAIL  {p['label']:9} " + ("; ".join(tried) or "no model listed"))
     fb = server._fallback_model()
     print(f"  when a provider fails, answers fall back to: {fb or '(none set)'}")
-    print("  Qwen on TACC: needs no key; needs your own TACC account and the course SDK"
-          + (" (tcloud found)" if shutil.which("tcloud") else " (tcloud not found on this machine)"))
+    sdk = tacc_live.tc_status()             # the same three places the page looks in: TCLOUD_BIN, the remembered
+    print("  Qwen on TACC: needs no key; needs your own TACC account and the course SDK"   # path, then PATH
+          + (f" (tcloud at {sdk['path']})" if sdk["ok"]
+             else " (tcloud not found yet: the page asks for its path on the first connect)"))
     return 1 if bad else 0
 
 

@@ -25,6 +25,7 @@ from app import tacc_live  # noqa: E402
 
 SUBMIT = r"""#!/usr/bin/env bash
 st="$FAKE_STATE"
+echo "${1:-?}" >> "$st/submits"          # 交了几次（测试用：确认"读不到私钥"只交一次）
 if [[ -n "${FAKE_SUBMIT_FAIL:-}" ]]; then echo "[tcloud] staging"; echo "$FAKE_SUBMIT_FAIL" >&2; exit 1; fi
 if [[ -n "${FAKE_SUBMIT_SLEEP:-}" ]]; then sleep "$FAKE_SUBMIT_SLEEP"; fi
 if [[ -n "${FAKE_SESSION_FAILS:-}" ]]; then c=$(( $(cat "$st/sessfail" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/sessfail"
@@ -32,11 +33,16 @@ if [[ -n "${FAKE_SESSION_FAILS:-}" ]]; then c=$(( $(cat "$st/sessfail" 2>/dev/nu
 if [[ -n "${FAKE_UPLOAD_CUT:-}" ]]; then c=$(( $(cat "$st/upcut" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/upcut"
   if (( c <= FAKE_UPLOAD_CUT )); then printf 'Connection closed by 143.89.228.130 port 30041\nrsync(70523): error: unexpected end of file\n[Tcloud Error] 2026/11/21 tcloudcli.go:356: Failed to upload repo to  u@gw:/mnt/home/u/WORKDIR\n[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository\n' >&2; exit 1; fi; fi
 if [[ -n "${FAKE_DISK_FULL:-}" ]]; then printf 'rsync(98800): error: write failed on "x": No space left on device (28)\n[Tcloud Error] 2026/11/21 tcloudcli.go:356: Failed to upload repo to  u@gw:/mnt/home/u/WORKDIR\n[Tcloud Error] 2026/11/21 tcloudcli.go:317: Failed to upload env repository\n' >&2; exit 1; fi
-if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
+if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl" >> "$st/staged"; (cd "$FLAGPILOT_TASKS" && find tasks -type f 2>/dev/null) >> "$st/staged"; cat "$FLAGPILOT_TASKS"/tasks/*/* >> "$st/staged" 2>/dev/null; fi
 n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
-printf '%18s      tacc run.slur   yliutz  R       0:01      1 10-0-9-9\n' "$n" >> "$st/ps"
+name=run.slur; [[ "$1" == serve ]] && name=qwen-public-serve    # 与 serve/tuxiv.conf 的 job.name 一致
+printf '%18s      tacc %-16s yliutz  R       0:01      1 10-0-9-9\n' "$n" "$name" >> "$st/ps"
 echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-} excl=${FP_EXCLUDE:-}" >> "$st/record"
 echo "$1 job=$n turns=${FP_TURNS:-} time=${FP_TIME:-}" >> "$st/budget"
+# 交上去了、作业号却没打出来（回程断了）：本地看到的是"失败"，TACC 上却有一个真作业
+if [[ -n "${FAKE_SUBMIT_SILENT:-}" ]]; then exit 0; fi
+# 交上去了，回程却一直不返回（网关卡住）：本地超时放弃时，集群上那个作业是真的
+if [[ -n "${FAKE_SUBMIT_LAND_THEN_HANG:-}" ]]; then sleep "$FAKE_SUBMIT_LAND_THEN_HANG"; fi
 printf 'Submitted batch job %s\n' "$n"
 """
 TCLOUD = r"""#!/usr/bin/env bash
@@ -134,10 +140,34 @@ class TestFlakySession(unittest.TestCase):
         self.assertEqual(jid, "")
         self.assertIn("TACC home volume is full", why)
 
+    def test_a_stuck_submission_is_given_up_with_a_reason(self):
+        # 2026-11-23 00:05：tcloud submit 卡在网关上，页面只有秒数在跳，一条日志都没有（以前给 600 s）
+        os.environ["FAKE_SUBMIT_SLEEP"] = "5"
+        os.environ["FLAGPILOT_TACC_SUBMIT_TIMEOUT"] = "0.6"
+        self.addCleanup(os.environ.pop, "FAKE_SUBMIT_SLEEP", None)
+        self.addCleanup(os.environ.pop, "FLAGPILOT_TACC_SUBMIT_TIMEOUT", None)
+        t = time.time()
+        jid, why = tacc_live._submit("batch", {})
+        self.assertEqual(jid, "")
+        self.assertIn("did not answer in", why)
+        self.assertLess(time.time() - t, 3, "not ten minutes with no job id")
+
     def test_other_failures_are_not_retried(self):
         os.environ["FAKE_SUBMIT_FAIL"] = "unknown challenge: nope"
         jid, why = tacc_live._submit("batch", {})
         self.assertEqual((jid, why), ("", "unknown challenge: nope"))
+
+    def test_a_key_the_sdk_cannot_read_is_named_and_not_retried(self):
+        # 2026-11-22：tcloud 读不到私钥时在同一处也打 "Failed to create remote session"，被当成网关忙一轮轮重试，
+        # 十几轮下来页面只说"网关过载"，其实一个请求都没到 TACC（一次点击白等约两分钟）。
+        os.environ["FAKE_SUBMIT_FAIL"] = (
+            "[Tcloud Error] 2026/11/22 tcloudcli.go:81: Failed to read AuthFile at  /Users/x/.ssh/tacc_ed25519\n"
+            "[Tcloud Error] 2026/11/22 tcloudcli.go:140: Failed to create remote session")
+        jid, why = tacc_live._submit("batch", {})
+        self.assertEqual(jid, "")
+        self.assertIn("cannot read the login key", why)
+        self.assertNotIn("gateway is overloaded", why)
+        self.assertEqual((self.tmp / "state" / "submits").read_text().split(), ["batch"], "it is not retried")
 
 
 class TaccHarness(unittest.TestCase):
@@ -177,6 +207,124 @@ class TaccHarness(unittest.TestCase):
             return (self.tmp / "state" / "record").read_text(encoding="utf-8")
         except FileNotFoundError:
             return ""
+
+
+class TestServeReconciliation(TaccHarness):
+    """本地把作业号丢了（提交回程断了、网页重启写成 failed），TACC 上那个作业却还在：
+    接回来，别再交一个——否则两个作业抢同一个工作目录，还占满个人名额（2026-11-22）。"""
+
+    def setUp(self):
+        super().setUp()
+        tacc_live._DROPPED.clear()
+
+    def seed(self, jid: str = "601", state: str = "R"):
+        (self.tmp / "state" / "ps").write_text(
+            f"{jid:>18}      tacc qwen-public-serve yliutz  {state}       0:30      1 10-0-9-9\n", encoding="utf-8")
+        (self.tmp / "state" / f"job-{jid}.mode").write_text("serve", encoding="utf-8")
+
+    def test_a_serve_job_the_page_lost_is_adopted(self):
+        self.seed()
+        self.ready()
+        self.assertEqual(tacc_live.status()["serve"], "601")
+        self.assertEqual(self.record(), "", "no second job is submitted")
+        self.assertTrue(any("reconnected to serve job 601" in l for l in tacc_live.status()["log"]),
+                        tacc_live.status()["log"])
+
+    def test_a_refusal_with_only_a_chinese_reason_points_at_the_log(self):
+        # 2026-11-22 23:14：服务是在没有 TCLOUD_BIN 的 shell 里起的，submit.sh 用中文说"找不到 tcloud"，
+        # 中文按规矩不上页面，于是页面上只剩一句 "serve submission failed"——像是代码退化了。
+        os.environ["FAKE_SUBMIT_FAIL"] = "找不到 tcloud（课程 SDK v0.4.1）：放进 PATH，或 export TCLOUD_BIN=<tcloud 的绝对路径>"
+        self.assertTrue(tacc_live.start()["ok"])
+        t = time.time()
+        while time.time() - t < 5 and tacc_live.status()["phase"] != "failed":
+            time.sleep(0.02)
+        s = tacc_live.status()
+        self.assertEqual(s["phase"], "failed")
+        self.assertIn("web-8080.log", s["error"], "an empty reason must still tell the user where to look")
+        self.assertNotIn("找不到", s["error"], "Chinese reasons still stay off the page")
+
+    def test_a_submit_that_timed_out_after_landing_is_adopted(self):
+        # 2026-11-23 00:05：submit 卡着不返回，本地超时放弃；作业其实已经交上去、正在排队。
+        # 放弃之前必须对一次账，否则下一次 connect 又会交第二个（同一个 WORKDIR、同一个名额）。
+        os.environ["FAKE_SUBMIT_LAND_THEN_HANG"] = "5"
+        os.environ["FLAGPILOT_TACC_SUBMIT_TIMEOUT"] = "0.6"
+        self.addCleanup(os.environ.pop, "FAKE_SUBMIT_LAND_THEN_HANG", None)
+        self.addCleanup(os.environ.pop, "FLAGPILOT_TACC_SUBMIT_TIMEOUT", None)
+        self.ready()
+        s = tacc_live.status()
+        self.assertEqual(s["serve"], "501")
+        self.assertEqual(len((self.tmp / "state" / "submits").read_text().split()), 1,
+                         "adopted after the timeout, not submitted twice")
+
+    def test_a_submission_that_reported_no_job_id_is_adopted(self):
+        os.environ["FAKE_SUBMIT_SILENT"] = "1"        # 交上去了，作业号却没打出来（回程断了）
+        self.ready()
+        self.assertEqual(tacc_live.status()["serve"], "501")     # 假 submit 从 501 开始编号
+        self.assertEqual(tacc_live.status()["phase"], "ready")
+        self.assertEqual(len((self.tmp / "state" / "submits").read_text().split()), 1,
+                         "submitted once, then adopted instead of failing")
+        self.assertTrue(any("reconnected to serve job 501" in l for l in tacc_live.status()["log"]),
+                        tacc_live.status()["log"])
+
+
+class TestTcloudLocate(unittest.TestCase):
+    """换一台机器（或换一个终端窗口）没有 TCLOUD_BIN 时，不再"直接挂"：
+    先自己猜一次，猜不到就由页面问用户路径，问到就记住。"""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="fp-tc-"))
+        self.was = (tacc_live.STATE_FILE, os.environ.pop("TCLOUD_BIN", None))
+        tacc_live.STATE_FILE = self.tmp / "tacc" / "session.json"
+        tacc_live.S.update(phase="idle", serve=None, node=None, url="", t0=0.0, ready=0.0, log=[], busy="", error="")
+
+    def tearDown(self):
+        tacc_live.STATE_FILE = self.was[0]
+        os.environ.pop("TCLOUD_BIN", None)
+        if self.was[1] is not None:
+            os.environ["TCLOUD_BIN"] = self.was[1]
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def sdk(self, exe: bool = True) -> Path:
+        f = self.tmp / "tcloud"
+        f.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        f.chmod(0o755 if exe else 0o644)
+        return f
+
+    def test_the_path_the_page_is_given_is_remembered(self):
+        f = self.sdk()
+        self.assertEqual(tacc_live.save_tcloud(str(f)), (True, str(f)))
+        self.assertEqual(tacc_live._tc(), str(f))
+        self.assertTrue((self.tmp / "tacc" / "tcloud.txt").exists(), "remembered for the next start")
+        self.assertEqual(tacc_live.tc_status(), {"ok": True, "path": str(f)})
+
+    def test_a_folder_finds_the_sdk_inside_it(self):
+        f = self.sdk()
+        self.assertEqual(tacc_live.save_tcloud(str(self.tmp)), (True, str(f)))
+
+    def test_a_path_that_is_not_there_is_refused_with_a_reason(self):
+        ok, why = tacc_live.save_tcloud(str(self.tmp / "nope"))
+        self.assertFalse(ok)
+        self.assertIn("nothing at", why)
+        self.assertIsNone(os.environ.get("TCLOUD_BIN"))
+
+    def test_a_file_that_cannot_run_is_refused(self):
+        ok, why = tacc_live.save_tcloud(str(self.sdk(exe=False)))
+        self.assertFalse(ok)
+        self.assertIn("not executable", why)
+
+    def test_something_else_that_runs_is_refused(self):
+        # 2026-11-22 冒烟：贴 /bin/echo 也被当成"找到了"，之后报错会莫名其妙
+        ok, why = tacc_live.save_tcloud("/bin/echo")
+        self.assertFalse(ok)
+        self.assertIn("not the SDK", why)
+
+    def test_nothing_known_asks_instead_of_failing(self):
+        # 不在文件系统里乱翻（别人的机器不一定是 macOS，翻目录还越权限）：不知道就问
+        with mock.patch.object(tacc_live.shutil, "which", return_value=None):
+            self.assertEqual(tacc_live.tc_status()["ok"], False)
+            r = tacc_live.start()
+        self.assertEqual((r["ok"], r["need_tcloud"]), (False, True))
+        self.assertEqual(tacc_live.status()["phase"], "idle", "asking is not a failed session")
 
 
 class TaccLiveCase(TaccHarness):

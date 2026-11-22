@@ -3,7 +3,7 @@
 [![tests (CI)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml/badge.svg)](https://github.com/yyluck-luck/CSIT6000V-PJ/actions/workflows/tests.yml)
 ![Python 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-2b4fd8)
 ![runtime dependencies: none (standard library)](https://img.shields.io/badge/runtime%20dependencies-none%20%28standard%20library%29-141414)
-![unit tests: 739 passing](https://img.shields.io/badge/unit%20tests-739%20passing-2b4fd8)
+![unit tests: 751 passing](https://img.shields.io/badge/unit%20tests-751%20passing-2b4fd8)
 ![browser checks: 103 passing](https://img.shields.io/badge/browser%20checks-103%20passing-2b4fd8)
 ![model: Qwen 3.8 27B on TACC](https://img.shields.io/badge/model-Qwen%203.8%2027B%20on%20TACC-f4b400)
 ![v7 full agent: 36/40 verified](https://img.shields.io/badge/v7%20full%20agent-36%2F40%20verified-2b4fd8)
@@ -91,12 +91,13 @@ $ ./start.sh --check
   OK    Qwen      answered by qwen3.8-flash in 2.4 s
   OK    GPT       answered by gpt-6.2-astra in 2.6 s
   when a provider fails, answers fall back to: deepseek-v4.1-flash
-  Qwen on TACC: needs no key; needs your own TACC account and the course SDK (tcloud found)
+  Qwen on TACC: needs no key; needs your own TACC account and the course SDK (tcloud at /path/to/tcloud)
 ```
 
 A quick end-to-end check: on **Solve**, pick `crypto-005` and press **Run**. With Gemini it ends `VERIFIED` in about 3
 turns and 15 seconds; on **Ask**, any question gets an answer in a few seconds. Qwen on TACC needs no API key, only
-your own TACC account with the course SDK (§4); nothing here can submit jobs on someone else's account.
+your own TACC account with the course SDK (§4) — the page asks for the SDK's path the first time and remembers it;
+nothing here can submit jobs on someone else's account.
 
 ### What you can do in the web app
 
@@ -127,7 +128,7 @@ dependency degrades to an explicit "not available" message rather than a crash; 
 #### Setup
 
 ```bash
-git clone <repository-url> flagpilot-artifact
+git clone https://github.com/yyluck-luck/CSIT6000V-PJ.git flagpilot-artifact
 cd flagpilot-artifact/flagpilot
 export FLAGPILOT_TASKS="$PWD/demo-tasks"
 export FLAGPILOT_RUNS="$PWD/runs"        # optional; defaults to ./runs
@@ -328,7 +329,9 @@ sandbox as `./challenge/`. Only `gold_sha256` is stored: plaintext flags never e
 **The evaluation task set is not redistributed.** It is derived from picoCTF through InterCode-CTF (General Skills 25,
 Cryptography 16, Forensics 12; network-dependent tasks removed): **53 tasks**, 43 `core` and 10 `extra-gs`, with a
 frozen dev / test split (`docs/splits-picoctf-53.json`). There are no reverse-engineering tasks (Known limitations,
-item 5). `./start.sh` fetches it; to rebuild it by hand:
+item 5). `./start.sh` fetches it, pinned to InterCode-CTF commit `c3e46d8`: rebuilding from that commit reproduces
+`index/tasks.jsonl` byte for byte, so the recorded results and the frozen split stay valid even if upstream moves
+(`FLAGPILOT_INTERCODE_REF=<commit>` builds a different set deliberately). To rebuild it by hand:
 
 ```bash
 python3 scripts/build_taskset.py --src /path/to/intercode/data/ctf --out ./ctf-tasks
@@ -541,9 +544,20 @@ submits SDK jobs and reads their Slurm logs, so nothing is forwarded.
 ./start.sh        # then click "Qwen on TACC · connect" (Solve) or "connect Qwen" (Ask)
 ```
 
-- **Connecting** submits one serving job and keeps it for the partition's hour (cancelled three minutes before the
-  limit, or when the chip is clicked again). The session panel lists the start-up step by step with an estimate of
-  the time left: about 5 minutes from two free GPUs to ready, up to 17 when the shared storage is slow.
+- **The first connect asks where the SDK is** when this copy has not been told: `TCLOUD_BIN`, then a remembered path,
+  then `PATH`. The answer is checked (the file exists, runs and is named `tcloud`; the folder it came in is accepted
+  too) and written to `flagpilot/runs/tacc/tcloud.txt`, so it is asked once per copy. A copy that has not been told yet
+  is not a failed session — the panel stays idle until the path arrives — and `./start.sh --check` reports the same
+  three places.
+- **Connecting** reconnects to the account's `qwen-public-serve` job when TACC already has one (a click whose reply was
+  lost, or a session from before a restart) and submits one only when there is none: two jobs would share one fixed
+  working directory and both seats of the two-job quota. The job is kept for the partition's hour (cancelled three
+  minutes before the limit, or when the chip is clicked again). The session panel lists the start-up step by step with
+  an estimate of the time left: about 5 minutes from two free GPUs to ready, up to 17 when the shared storage is slow.
+- **A submission that goes wrong says which way**: a login key the process cannot read fails at once with that reason
+  (retrying cannot fix a permission), and a submission that hangs is abandoned after three minutes with its whole
+  process group killed, so no job is left running whose id nobody saw. Before anything is sent again, the page asks
+  TACC whether the job landed.
 - **Run on TACC** submits a small client job with that challenge; its events stream into the page as it runs (read
   every 4 s), and the finished run is downloaded and mounted as a replay. An **Ask** message is one small job too.
   Measured: a reply in about 27–31 s, `general-004` (B3) from click to `verified` in 64 s.
@@ -553,9 +567,9 @@ submits SDK jobs and reads their Slurm logs, so nothing is forwarded.
   solve, an upload, a hint, Finish while a job runs, Ask in two languages, recall, ending the session); the third pass
   passed 19 of 20, and its one failure led to the payload check in the next item.
 - The SDK goes through an unreliable login gateway and a home volume shared by every user. Reads give up after 25 s
-  and reconnect; submissions retry for about two minutes; a cut-off upload is retried and a job whose payload did not
-  arrive is sent again once; a full volume is named. Measurements, the failures found on the cluster and the fix for
-  each: [TACC reliability notes](flagpilot/docs/TACC_RELIABILITY.md).
+  and reconnect; a dropped handshake is retried for about two minutes; a cut-off upload is retried and a job whose
+  payload did not arrive is sent again once; a full volume is named. Measurements, the failures found on the cluster
+  and the fix for each: [TACC reliability notes](flagpilot/docs/TACC_RELIABILITY.md).
 
 ![Where the start-up time of the serving job goes](docs/figures/startup.png)
 
@@ -605,7 +619,7 @@ including batches recorded before a code change.
 ### 6. Tests
 
 ```bash
-python3 -m unittest discover -s tests -t . -q     # 739 tests (17 skip without the optional `cryptography`)
+python3 -m unittest discover -s tests -t . -q     # 751 tests (17 of them need the optional `cryptography`)
 bash scripts/verify.sh                            # 14 feature checks (the last two drive the web app)
 node scripts/ui_check.mjs                         # 103 browser checks in headless Chrome
 node scripts/click_all.mjs                        # clicks every control on every page: 90 controls
@@ -673,6 +687,9 @@ and drives the page against the real cluster. Run it only when no other job of y
 | Tunnel is up but `/v1/models` is empty | The serving job reached its 1-hour limit | Resubmit it; the tunnel recovers if the node is unchanged |
 | The status island says the server is older than the page | The code changed after the server started | `./start.sh --restart` |
 | `tcloud could not open a session with TACC` | TACC's login gateway dropped the SSH handshake (retried for about two minutes) | Usually brief: try again in a minute |
+| The chip says `Qwen on TACC · needs tcloud` | This copy has not been told where the course SDK is | Click it and paste the path of the `tcloud` file (or of the folder it came in); it is remembered |
+| `tcloud cannot read the login key …` | The process may not read the SDK's key file: wrong owner or mode, or a sandboxed shell | Start the page from your own terminal; the key should be yours, mode 600 |
+| `tcloud submit did not answer in 180 s` | The login gateway hung during the upload (normal is 27–79 s) | Nothing is assumed lost: the page asks TACC whether the job landed before it sends anything again |
 | A TACC run shows "queued", then several steps at once | An SDK read hung at the gateway (up to 25 s each) | Nothing to do; `[tacc] tcloud …: took N s` in the server log shows it |
 | `No space left on device`, or `Failed to upload repo` | The shared TACC home volume is full | Download what you need, then `FP_DROP="<batches>" deploy/tcloud/submit.sh cleanup` |
 | `rescore.py` stops at once | The replays' `python3` lacks pycryptodome or gmpy2 | Put a `python3` that has both first on `PATH` (§3) |

@@ -134,8 +134,8 @@ Completed from the previous gap list:
 
 | Scope | Recorded result |
 |---|---|
-| Focused feature checks | 307 unit and integration tests pass, using synthetic data, mock models, and local HTTP servers. |
-| Complete offline suite | All 307 pass. `scripts/verify.sh` passes 12 of 12 end-to-end checks: CLI surface, verdict logic, replay paths, web API, offline replay, and packaging rules. |
+| Focused feature checks | 751 unit and integration tests pass, using synthetic data, mock models, and local HTTP servers. |
+| Complete offline suite | All 751 pass on Linux (CI: Python 3.11-3.13). `scripts/verify.sh` passes 14 of 14 end-to-end checks: CLI surface, verdict logic, replay paths, web API, offline replay, and packaging rules. |
 | Mock CLI and Web | `general-004` reached `verified` in 3 turns. |
 | Real DeepSeek Flash, synthetic smoke | Three CLI fixtures and one separate Web run reached `verified / match`. Provider-reported token totals matched the traces, and the Web Writeup download returned HTTP 200. See the [run summary](EVALUATION_BASELINE.md#track-h-smoke-test). |
 | Real DeepSeek Flash, B3 baseline | DeepSeek Flash B3 attempted 43 of 53 frozen tasks. It returned 25 correct flags (58.1%) and verified 22 solves by replay (51.2%). See the [split-level results and task verdicts](EVALUATION_BASELINE.md#track-h-offline-baseline). |

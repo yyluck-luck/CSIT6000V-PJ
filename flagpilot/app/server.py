@@ -786,7 +786,7 @@ class Handler(BaseHTTPRequestHandler):
         global RUNNING
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
-                  "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
+                  "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop", "/api/tacc/tcloud",
                   "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold", "/api/chat/recall", "/api/chat/context", "/api/custom/edit", "/api/custom/draft",
                   "/api/catalog/import")
         if path not in routes:
@@ -807,6 +807,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, tacc_live.start())
         if path == "/api/tacc/session/stop":
             return self._json(200, tacc_live.stop())
+        if path == "/api/tacc/tcloud":
+            # 换一台机器（或换一个终端）时，页面直接问用户 tcloud 在哪，别让人去翻 env
+            ok, val = tacc_live.save_tcloud(str(payload.get("path") or ""))
+            return self._json(200, {"path": val}) if ok else self._json(400, {"error": val})
         if path == "/api/upload":
             return self._upload(payload)
         if path == "/api/chat" and payload.get("backend") == "tacc":
