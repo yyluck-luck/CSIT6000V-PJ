@@ -589,6 +589,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(304)
             self.send_header("ETag", page.etag)
             self.send_header("Cache-Control", "no-cache")
+            # 304 也要带 Vary：同一个 ETag 对应 gzip 和原文两种表示，缺了它，
+            # 中间缓存可能把压缩过的版本发给不支持 gzip 的客户端（RFC 7232 §4.1）。
+            self.send_header("Vary", "Accept-Encoding")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return

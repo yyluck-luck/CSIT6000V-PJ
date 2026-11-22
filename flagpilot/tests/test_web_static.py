@@ -66,6 +66,13 @@ class TestStaticAndFallback(unittest.TestCase):
         self.assertEqual(body, b"")
         self.assertEqual(h.get("ETag"), headers["ETag"])
 
+    def test_the_304_keeps_the_vary_header(self):
+        """同一个 ETag 对应 gzip 与原文两种表示。304 少了 Vary，中间缓存会
+        把压缩过的版本当成唯一表示，发给不支持 gzip 的客户端。"""
+        _, headers, _ = self.fetch("/")
+        _, h, _ = self.fetch("/", {"If-None-Match": headers["ETag"]})
+        self.assertEqual(h.get("Vary"), "Accept-Encoding")
+
     def test_gzip_is_used_only_when_asked(self):
         code, headers, _ = self.fetch("/", {"Accept-Encoding": "gzip"})
         self.assertEqual(code, 200)
