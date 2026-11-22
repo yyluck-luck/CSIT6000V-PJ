@@ -862,9 +862,18 @@ class TestRobustness(TaccHarness):
         os.environ["FAKE_SUBMIT_SLEEP"] = "0.3"
         self.addCleanup(os.environ.pop, "FAKE_SUBMIT_SLEEP", None)
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(2) as pool:
-            ids = sorted(j for j, _ in pool.map(lambda _: tacc_live._submit("serve", {}), range(2)))
-        self.assertEqual(ids, ["501", "502"])
+        calls, real = [], tacc_live._run_capped
+
+        def spy(cmd, timeout, env):
+            r = real(cmd, timeout, env)
+            calls.append((env.get("FAKE_STATE"), env.get("FLAGPILOT_TACC_SUBMIT"), r[0], r[1][-200:], r[2][-300:]))
+            return r
+        with mock.patch.object(tacc_live, "_run_capped", spy), concurrent.futures.ThreadPoolExecutor(2) as pool:
+            got = list(pool.map(lambda _: tacc_live._submit("serve", {}), range(2)))
+        ids = sorted(j for j, _ in got)
+        st = self.tmp / "state"
+        diag = {n: (st / n).read_text() if (st / n).exists() else None for n in ("record", "submits", "jobn", "ps")}
+        self.assertEqual(ids, ["501", "502"], f"DIAG got={got}\ncalls={calls}\nfiles={diag}\nls={sorted(x.name for x in st.iterdir())}")
 
     def test_a_new_session_does_not_adopt_the_job_an_older_submission_is_still_landing(self):
         """2026-11-22: a submission can land on TACC (the job is in `tcloud ps`) well before its job id comes back (27-79 s
