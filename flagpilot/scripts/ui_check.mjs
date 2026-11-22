@@ -718,6 +718,41 @@ try {
   check("Ask: a conversation still waiting to send is listed in Threads (blinking); new ones can start meanwhile, and it can be opened again",
     drRow && drNew && drBack && drReal && drDone, JSON.stringify({drRow, drNew, drBack, drReal, drDone}));
 
+  // Ask's context, end to end on the real server: a conversation of three exchanges shows what the model sees; one exchange
+  // left out and put back, a fresh start from the third, everything brought back; the server's plan follows each step
+  await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()"); await sleep(200);
+  const cxSid = await js(`(async () => { let sid = null;
+    for (const m of ['context one', 'context two', 'context three']){
+      const r = await (await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: m, tools: false, ...(sid ? {session_id: sid} : {})})})).json();
+      sid = r.session_id;
+      for (let i = 0; i < 200; i++){ const h = await (await fetch('/api/chat/history?id=' + sid)).json();
+        if (h.messages.filter(x => x.type === 'reply').length >= (m === 'context one' ? 1 : m === 'context two' ? 2 : 3)) break;
+        await new Promise(res => setTimeout(res, 50)); } }
+    return sid; })()`);
+  await js(`openThread(${JSON.stringify(cxSid)})`);
+  const cxShown = await until("!document.querySelector('#ctxBar').hidden && /The model sees 3 of 3 earlier exchanges · about [0-9.]+k? of 32k tokens/.test(document.querySelector('#ctxText').textContent) && document.querySelectorAll('#chatLog .bub.me[data-ctx=\"in\"]').length === 3", 8000);
+  const ctxState = async () => js(`fetch('/api/chat/context?id=${cxSid}').then(r => r.json()).then(d => d.turns.map(t => t.state).join(','))`);
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"1\"] .ctxbtn[data-op=\"toggle\"]').click()");
+  const cxOut = await until("(() => { const me = document.querySelector('#chatLog .bub.me[data-turn=\"1\"]'), bot = document.querySelector('#chatLog .bub.bot[data-turn=\"1\"]'); return me.classList.contains('ctx-out') && bot && bot.classList.contains('ctx-out') && /Left out by you/.test(me.textContent) && /Put back/.test(me.querySelector('.ctxbtn[data-op=\"toggle\"]').textContent) && !document.querySelector('#ctxReset').hidden && /sees 2 of 3/.test(document.querySelector('#ctxText').textContent); })()", 5000)
+    && (await ctxState()) === 'excluded,in,in';
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"1\"] .ctxbtn[data-op=\"toggle\"]').click()");
+  const cxBack = await until("!document.querySelector('#chatLog .bub.me[data-turn=\"1\"]').classList.contains('ctx-out') && /sees 3 of 3/.test(document.querySelector('#ctxText').textContent) && document.querySelector('#ctxReset').hidden", 5000)
+    && (await ctxState()) === 'in,in,in';
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"1\"] .ctxbtn[data-op=\"toggle\"]').click()"); await until("(document.querySelector('#chatLog .bub.me[data-turn=\"1\"]').dataset.ctx === 'excluded')", 5000);
+  await js("document.querySelector('#chatLog .bub.me[data-turn=\"3\"] .ctxbtn[data-op=\"fresh\"]').click()");
+  const cxFresh = await until("document.querySelector('#chatLog .bub.me[data-turn=\"2\"]').dataset.ctx === 'before_fresh' && /Before the fresh start/.test(document.querySelector('#chatLog .bub.me[data-turn=\"2\"]').textContent) && /sees 1 of 3/.test(document.querySelector('#ctxText').textContent)", 5000)
+    && (await ctxState()) === 'excluded,before_fresh,in';
+  await js("document.querySelector('#ctxReset').click()");
+  const cxReset = await until("!document.querySelector('#chatLog .bub.ctx-out') && document.querySelector('#ctxReset').hidden && /sees 3 of 3/.test(document.querySelector('#ctxText').textContent)", 5000)
+    && (await ctxState()) === 'in,in,in';
+  // left out to fit: the meter says so and turns yellow past 60% of the window
+  await js("paintContext({window: 32768, budget: 14064, tokens: 21000, fresh: 0, turns: [{turn: 1, state: 'auto'}, {turn: 2, state: 'in'}, {turn: 3, state: 'in'}]})");
+  const cxAuto = await js("/1 oldest left out to fit/.test(document.querySelector('#ctxText').textContent) && document.querySelector('#ctxBar').classList.contains('hot') && /Left out to fit the model/.test(document.querySelector('#chatLog .bub.me[data-turn=\"1\"]').textContent)");
+  await js("newChat()");
+  const cxNew = await until("document.querySelector('#ctxBar').hidden && !document.querySelector('#chatLog .bub')", 3000);
+  check("Ask's context: what the model sees is shown; an exchange can be left out and put back, a fresh start made and undone",
+    !!cxSid && cxShown && cxOut && cxBack && cxFresh && cxReset && cxAuto && cxNew, JSON.stringify({cxSid, cxShown, cxOut, cxBack, cxFresh, cxReset, cxAuto, cxNew}));
+
   // the bottom of a finished run holds still (steps used content-visibility, and the page bounced 32 px there: "the whole page
   // shakes with Add the answer"); the answer form's warning is about one value and "Save it anyway" saves that value
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);

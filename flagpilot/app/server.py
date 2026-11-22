@@ -33,7 +33,8 @@ from pathlib import Path
 from flagpilot import client as llm_client
 from flagpilot import config, custom, probe, tagger, storage, writeup
 from flagpilot.agent import run_attempt
-from flagpilot.chat import ChatSession, recalled_turns, read_log
+from flagpilot.chat import (ChatSession, context_note, context_plan, context_summary, context_window, recalled_turns,
+                            read_log)
 from flagpilot.config import (ABLATIONS, GEMINI, Budget, Policy, RunConfig,
                               SandboxLimits, gemini_api_key, get_ablation, is_gemini, make_model_spec, extra_endpoints, dotenv_value)
 from flagpilot.memory import MemoryStore
@@ -87,6 +88,13 @@ TURN_CHOICES = (20, 40, 60, 100)
 WEB_TURNS = 40
 # "+20 turns" during a run can take it past the choices (80, 120 ...); "Run again" re-runs with what the run ended with
 TURN_STEP, TURN_MAX = 20, 200
+
+
+def _chat_context(rows: list[dict]) -> dict:
+    """一个对话的上下文现状（页面显示用）：按它的模型的窗口算；TACC 上的对话按 Qwen 的窗口。"""
+    meta = next((r for r in rows if r.get("type") == "meta"), {})
+    model = runs_index.thread_model(rows) or str(meta.get("model") or "") or str(SETTINGS["model"])
+    return context_summary(context_plan(rows, context_window(model)))
 
 
 def _turns_ok(n) -> bool:
@@ -699,7 +707,14 @@ class Handler(BaseHTTPRequestHandler):
                                     "model": runs_index.thread_model(rows),
                                     # 这个对话是关于哪道题的：页面打开旧对话时把 Ask 的题目换成它（不动 Solve 的）
                                     "task": next((str(r.get("task") or "") for r in rows if r.get("type") == "meta"), ""),
+                                    "context": _chat_context(rows),
                                     "exists": bool(rows)})
+        if path == "/api/chat/context":
+            raw = self._qid()
+            if not _SID_RE.match(raw or ""):
+                return self._json(400, {"error": "bad session id"})
+            p = config.RUNS_ROOT / "chat" / raw / "chat.jsonl"
+            return self._json(200, _chat_context(read_log(p) if p.exists() else []))     # 还没落盘的对话：空的
         if path.startswith("/api/catalog/"):
             return self._catalog_get(path)
         if path == "/api/lab/experiments":
@@ -769,7 +784,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         routes = ("/api/run", "/api/probe", "/api/upload", "/api/chat",
                   "/api/custom/delete", "/api/settings", "/api/tacc/start", "/api/tacc/stop",
-                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold", "/api/chat/recall", "/api/custom/edit", "/api/custom/draft",
+                  "/api/tacc/session/start", "/api/tacc/session/stop", "/api/lab/start", "/api/lab/stop", "/api/lab/retry", "/api/run/control", "/api/custom/gold", "/api/chat/recall", "/api/chat/context", "/api/custom/edit", "/api/custom/draft",
                   "/api/catalog/import")
         if path not in routes:
             return self._json(404, {"error": "not found"})
@@ -822,6 +837,19 @@ class Handler(BaseHTTPRequestHandler):
             if ev is not None:
                 ev.set()                          # 这一问在 TACC 上答：取消它的作业（名额等它真停了才放）
             return self._json(200, {"ok": True, "turn": turn})
+        if path == "/api/chat/context":
+            # 上下文管理：某一轮不带 / 带回（exclude / include）、从某一轮重新开始（fresh）、全部恢复（reset）。日志只追加，下一问生效
+            sid, op, turn = str(payload.get("session_id") or ""), str(payload.get("op") or ""), payload.get("turn")
+            if not _SID_RE.match(sid) or op not in ("exclude", "include", "fresh", "reset"):
+                return self._json(400, {"error": "session_id and op (exclude, include, fresh, reset) required"})
+            if op != "reset" and (isinstance(turn, bool) or not isinstance(turn, int) or turn < 1):
+                return self._json(400, {"error": "turn required"})
+            path_ = config.RUNS_ROOT / "chat" / sid / "chat.jsonl"
+            if not path_.exists():
+                return self._json(404, {"error": "unknown conversation"})
+            storage.append_record(path_, {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "type": "context", "op": op,
+                                          **({"turn": turn} if op != "reset" else {})})
+            return self._json(200, _chat_context(read_log(path_)))
         if path == "/api/custom/edit":
             q = payload.get("query")
             try:
@@ -1086,17 +1114,12 @@ class Handler(BaseHTTPRequestHandler):
         task_name, use_tools = str(payload.get("task") or ""), bool(payload.get("tools", True))
         path = config.RUNS_ROOT / "chat" / sid / "chat.jsonl"
         rows = read_log(path) if path.exists() else []
-        history, pending = [], None
-        gone = recalled_turns(rows)
         turn = max([int(r.get("turn") or 0) for r in rows] + [0]) + 1     # 只增不重用：撤回过的轮次号不再出现
-        for r in rows:
-            if r.get("turn") in gone:
-                continue
-            if r.get("type") == "user":
-                pending = r.get("text") or ""
-            elif r.get("type") == "reply" and pending:
-                history.append({"user": pending, "answer": r.get("answer") or ""})
-                pending = None
+        # 带哪些之前的问答：和本机一样按 context_plan（撤回、"不带"、"重新开始"、按 Qwen 的 32k 窗口省略最早的）
+        plan = context_plan(rows, context_window(TACC_MODEL))
+        history = [{"user": p["user"], "answer": p["answer"]} for p in plan["pairs"]]
+        if context_note(plan):
+            history.append({"note": context_note(plan)})
         q: queue.Queue = queue.Queue()
         cancel = threading.Event()                              # 这一问被撤回：TACC 上的作业跟着取消
         with LOCK:
@@ -1216,6 +1239,7 @@ class Handler(BaseHTTPRequestHandler):
 
         def worker() -> None:
             try:
+                sess.load_context()                  # 这一问之前按日志重建上下文："不带" / "重新开始" / 按窗口省略随即生效
                 reply = sess.ask(
                     message,
                     on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),

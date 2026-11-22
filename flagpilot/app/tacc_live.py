@@ -995,7 +995,7 @@ def chat(message: str, history: list[dict], task: str, tools: bool,
             stage({"stage": "uploading"})
             with tempfile.TemporaryDirectory(prefix="fp-chat-") as d:
                 Path(d, "msg.txt").write_text(message, encoding="utf-8")
-                Path(d, "history.json").write_text(json.dumps(history[-12:], ensure_ascii=False), encoding="utf-8")
+                Path(d, "history.json").write_text(json.dumps(history[-41:], ensure_ascii=False), encoding="utf-8")   # 已按窗口选好（server: context_plan）
                 name = ""
                 if task:
                     name = _stage(task, Path(d) / "tasks")

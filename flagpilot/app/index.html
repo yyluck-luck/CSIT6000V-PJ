@@ -768,6 +768,17 @@
   .bub.me .recall:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)} .bub.me .recall:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--ink)}
   .bub.me .recall:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
   @media (hover:none){.bub.me .acts{opacity:.85;pointer-events:auto}}
+  /* Ask's context: what the model sees of the conversation (left-out exchanges fade; the meter sits above the box) */
+  .bub.me .acts{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+  .bub.me .ctxbtn{border:1.5px solid var(--ink);background:var(--white);color:var(--ink);font:600 15px var(--mono);padding:4px 10px;cursor:pointer;box-shadow:3px 3px 0 var(--ink);transition:transform var(--t1) var(--ease),box-shadow var(--t1) ease}
+  .bub.me .ctxbtn:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--ink)} .bub.me .ctxbtn:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+  .bub.me:not([data-ctx]) .ctxbtn{display:none}
+  .bub.ctx-out{opacity:.45} .bub.ctx-out:hover,.bub.ctx-out:focus-within{opacity:.8}
+  .bub.me .ctxtag{display:block;margin-top:8px;font:600 15px var(--mono);color:var(--yellow)}
+  .ctxbar{display:flex;align-items:center;gap:12px;margin:0 0 10px;font:500 15px var(--mono);color:var(--ink2)}
+  .ctxm{flex:none;width:120px;height:9px;border:1.5px solid var(--ink);background:var(--white);position:relative}
+  .ctxm i{position:absolute;left:0;top:0;bottom:0;width:var(--p,0%);background:var(--blue);transition:width var(--t2) var(--ease)}
+  .ctxbar.hot .ctxm i{background:var(--yellow)}
   .thread b .g{width:9px;height:9px;margin-right:9px;vertical-align:1px} .thread.on b .g.ink{background:#fff}
   .phl{position:absolute;left:20px;top:18px;right:20px;pointer-events:none;color:var(--ink3);font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .phl span{display:inline-block;animation:phin .25s var(--ease) both}
@@ -830,7 +841,7 @@
     #navPill::before{width:auto;height:4px;right:0;bottom:auto} .navbtn .nt{left:auto;right:calc(50% - 30px);top:16px}
     #stage{bottom:60px} .stats{grid-template-columns:1fr} .arms{grid-template-columns:repeat(2,1fr)}
     .step .body{padding-left:8px} .step>summary{grid-template-columns:30px 70px minmax(0,1fr) 12px 16px} .step .tm{display:none}
-    .conv{padding:80px 16px 16px} .bub{max-width:92%} .bub.me{max-width:calc(100% - 64px)} .bub.me .recall .t{display:none}
+    .conv{padding:80px 16px 16px} .bub{max-width:92%} .bub.me{max-width:calc(100% - 64px)} .bub.me .recall .t,.bub.me .ctxbtn .t{display:none}
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
@@ -1090,6 +1101,7 @@
         <canvas id="matrix" aria-hidden="true"></canvas>
         <div class="chat-hero"><h1 class="ltitle">Ask the tutor</h1><p class="lead">Concepts, hints and real command output. Never scored.</p></div>
         <div id="chatLog"></div>
+        <div class="ctxbar" id="ctxBar" hidden><span class="ctxm" aria-hidden="true"><i></i></span><span id="ctxText"></span><span class="grow"></span><button class="btn plain sm" id="ctxReset" type="button" hidden data-tip="Every exchange goes back into what the model sees">Bring all back</button></div>
         <div id="composer">
           <div class="phl" id="chatPh"></div>
           <textarea id="chatInput" rows="1" aria-label="Message"></textarea>
@@ -3539,11 +3551,11 @@ async function openThread(sid){
       else if (m.type === 'error'){ const eb = bubble('bot', `<span class="bad">${NOT_SENT.test(m.error || '') ? 'Not sent' : 'No reply'}: ${esc(en(m.error || 'the request failed'))}</span>`, false); if (cur && cur.turn === m.turn) cur.bot = eb; }
       else { const steps = (m.steps || []).map(s => termBlock(s[0], null, {exit: s[1], note: s[2] ? 'reused' : ''})).join('');
         const rb = bubble('bot', steps + `<div class="md">${markFlags(mdLite(m.answer || '(no content)'), m.flag_checks)}</div>` + ((m.picked || m.model) ? `<p class="who">${esc(prettyModel(m.picked || m.model))}</p>` : ''), false);
-        if (cur && cur.turn === m.turn) cur.bot = rb; chatTurns++; chatSteps += (m.steps || []).length; }
+        rb.dataset.turn = m.turn; if (cur && cur.turn === m.turn) cur.bot = rb; chatTurns++; chatSteps += (m.steps || []).length; }
     }
     if (live) back(live);
     queued.forEach(back);
-    saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true);
+    saveChatId(sid); useThreadPick(pickForThread(sid, d.model)); scrollChat(true); paintContext(d.context || null);
     setAskTask(d.task ? taskByName(d.task) : null, true);
     if (d.task && !askTask) boot.then(() => { if (chatId === sid && !askTask) setAskTask(taskByName(d.task) || null, true); });   // opened before the list loaded
   } catch(_){}
@@ -3552,10 +3564,57 @@ async function openThread(sid){
 }
 $('#threadList').addEventListener('click', e => { const d = e.target.closest('.thread[data-key]'); if (d){ openDraft(d.dataset.key); return; }
   const b = e.target.closest('.thread[data-sid]'); if (b) openThread(b.dataset.sid); });
+/* ---- Ask's context: which earlier exchanges the model sees (server: flagpilot.chat.context_plan). Leave one out or put it
+   back, start fresh from a message, bring all back; the oldest are left out by themselves past 60% of the model's window ---- */
+let CTX = null;
+const CTX_TAG = {excluded: 'Left out by you', before_fresh: 'Before the fresh start', auto: 'Left out to fit the model'};
+function paintContext(c){
+  CTX = c && Array.isArray(c.turns) && c.turns.length ? c : null;
+  const bar = $('#ctxBar'), st = new Map((CTX ? CTX.turns : []).map(t => [Number(t.turn), t.state]));
+  qs('#chatLog .bub[data-turn]').forEach(b => { const s = CTX && chatId ? st.get(Number(b.dataset.turn)) : null;
+    let tag = b.querySelector(':scope > .ctxtag');
+    if (!s){ b.removeAttribute('data-ctx'); b.classList.remove('ctx-out'); if (tag) tag.remove(); return; }
+    b.dataset.ctx = s; b.classList.toggle('ctx-out', s !== 'in');
+    if (!b.classList.contains('me')) return;
+    const tb = b.querySelector('.ctxbtn[data-op="toggle"]');
+    if (tb) tb.innerHTML = s === 'excluded' ? '⊕<span class="t"> Put back</span>' : '⊘<span class="t"> Leave out</span>';
+    if (s === 'in'){ if (tag) tag.remove(); return; }
+    if (!tag){ tag = document.createElement('span'); tag.className = 'ctxtag'; b.appendChild(tag); }
+    tag.textContent = CTX_TAG[s] || 'Left out'; });
+  if (!bar) return;
+  if (!CTX || !chatId){ bar.hidden = true; return; }
+  const n = CTX.turns.length, inN = CTX.turns.filter(t => t.state === 'in').length;
+  const mine = CTX.turns.filter(t => t.state === 'excluded' || t.state === 'before_fresh').length, auto = n - inN - mine;
+  const k = v => v >= 1e6 ? +(v / 1e6).toFixed(1) + 'M' : v >= 1024 && v % 1024 === 0 ? v / 1024 + 'k' : v >= 1000 ? +(v / 1000).toFixed(1) + 'k' : String(v);   // 32768 → 32k
+  $('#ctxText').textContent = `The model sees ${inN} of ${n} earlier ${n === 1 ? 'exchange' : 'exchanges'} · about ${k(CTX.tokens)} of ${k(CTX.window)} tokens`
+    + (auto ? ` · ${auto} oldest left out to fit` : '');
+  bar.style.setProperty('--p', Math.min(100, Math.round(100 * CTX.tokens / Math.max(1, CTX.window))) + '%');
+  bar.classList.toggle('hot', CTX.tokens > 0.6 * CTX.window);
+  $('#ctxReset').hidden = !mine; bar.hidden = false;
+}
+async function refreshContext(sid = chatId){
+  if (!sid){ paintContext(null); return; }
+  try { const d = await (await fetch('/api/chat/context?id=' + encodeURIComponent(sid), {cache: 'no-store'})).json(); if (chatId === sid) paintContext(d.turns ? d : null); } catch(_){}
+}
+async function contextOp(op, turn){
+  const sid = chatId; if (!sid) return;
+  try {
+    const r = await fetch('/api/chat/context', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: sid, op, ...(turn ? {turn} : {})})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok){ toast('Could not change the context: ' + (d.error || ('HTTP ' + r.status))); return; }
+    if (chatId === sid) paintContext(d);
+    toast({exclude: 'Left out: the model no longer sees this exchange', include: 'Put back: the model sees this exchange again',
+           fresh: 'Fresh start: the model sees this exchange and later ones', reset: 'Every exchange is back in what the model sees'}[op]);
+  } catch(e){ toast('Could not change the context: ' + e.message); }
+}
+$('#chatLog').addEventListener('click', e => { const b = e.target.closest('.ctxbtn'); if (!b) return;
+  const me = b.closest('.bub.me'), turn = Number(me && me.dataset.turn); if (!turn) return;
+  if (b.dataset.op === 'fresh') contextOp('fresh', turn); else contextOp(me.dataset.ctx === 'excluded' ? 'include' : 'exclude', turn); });
+$('#ctxReset').onclick = () => contextOp('reset');
 /* back to a conversation that is still waiting for its first reply to go out: its message, receipt and reply are put back */
 function openDraft(key){
   const it = LIVE.get(key); if (!it){ loadThreads(); return; }
-  curKey = key; chatTurns = 0; chatSteps = 0; saveChatId(null); syncBusy();
+  curKey = key; chatTurns = 0; chatSteps = 0; saveChatId(null); syncBusy(); paintContext(null);
   const log = $('#chatLog'); log.innerHTML = ''; started(true);
   [it, ...chatQ.filter(q => q.key === key)].forEach(x => [x.me, x.state === 'replied' ? null : x.rc, x.bot].forEach(n => { if (n) log.appendChild(n); }));
   if (it.pick) useThreadPick(it.pick);
@@ -3683,7 +3742,9 @@ function chatItem(me, text, o = {}){
   const it = {me, text, rc: o.rc || null, bot: o.bot || null, turn: o.turn ?? null, sid: o.sid || null, state: o.state || 'queued', recalled: false, abort: null, sentP: null};
   me._it = it; if (it.turn != null) me.dataset.turn = it.turn;
   const a = document.createElement('span'); a.className = 'acts';
-  a.innerHTML = '<button type="button" class="recall" aria-label="Recall this message" data-tip="Take this message and its reply back; the text returns to the box">↩<span class="t"> Recall</span></button>';
+  a.innerHTML = '<button type="button" class="recall" aria-label="Recall this message" data-tip="Take this message and its reply back; the text returns to the box">↩<span class="t"> Recall</span></button>'
+    + '<button type="button" class="ctxbtn" data-op="toggle" aria-label="Leave this exchange out of what the model sees" data-tip="The model stops seeing this question and its answer (you still do)">⊘<span class="t"> Leave out</span></button>'
+    + '<button type="button" class="ctxbtn" data-op="fresh" aria-label="Start fresh from this message" data-tip="The model sees this exchange and later ones only">⇤<span class="t"> Start fresh here</span></button>';
   me.appendChild(a);
   return it;
 }
@@ -3708,7 +3769,7 @@ async function recall(it){
   if (live && turn == null && it.sentP){ const d = await it.sentP; if (d){ turn = d.turn ?? null; sid = d.session_id || sid; } }
   if (turn != null && sid){ try { await fetch('/api/chat/recall', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: sid, turn})}); } catch(_){} }
   toast(it.state === 'queued' ? 'Taken back before it went out; the text is in the box' : 'Recalled: the message and its reply are gone; the text is in the box');
-  loadThreads();
+  loadThreads(); refreshContext();
   if (live) pump(it.key);
 }
 $('#chatLog').addEventListener('click', e => { const b = e.target.closest('.recall'); if (b) recall((b.closest('.bub.me') || {})._it); });
@@ -3757,6 +3818,7 @@ async function exchange(it){
   status('Thinking', '', it.task ? it.task.name : 'concept question');
   const done = ok => { if (over) return; over = true; clearInterval(tick); if (!fetching) resolveSent(null);
     LIVE.delete(it.key); syncBusy(); if (ok && isCur() && sendPix) sendPix.done(); railMark('chat', ok === false ? 'bad' : 'ok'); loadThreads();
+    if (isCur() && it.sid) refreshContext(it.sid);
     if (ok && !isCur() && !it.recalled){ const t = THREADS.find(x => x.id === it.key); toast('The reply in “' + ((t && t.title) || 'another conversation') + '” is ready'); }
     if (!it.recalled) pump(it.key); };
   it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) status('Ready'); };
@@ -3791,7 +3853,7 @@ async function exchange(it){
   fetching = false; resolveSent(r.ok ? d : null);
   if (it.recalled) return;                                  // recall() takes it from here: it now knows which turn to drop
   if (!r.ok){ fail(`<span class="bad">${esc(en(d.error || ('HTTP ' + r.status)))}</span>`, 'HTTP ' + r.status); done(false); status('Ready'); return; }
-  it.turn = d.turn ?? null; if (it.turn != null) me.dataset.turn = it.turn;
+  it.turn = d.turn ?? null; if (it.turn != null){ me.dataset.turn = it.turn; bot.dataset.turn = it.turn; }
   /* the conversation's id from the server: a new conversation gets one now (and so do its queued messages) */
   const sidNow = d.session_id || it.sid;
   if (sidNow && it.key !== sidNow){ const old = it.key; LIVE.delete(old); it.key = sidNow; LIVE.set(sidNow, it);
@@ -3842,7 +3904,7 @@ async function exchange(it){
 $('#sendChat').onclick = sendChat;
 $('#chatTools').onchange = showMount;
 function newChat(t = selTask, chosen = false){
-  curKey = 'new-' + (++draftN); chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); setAskTask(t, chosen);
+  curKey = 'new-' + (++draftN); chatTurns = 0; chatSteps = 0; saveChatId(null); useThreadPick(newPick()); setAskTask(t, chosen); paintContext(null);
   $('#chatLog').innerHTML = ''; started(false); syncBusy(); loadThreads(); $('#chatInput').focus(); return true; }
 /* ---- Solve's run settings ---- */
 /* "Demo run" while the chosen model is the offline mock; with a real model, Run is the main button */
