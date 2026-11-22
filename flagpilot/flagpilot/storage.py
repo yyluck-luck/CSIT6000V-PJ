@@ -69,11 +69,20 @@ def decode_record(line: str) -> dict:
 
 
 def read_records(path: Path) -> list[dict]:
+    """Read a JSONL file, skipping lines that cannot be decoded.
+
+    `errors="replace"` is deliberate: this is the reader behind `show`, the
+    History page's `/api/result`, and replay. With strict UTF-8 a single bad
+    byte - a half-written line, a file touched by another tool - raised
+    UnicodeDecodeError out of the iteration and the HTTP handler closed the
+    connection without a response. The line fails to parse afterwards and is
+    skipped, exactly like a half-written JSON line already was.
+    """
     path = Path(path)
     if not path.exists():
         return []
     rows = []
-    with path.open(encoding="utf-8") as stream:
+    with path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             if not line.strip():
                 continue

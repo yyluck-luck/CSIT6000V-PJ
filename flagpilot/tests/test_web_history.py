@@ -138,6 +138,22 @@ class TestHistoryAPI(unittest.TestCase):
         _write_trace(self.web, _rid(1), attempt=1)
         self.assertEqual(len(self.runs()), 2)
 
+    def test_a_corrupt_trace_does_not_kill_the_result_endpoint(self):
+        """历史里点开一条运行：trace 里有坏字节时应答"没有这条"，而不是把连接关掉。
+
+        这条路径和 `--replay` 的挂载是两个入口，读的是同一个 storage.read_records。
+        """
+        d = self.web / _rid(1) / "crypto-005-s0"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "trace.jsonl").write_bytes(
+            b'{"type": "meta", "task": "crypto-005"}\n\xff\xfe not utf8\n')
+        try:
+            with urllib.request.urlopen(self.base + f"/api/result?id={_rid(1)}", timeout=10) as r:
+                code = r.status
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        self.assertEqual(code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
