@@ -11,14 +11,13 @@ Liu Yiyang (21326031) \quad·\quad Hong Yifan (21382877) \quad·\quad Zhang Huan
 \section*{1. GitHub repository}
 \begin{description}[leftmargin=2.6cm]
 \item[Repository] \href{https://github.com/yyluck-luck/CSIT6000V-PJ}{\texttt{https://github.com/yyluck-luck/CSIT6000V-PJ}}
-\item[Version] default branch \texttt{main}, commit \href{https://github.com/yyluck-luck/CSIT6000V-PJ/commit/\SubmitCommitFull}{\texttt{\SubmitCommit}} (\SubmitCommitDate)
 \item[Access] The repository is private. The teaching team is given read access as collaborators for the whole grading period. It ships working API keys in \texttt{shared.env}, so it runs without any setup (see the README's \emph{Keys} section).
 \item[Start] \texttt{git clone https://github.com/yyluck-luck/CSIT6000V-PJ.git \&\& cd CSIT6000V-PJ \&\& ./start.sh}\\
 Python 3.11+ and git only. \texttt{./start.sh --check} confirms that every model provider answers.
 \end{description}
 
 \section*{2. Group contributions}
-\textbf{Basis: the GitHub commit history.} Every commit reachable from commit \href{https://github.com/yyluck-luck/CSIT6000V-PJ/commit/\SubmitCommitFull}{\texttt{\SubmitCommit}} on \texttt{main} (Section 1), \TotalCommits\ in all, is attributed to its author on GitHub. Merge commits are not counted, and \emph{lines added} leave out data files (PDFs, images, the committed run records and \texttt{shared.env}). The contribution text summarizes what each member's commits changed. The figures are computed from git when this PDF is built (\texttt{docs/submission/build.sh}), so anyone can recompute them with \texttt{git log --no-merges \SubmitCommit}.
+\textbf{Basis: the GitHub commit history.} Every commit on \texttt{main}, \TotalCommits\ in all, is attributed to its author on GitHub. Merge commits are not counted, and \emph{lines added} leave out data files (PDFs, images, the committed run records and \texttt{shared.env}). The contribution text summarizes what each member's commits changed. The figures are computed from git when this PDF is built (\texttt{docs/submission/build.sh}), so anyone can recompute them with \texttt{git log --no-merges}.
 
 \begin{longtable}{@{}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{11.0cm}>{\raggedleft\arraybackslash}p{2.6cm}@{}}
 \toprule
@@ -39,7 +38,5 @@ Configured API models in the command line and the web app. Solution write-ups an
 \bottomrule
 \end{longtable}
 
-\noindent\textbf{Note.} The account-to-member mapping follows the commit authors' names and e-mail addresses; \texttt{777study777} is matched to Zhang Huanrong by the proposal's division of work (member A: sandbox, toolbox, agent loop). Commit and line counts describe the repository, not effort: work done outside it (experiment analysis, the report and the slides) does not appear here. Per-commit detail: \href{https://github.com/yyluck-luck/CSIT6000V-PJ/graphs/contributors}{GitHub $\rightarrow$ Insights $\rightarrow$ Contributors}, or \texttt{git log --no-merges} in a clone.
-
 \section*{3. Repository README}
-The full contents of \texttt{README.md} at the commit above follow. Links to files in the repository point to that commit on GitHub.
+The full contents of \texttt{README.md} follow. Links to files in the repository open them on GitHub.
