@@ -11,8 +11,9 @@ TACC, and expect about 25 minutes. What it checks, each as PASS / FAIL:
   hint          a rerun's hint reaches the model
   Finish        pressed while the job is running (R in `tcloud ps`): the page is told at once, the job is cancelled
                 before it finishes, the session stays up and the next run is accepted
-  Ask           a Chinese question gets a Chinese answer, an English one an English answer; recalling a question
-                whose job is on TACC cancels it before it replies
+  Ask           does not run on TACC (since 2026-11-22 it answers with the hosted models): a question for TACC is refused.
+                The passes of 2026-11-21 in results/live are of the earlier version, whose four Ask checks (a Chinese and an
+                English answer, a recall that cancels its job) made 20 checks; there are 17 now
   stop          ending the session leaves no job behind
 
   python3 scripts/live_tacc_check.py --base http://127.0.0.1:8080 --log live-check.log
@@ -26,7 +27,6 @@ import base64
 import glob
 import json
 import os
-import re
 import subprocess
 import sys
 import threading
@@ -36,7 +36,6 @@ import urllib.request
 from pathlib import Path
 
 APP = Path(__file__).resolve().parent.parent
-CJK = re.compile(r"[一-鿿]")
 B = "http://127.0.0.1:8080"
 OUT = sys.stdout
 RESULTS: list[tuple[str, bool]] = []
@@ -160,15 +159,6 @@ def run(task: str, hint: str = "", limit: float = 1500) -> Stream | None:
     return st
 
 
-def ask(msg: str) -> tuple[dict, dict]:
-    code, c = post("/api/chat", {"message": msg, "backend": "tacc", "tools": False})
-    if code != 200:
-        return c, {"type": "error", "message": f"{code} {c}"}
-    st = Stream(c["session_id"], ("chat_done", "error"))
-    st.done.wait(900)
-    return c, st.last(("chat_done", "error"))
-
-
 def startup() -> dict | None:
     global USER
     log("start:", post("/api/tacc/session/start", {}))
@@ -231,23 +221,6 @@ def finish_while_running(serve: str) -> None:
     check("Finish keeps the session", s.get("phase") == "ready" and s.get("serve") == serve, s.get("phase"))
 
 
-def recall_while_on_tacc() -> None:
-    code, c = post("/api/chat", {"message": "Explain in about 500 words how a padding oracle attack on CBC works.",
-                                 "backend": "tacc", "tools": False})
-    if code != 200:
-        return check("recall: question accepted", False, f"{code} {c}")
-    st = Stream(c["session_id"], ("chat_done", "error"))
-    jid = wait_for(st.job, 900, 1)
-    seen = wait_for(lambda: any(x[0] == jid for x in jobs() or []), 300, 2)
-    t_rec = time.time()
-    code2, r2 = post("/api/chat/recall", {"session_id": c["session_id"], "turn": c["turn"]})
-    left = wait_for(lambda: gone(jid), 300, 3)
-    L = job_log(jid) if jid else ""
-    check("recall was sent while the question's job was on TACC", bool(seen) and code2 == 200, f"job {jid}: {code2} {r2}")
-    check("recall cancels that job before it replies", left and "@@reply" not in L,
-          f"gone {round(time.time() - t_rec) if left else None} s after recall; replied anyway: {'@@reply' in L}")
-
-
 def main() -> None:
     s = startup()
     if not s:
@@ -298,15 +271,10 @@ def main() -> None:
     d = st.last(("done",)) if st else {}
     check("the next run after Finish is accepted and verified", d.get("verdict") == "verified", d.get("verdict"))
 
-    _, d = ask("用两三句话解释：为什么 RSA 要求 $e \\cdot d \\equiv 1 \\pmod{\\varphi(n)}$？")
-    ans = d.get("answer") or d.get("message") or ""
-    log("Chinese question ->", ans[:300])
-    check("a Chinese question gets a Chinese answer", d.get("type") == "chat_done" and len(CJK.findall(ans)) >= 10,
-          f"{len(CJK.findall(ans))} CJK characters")
-    _, d = ask("In one sentence: what is a nonce?")
-    ans = d.get("answer") or ""
-    check("an English question gets an English answer", d.get("type") == "chat_done" and ans and not CJK.search(ans), ans[:160])
-    recall_while_on_tacc()
+    code, c = post("/api/chat", {"message": "In one sentence: what is a nonce?", "backend": "tacc", "tools": False})
+    check("Ask does not run on TACC: a question for TACC is refused before anything is submitted",
+          code == 400 and "hosted models" in str(c.get("error")),
+          f"{code} {c}")
 
 
 if __name__ == "__main__":

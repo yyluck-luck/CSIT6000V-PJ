@@ -17,8 +17,9 @@ from pathlib import Path
 
 import app.server as S
 from flagpilot import config, storage
+from flagpilot import chat as chat_mod  # noqa: E402
 from flagpilot.chat import (CHARS_PER_TOKEN, SYSTEM_TOKENS, ChatSession, context_note, context_plan, context_window,
-                            read_log)
+                            est_tokens, read_log)
 from flagpilot.config import ModelSpec, RunConfig
 
 
@@ -59,14 +60,33 @@ class TestPlan(unittest.TestCase):
         rows.append({"type": "context", "op": "reset"})
         self.assertEqual(set(states(context_plan(rows, 32_768)).values()), {"in"})
 
-    def test_the_oldest_are_left_out_to_fit_and_the_newest_always_stays(self):
+    def test_the_oldest_are_summarised_to_fit_and_the_newest_always_stays(self):
+        """The plan of 2026-11-21: past the window's share, the oldest exchanges are compressed into a summary, not dropped."""
         size = int(4000 * CHARS_PER_TOKEN)                       # each exchange is about 8,000 tokens
-        plan = context_plan(rows_of(5, size), 32_768)            # room for 60% of 32k minus system and reply: one exchange
+        plan = context_plan(rows_of(5, size), 32_768)            # room for 60% of 32k minus system, reply and summary: one exchange
         self.assertEqual(states(plan), {1: "auto", 2: "auto", 3: "auto", 4: "auto", 5: "in"})
-        self.assertIn("to fit your context window", context_note(plan))
+        note = context_note(plan)
+        self.assertIn("summarised below to fit your context window", note)
+        for t in (1, 2, 3, 4):
+            self.assertIn(f"- turn {t}: Q: question {t}", plan["summary"])
+        self.assertIn(plan["summary"], note)
+        self.assertLessEqual(len(plan["summary"]), chat_mod.SUMMARY_CHARS)
+        self.assertGreater(plan["tokens"], SYSTEM_TOKENS + est_tokens(plan["pairs"][0]["user"]), "the summary is counted")
+        self.assertLessEqual(plan["tokens"], plan["budget"] + SYSTEM_TOKENS, "and fits the budget with the newest exchange")
         plan = context_plan(rows_of(5, size * 10), 32_768)
         self.assertEqual(states(plan)[5], "in", "the newest exchange is always sent")
         self.assertEqual(set(states(context_plan(rows_of(5, size), 1_000_000)).values()), {"in"}, "Gemini's window holds all")
+
+    def test_the_summary_keeps_flags_and_says_what_did_not_fit(self):
+        long_answer = "The first part explains the method. " * 20 + "The flag is picoCTF{kept_in_summary}."
+        pairs = [{"turn": t, "user": f"question {t}", "answer": long_answer if t == 1 else f"answer {t} " + "x" * 400} for t in range(1, 41)]
+        text = chat_mod.digest(pairs)
+        self.assertLessEqual(len(text), chat_mod.SUMMARY_CHARS + 60)
+        self.assertIn("older exchange(s), not summarised", text.splitlines()[0])
+        self.assertIn("- turn 40:", text, "the most recent of the summarised exchanges are kept")
+        one = chat_mod.digest(pairs[:1])
+        self.assertIn("[flags mentioned: picoCTF{kept_in_summary}]", one, "a flag past the cut-off still reaches the summary")
+        self.assertEqual(context_plan(rows_of(3), 32_768)["summary"], "", "nothing summarised when everything fits")
 
     def test_windows(self):
         self.assertEqual(context_window("qwen3.8-27b"), 32_768)
@@ -198,27 +218,12 @@ class TestWeb(unittest.TestCase):
         self.assertIn("question 2", text)
         self.assertIn("third question", text)
 
-    def test_a_tacc_chat_sends_the_same_plan(self):
+    def test_ask_does_not_run_on_tacc(self):
+        """2026-11-22: Ask answers with the hosted models; a question for TACC is refused before anything is written."""
         self.thread("aaaaaaaaaaa3", 3)
-        self.post("/api/chat/context", {"session_id": "aaaaaaaaaaa3", "op": "exclude", "turn": 2})
-        seen = {}
-        done = threading.Event()
-
-        def fake_chat(message, history, task, tools, on_delta, on_tool, on_stage=None, cancelled=None):
-            seen["history"] = history
-            done.set()
-            return {"answer": "fine", "steps": []}
-        original = S.tacc_live.chat
-        S.tacc_live.chat = fake_chat
-        try:
-            self.post("/api/chat", {"message": "fourth", "session_id": "aaaaaaaaaaa3", "backend": "tacc"})
-            self.assertTrue(done.wait(10))
-        finally:
-            S.tacc_live.chat = original
-        users = [h.get("user", "") for h in seen["history"] if "user" in h]
-        self.assertEqual([u.split()[1] for u in users], ["1", "3"])
-        self.assertIn("left out by the user", seen["history"][-1]["note"])
-
+        before = (self.tmp / "chat" / "aaaaaaaaaaa3" / "chat.jsonl").read_bytes()
+        self.assertEqual(self.code("/api/chat", {"message": "fourth", "session_id": "aaaaaaaaaaa3", "backend": "tacc"}), 400)
+        self.assertEqual((self.tmp / "chat" / "aaaaaaaaaaa3" / "chat.jsonl").read_bytes(), before)
 
 if __name__ == "__main__":
     unittest.main()

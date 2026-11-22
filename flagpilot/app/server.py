@@ -55,8 +55,6 @@ PARTIAL_MAX_CHARS = 6000    # 一轮的动作 JSON 不会这么长；超出部�
 
 STATE: dict[str, dict] = {}
 CHATS: dict[str, ChatSession] = {}
-TACC_TURNS: dict[str, int] = {}          # 交给 TACC 的答疑：每个会话本进程发出的最大轮次号
-TACC_CANCEL: dict = {}        # (会话, 轮次) → threading.Event：撤回时取消 TACC 上的答疑作业
 LOCK = threading.Lock()
 SETTINGS = {"model": "mock", "base_url": "", "track": "L", "ablation": "B3"}
 
@@ -810,7 +808,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/upload":
             return self._upload(payload)
         if path == "/api/chat" and payload.get("backend") == "tacc":
-            return self._chat_tacc(payload)
+            # Ask 只用托管模型回答（2026-11-22："the discussion section should not support TACC"）：每条消息一个 Slurm 作业，
+            # 一问要等半分钟到几分钟、还占着账号的两个作业名额。Qwen on TACC 留给 Solve 跑题
+            return self._json(400, {"error": "Ask answers with the hosted models; Qwen on TACC runs challenges from Solve"})
         if path == "/api/chat":
             return self._chat(payload)
         if path == "/api/custom/delete":
@@ -835,10 +835,6 @@ class Handler(BaseHTTPRequestHandler):
                 sess = CHATS.pop(sid, None)       # 下一条消息从盘上重建会话：撤回的那轮不再进模型的上下文
             if sess is not None:
                 sess.cancel(turn)                 # 撤回的正是还在回答的那一轮：做完当前这步就停
-            with LOCK:
-                ev = TACC_CANCEL.get((sid, turn))
-            if ev is not None:
-                ev.set()                          # 这一问在 TACC 上答：取消它的作业（名额等它真停了才放）
             return self._json(200, {"ok": True, "turn": turn})
         if path == "/api/chat/context":
             # 上下文管理：某一轮不带 / 带回（exclude / include）、从某一轮重新开始（fresh）、全部恢复（reset）。日志只追加，下一问生效
@@ -1105,78 +1101,6 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200 if ok else 404, {"deleted": ok})
 
     # ---------- 答疑 ----------
-
-    def _chat_tacc(self, payload: dict) -> None:
-        """答疑一轮交给 TACC 上常驻的 Qwen：本机只记会话日志（左侧线程照常可用），回答由作业打回。"""
-        message = str(payload.get("message") or "").strip()
-        if not message:
-            return self._json(400, {"error": "message required"})
-        sid = str(payload.get("session_id") or "") or uuid.uuid4().hex[:12]
-        if not _SID_RE.match(sid):
-            return self._json(400, {"error": "bad session id"})
-        task_name, use_tools = str(payload.get("task") or ""), bool(payload.get("tools", True))
-        path = config.RUNS_ROOT / "chat" / sid / "chat.jsonl"
-        rows = read_log(path) if path.exists() else []
-        turn = max([int(r.get("turn") or 0) for r in rows] + [0]) + 1     # 只增不重用：撤回过的轮次号不再出现
-        # 带哪些之前的问答：和本机一样按 context_plan（撤回、"不带"、"重新开始"、按 Qwen 的 32k 窗口省略最早的）
-        plan = context_plan(rows, context_window(TACC_MODEL))
-        history = [{"user": p["user"], "answer": p["answer"]} for p in plan["pairs"]]
-        if context_note(plan):
-            history.append({"note": context_note(plan)})
-        q: queue.Queue = queue.Queue()
-        cancel = threading.Event()                              # 这一问被撤回：TACC 上的作业跟着取消
-        with LOCK:
-            turn = max(turn, TACC_TURNS.get(sid, 0) + 1)       # 上一条的提问可能还没落盘：按本进程发出的号再往后排
-            TACC_TURNS[sid] = turn
-            TACC_CANCEL[(sid, turn)] = cancel
-            STATE[sid] = {"q": q, "summary": None, "kind": "chat"}
-
-        def work() -> None:
-            try:
-                _work()
-            except Exception as e:                  # 答疑线程出错也要给页面一个结尾，否则 SSE 一直挂着等
-                q.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
-                q.put(None)
-            finally:
-                with LOCK:
-                    TACC_CANCEL.pop((sid, turn), None)
-
-        stamp = lambda: time.strftime("%Y-%m-%dT%H:%M:%S")      # noqa: E731
-        # 这一问先落盘再回轮次号：页面拿到轮次号就可能撤回，那时会话日志必须已经在了（否则撤回 404）
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not rows:
-            storage.append_record(path, {"ts": stamp(), "type": "meta", "task": task_name,
-                                         "model": TACC_MODEL, "tools": use_tools})
-        storage.append_record(path, {"ts": stamp(), "type": "user", "turn": turn, "text": message[:4000]})
-
-        def _work() -> None:
-            rep = tacc_live.chat(message, history, task_name, use_tools,
-                                 on_delta=lambda t: q.put({"type": "chat_delta", "text": t}),
-                                 on_tool=lambda ev: q.put(ev if ev.get("type") == "chat_check" else {**ev, "type": "chat_tool"}),
-                                 on_stage=lambda ev: q.put({**ev, "type": "chat_stage"}), cancelled=cancel.is_set)
-            with LOCK:
-                TACC_CANCEL.pop((sid, turn), None)
-            if rep.get("cancelled"):                    # 撤回了：会话日志里已有 recall 记录，不再记错误
-                q.put(None)
-                return
-            if rep.get("error") and not rep.get("answer"):
-                # 失败也落盘：重开线程时能看到这条消息为什么没有回复（不参与上面的问答配对）
-                storage.append_record(path, {"ts": stamp(), "type": "error", "turn": turn, "error": str(rep["error"])[:400]})
-                q.put({"type": "error", "message": rep["error"], **({"renew": True} if rep.get("renew") else {})})
-            else:
-                steps = rep.get("steps") or []
-                storage.append_record(path, {"ts": stamp(), "type": "reply", "turn": turn,
-                                             "answer": (rep.get("answer") or "")[:4000], "rounds": rep.get("rounds", 0),
-                                             "steps": [[str(x.get("cmd", ""))[:200], x.get("exit_code"), bool(x.get("cached"))] for x in steps],
-                                             "prompt_tokens": rep.get("prompt_tokens", 0), "completion_tokens": rep.get("completion_tokens", 0),
-                                             "wall_s": rep.get("wall_s", 0), "error": rep.get("error", ""), "model": TACC_MODEL,
-                                             "flag_checks": [[str(c.get("flag", ""))[:120], c.get("status")] for c in rep.get("flag_checks") or []]})
-                q.put({"type": "chat_done", "answer": rep.get("answer") or "", "turns": turn, "session_id": sid,
-                       "total_steps": len(steps), "flag_checks": rep.get("flag_checks") or [], "model": TACC_MODEL})
-            q.put(None)
-
-        threading.Thread(target=work, daemon=True).start()
-        return self._json(200, {"session_id": sid, "backend": "tacc", "turn": turn})
 
     def _chat(self, payload: dict) -> None:
         message = str(payload.get("message") or "").strip()
