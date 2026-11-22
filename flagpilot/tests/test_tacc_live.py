@@ -337,6 +337,45 @@ class TestTcloudLocate(unittest.TestCase):
         self.assertEqual(tacc_live.status()["phase"], "idle", "asking is not a failed session")
 
 
+class TestChatLatency(TaccHarness):
+    """答疑一轮里每多一次 SDK 调用就是多一趟 10–25 s 的 SSH（2026-11-23 实测）：
+    日志还在长就不问 Slurm、读完之后不再固定睡满间隔、上传没到齐重交前先把旧作业取消。"""
+
+    def test_while_the_log_grows_no_slurm_call_is_made(self):
+        tacc_live.S.update(phase="ready", serve="601")     # 不设就先去 _cancel，那本来就要 ps
+        with mock.patch.object(tacc_live, "_ps", side_effect=AssertionError("no ps while the log moves")):
+            self.assertEqual(tacc_live._watch("501", True, {}, print, quiet_s=0), "")
+        # 日志安静下来（超过阈值）才值得问一次 Slurm
+        with mock.patch.object(tacc_live, "_ps", return_value=[]) as ps:
+            self.assertEqual(tacc_live._watch("501", True, {}, print, quiet_s=tacc_live.CHAT_QUIET_S + 1), "")
+            self.assertEqual(ps.call_count, 1)
+
+    def test_the_tick_subtracts_the_time_the_read_took(self):
+        os.environ["FLAGPILOT_TACC_TICK"] = "0.4"
+        self.addCleanup(os.environ.pop, "FLAGPILOT_TACC_TICK", None)
+        t = time.time()
+        tacc_live._tick(t - 0.36)                  # 上一次读花了 0.36 s：只该再睡 0.04 s
+        self.assertLess(time.time() - t, 0.2)
+        t = time.time()
+        tacc_live._tick(t - 10)                    # 读得比间隔还久：不睡
+        self.assertLess(time.time() - t, 0.1)
+        t = time.time()
+        tacc_live._tick()                          # 老行为：睡满
+        self.assertGreaterEqual(time.time() - t, 0.35)
+
+    def test_a_lost_payload_cancels_the_old_job_before_resubmitting(self):
+        # 2026-11-23 01:31：第一次上传没到齐，直接重交；旧作业在 Slurm 里还占着名额，新作业排在它后面，
+        # 页面读到的一直是"日志不存在"，一轮问答卡了十几分钟。
+        os.environ["FAKE_PAYLOAD_LOST"] = "1"
+        self.ready()
+        rep = tacc_live.chat("hi", [], "", False, on_delta=lambda t: None, on_tool=lambda ev: None)
+        self.assertEqual(rep.get("answer"), "Hello from Qwen")
+        rec = self.record()
+        jobs = [l.split("job=")[1].split()[0] for l in rec.splitlines() if l.startswith("chat job=")]
+        self.assertEqual(len(jobs), 2, "the question is sent again as a new job")
+        self.assertIn(f"cancel {jobs[0]}", rec, "the job whose payload never arrived is cancelled")
+
+
 class TaccLiveCase(TaccHarness):
 
     def test_session_solve_chat_and_stop(self):
