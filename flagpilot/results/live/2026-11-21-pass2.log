@@ -1,0 +1,58 @@
+17:09:44 start: (200, {'ok': True, 'phase': 'starting'})
+17:09:44   step 'queue' after 0 s, estimate None s, detail {}
+17:10:08   step 'node' after 24 s, estimate 305 s, detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each'}
+17:11:17   step 'vllm' after 92 s, estimate 206 s, detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'vllm': '0.26.0'}
+17:12:29   step 'engine' after 164 s, estimate 138 s, detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'vllm': '0.26.0'}
+17:13:33   step 'weights' after 228 s, estimate 73 s, detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'weights_gib': 19.57, 'weights_pct': 20, 'vllm': '0.26.0'}
+17:13:41   step 'compile' after 236 s, estimate 64 s, detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'weights_gib': 19.57, 'weights_pct': 100, 'vllm': '0.26.0'}
+17:14:57   step 'ready' after 313 s, estimate 0 s, detail {'node': '10-0-3-10', 'gpus': '2 GPUs, 24 GB each', 'weights_gib': 19.57, 'weights_pct': 100, 'compile_s': 49.14, 'kv_tokens': 320170, 'vllm': '0.26.0'}
+17:14:57 CHECK PASS the Qwen session becomes ready | ready after 313 s 
+17:14:57 step times: [('queue', 21), ('node', 69), ('vllm', 72), ('engine', 64), ('weights', 10), ('compile', 73), ('warmup', 0), ('server', 0), ('ready', 0)]
+17:14:57 CHECK PASS the start-up panel walked through every step | ['queue', 'node', 'vllm', 'engine', 'weights', 'compile', 'warmup', 'server', 'ready']
+17:14:57 CHECK PASS the start-up panel gave an estimate of the time left | 73 readings, first [305, 301, 297]
+17:14:58 CHECK PASS vLLM's harmless traceback was in the log and did not stop the session | serving job 30507: 2 traceback(s), session ready
+17:14:59 serving job 30507 on 10-0-3-10 user yliutz
+17:16:27 run crypto-072 -> verified | match | 24 events
+17:16:27 CHECK PASS crypto-072 is verified on TACC | verified
+17:16:27 CHECK PASS its events reached the page over the run, not all at once | first to last event 22.1 s; 'running' shown 3.8 s before the first
+17:18:12 run custom-20261121-171627-live-check-upload-2c9f -> verified | match | 20 events
+17:18:12 CHECK PASS an uploaded challenge runs on TACC and is verified | verified match
+17:20:09 run general-026 -> verified | match | 22 events
+17:20:09 CHECK PASS an extra-gs challenge (general-026) runs on TACC | verified match
+17:21:14 run crypto-005 -> verified | match | 13 events
+17:21:14 CHECK PASS a rerun's hint reaches the model | 3 record files of the run
+17:23:16 CHECK PASS Finish was pressed while the client job was running | job 30512; Finish -> 200 {'ok': True}
+17:23:16 CHECK PASS Finish: the page is told at once ('stopped') | stopped finished by you after 0.0 s
+17:23:16 CHECK PASS Finish: the job is cancelled before it finishes | gone 57 s after Finish; finished anyway: False
+17:23:16 CHECK FAIL the model's output reached the page while the job ran | 0 model events before Finish
+17:23:16 CHECK PASS Finish keeps the session | ready
+17:24:46 run crypto-072 -> verified | match | 21 events
+17:24:46 CHECK PASS the next run after Finish is accepted and verified | verified
+17:25:16 Chinese question -> 因为 RSA 的加密是 $c \equiv m^e \pmod n$，解密是 $m \equiv c^d \pmod n$；只有当 $ed \equiv 1 \pmod{\varphi(n)}$ 时，对任意与 $n$ 互素的 $m$ 才有 $m^{ed} \equiv m \pmod n$，从而保证 $c^d$ 能还原出原文 $m$。
+17:25:16 CHECK PASS a Chinese question gets a Chinese answer | 32 CJK characters
+17:28:02 CHECK PASS an English question gets an English answer | A nonce is a number used only once, typically in cryptographic protocols to ensure that each message or transaction is unique and to prevent replay attacks.
+17:29:19 CHECK PASS recall was sent while the question's job was on TACC | job 30516: 200 {'ok': True, 'turn': 1}
+17:29:19 CHECK FAIL recall cancels that job before it replies | gone 66 s after recall; replied anyway: True
+17:29:24 stop: (200, {'ok': True, 'cancelled': True})
+17:29:26 CHECK PASS ending the session leaves no job behind | []
+17:29:26 SUMMARY 18/20 checks passed
+17:29:26    PASS the Qwen session becomes ready
+17:29:26    PASS the start-up panel walked through every step
+17:29:26    PASS the start-up panel gave an estimate of the time left
+17:29:26    PASS vLLM's harmless traceback was in the log and did not stop the session
+17:29:26    PASS crypto-072 is verified on TACC
+17:29:26    PASS its events reached the page over the run, not all at once
+17:29:26    PASS an uploaded challenge runs on TACC and is verified
+17:29:26    PASS an extra-gs challenge (general-026) runs on TACC
+17:29:26    PASS a rerun's hint reaches the model
+17:29:26    PASS Finish was pressed while the client job was running
+17:29:26    PASS Finish: the page is told at once ('stopped')
+17:29:26    PASS Finish: the job is cancelled before it finishes
+17:29:26    FAIL the model's output reached the page while the job ran
+17:29:26    PASS Finish keeps the session
+17:29:26    PASS the next run after Finish is accepted and verified
+17:29:26    PASS a Chinese question gets a Chinese answer
+17:29:26    PASS an English question gets an English answer
+17:29:26    PASS recall was sent while the question's job was on TACC
+17:29:26    FAIL recall cancels that job before it replies
+17:29:26    PASS ending the session leaves no job behind
