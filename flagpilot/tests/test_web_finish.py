@@ -99,8 +99,8 @@ class TestFinishAndHints(unittest.TestCase):
     def test_finish_and_hints_reach_a_tacc_run(self):
         seen = {}
 
-        def fake_run_task(task, tier, runs_root, on_event, on_delta=None, cancelled=None, hint=""):
-            seen["hint"] = hint
+        def fake_run_task(task, tier, runs_root, on_event, on_delta=None, cancelled=None, hint="", turns=20):
+            seen["hint"], seen["turns"] = hint, turns
             on_event({"type": "tacc", "stage": "queued", "job": "777"})
             t = time.time()
             while time.time() - t < 10 and not cancelled():
@@ -116,6 +116,7 @@ class TestFinishAndHints(unittest.TestCase):
             self.assertEqual(ev["verdict"], "stopped")
             self.assertTrue(self.until(lambda: seen.get("cancelled")), "the TACC job is told to stop")
         self.assertEqual(seen["hint"], "look at the header")
+        self.assertEqual(seen["turns"], 40, "a TACC run from the page gets the page's turn budget")
         time.sleep(0.3)
         self.assertEqual([e.get("type") for e in self.get(f"/api/result?id={rid}")["events"]].count("done"), 1)
 

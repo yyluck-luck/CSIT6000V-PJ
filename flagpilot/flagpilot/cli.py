@@ -635,7 +635,7 @@ def _build_cfg(args) -> RunConfig:
         batch=args.batch,
         track=args.track,
         model=model,
-        budget=Budget(max_turns=args.turns, max_wall_s=args.wall),
+        budget=Budget.for_turns(args.turns, args.wall),
         policy=policy,
         limits=SandboxLimits(action_timeout_s=args.action_timeout),
         ablation=abl,
@@ -745,7 +745,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--temperature", type=float, default=0.2)
         p.add_argument("--max-tokens", type=int, default=ModelSpec.max_tokens)   # 4096，依据见 config.ModelSpec
         p.add_argument("--turns", type=int, default=20)
-        p.add_argument("--wall", type=int, default=1500)
+        p.add_argument("--wall", type=int, default=None, help="seconds per attempt (default 75 per turn, at least 1500)")
         p.add_argument("--head", type=int, default=1500)
         p.add_argument("--tail", type=int, default=1500)
         p.add_argument("--no-truncate", action="store_true")

@@ -33,6 +33,7 @@ if [[ -n "${FLAGPILOT_TASKS:-}" ]]; then cat "$FLAGPILOT_TASKS/index/tasks.jsonl
 n=$(( $(cat "$st/jobn" 2>/dev/null || echo 500) + 1 )); echo "$n" > "$st/jobn"
 printf '%18s      tacc run.slur   yliutz  R       0:01      1 10-0-9-9\n' "$n" >> "$st/ps"
 echo "$1" > "$st/job-$n.mode"; echo "$1 job=$n url=${2:-} tasks=${FP_TASKS:-} events=${FP_EVENTS:-} chat=${FP_CHAT_TASK:-} excl=${FP_EXCLUDE:-}" >> "$st/record"
+echo "$1 job=$n turns=${FP_TURNS:-} time=${FP_TIME:-}" >> "$st/budget"
 printf 'Submitted batch job %s\n' "$n"
 """
 TCLOUD = r"""#!/usr/bin/env bash
@@ -779,6 +780,14 @@ class TestRobustness(TaccHarness):
         os.environ["FAKE_CANCEL_FAILS"] = "2"
         self.assertTrue(tacc_live._cancel("779"))
         self.assertEqual(self.record().count("cancel 779"), 3)
+
+    def test_a_run_on_tacc_gets_the_turns_chosen_on_the_page_and_time_for_them(self):
+        self.ready()
+        self.assertIsNotNone(tacc_live.run_task("demo-001", "B3", self.tmp / "runs", lambda e: None))
+        self.assertIsNotNone(tacc_live.run_task("demo-001", "B3", self.tmp / "runs", lambda e: None, turns=100))
+        rows = [l for l in (self.tmp / "state" / "budget").read_text().splitlines() if l.startswith("batch ")]
+        self.assertTrue(rows[0].endswith("turns=20 time=00:30:00"), rows)
+        self.assertTrue(rows[1].endswith("turns=100 time=00:50:00"), rows)
 
     def test_the_watchdog_notices_a_service_that_died(self):
         self.ready()

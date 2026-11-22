@@ -46,14 +46,25 @@ class SandboxLimits:
 
 @dataclass
 class Budget:
-    """一次 attempt 的预算。三种上限任一触发即终止。"""
+    """一次 attempt 的预算。任一上限触发即终止。
 
-    # TODO(你): 跑完 20 题冒烟后，按真实轮次分布调 max_turns（现在 20 是拍的）。
+    20 轮是评测口径（v5–v7 都是它）。按 v7 的分布它在评测题上不起作用：通过的尝试中位数 4–5 轮、最多 14 轮，
+    160 次尝试没有一次是因为轮数用完而结束的。导入的难题（堆利用之类）20 轮不够：网页单题默认 40 轮，可选更多（for_turns）。
+    max_prompt_tokens 管的是单次请求的上下文（每轮取当次的 prompt_tokens），max_completion_tokens 和 max_wall_s 是整次尝试累计。
+    """
 
     max_turns: int = 20
     max_prompt_tokens: int = 200_000
     max_completion_tokens: int = 32_000
     max_wall_s: int = 1500
+
+    @classmethod
+    def for_turns(cls, turns: int, wall_s: int | None = None) -> "Budget":
+        """turns 轮的预算。累计的输出 token 和墙钟时间按 20 轮时的比例跟着放大（每轮 1,600 token、75 s）：只加轮数，
+        长一点的尝试会先撞上它们。20 轮时正好是评测口径（32,000 token、1,500 s）。"""
+        turns = int(turns)
+        return cls(max_turns=turns, max_completion_tokens=max(32_000, 1_600 * turns),
+                   max_wall_s=int(wall_s) if wall_s else max(1_500, 75 * turns))
 
 
 @dataclass

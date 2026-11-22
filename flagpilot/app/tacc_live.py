@@ -813,7 +813,7 @@ def _download(remote: str, dest: Path, tries: int = 4, expect: str = "") -> bool
 
 def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], None],
              on_delta: Callable[[int, str], None] | None = None,
-             cancelled: Callable[[], bool] | None = None, hint: str = "") -> Path | None:
+             cancelled: Callable[[], bool] | None = None, hint: str = "", turns: int = 20) -> Path | None:
     """单题：提交批次作业（只带这一道题），跟着日志把事件交给 on_event；结束后把运行目录下载回来。
 
     on_delta(turn, 文字)：作业日志里的 @@pd（模型逐字输出，约每秒一批）原样交给网页，不必等一整轮。
@@ -839,9 +839,10 @@ def run_task(task: str, tier: str, runs_root: Path, on_event: Callable[[dict], N
             on_event({"type": "error", "message": late, "renew": True})
             return None
         batch = batch_name(task)
+        # turns：这一题的轮数上限（网页上选的）；多于 40 轮的给作业 50 分钟（分区上限 1 小时；会话的截止时刻另算）
         env = {"FP_TASKS": task, "FP_SPLIT": "all", "FP_LIMIT": "0", "FP_ABLATIONS": tier, "FP_EVENTS": "1",
                "FP_BATCH": batch, "FP_DEADLINE_EPOCH": str(int(S["t0"] + SESSION_S - 60)), "FP_EXCLUDE": S["node"] or "",
-               "FP_TIME": "00:30:00"}
+               "FP_TIME": "00:30:00" if int(turns) <= 40 else "00:50:00", "FP_TURNS": str(int(turns))}
         on_event({"type": "tacc", "stage": "uploading"})
         with tempfile.TemporaryDirectory(prefix="fp-task-") as d:
             name = _stage(task, Path(d), hint)

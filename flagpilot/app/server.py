@@ -82,6 +82,9 @@ BOOT_SIG = _code_sig()
 # 变成一个"只能读 chat.jsonl"的目录穿越；顺手也能把沙箱工作目录指到外面。
 _SID_RE = re.compile(r"^[0-9a-f]{12}$")
 MAX_CONCURRENT_RUNS = 3          # 单进程同时跑几个 agent；防本地网页刷爆
+# 网页单题的轮数上限（页面上可选）。20 是评测口径（Lab 实验、批跑都用它）；导入的难题 20 轮不够，单题默认 40。
+TURN_CHOICES = (20, 40, 60, 100)
+WEB_TURNS = 40
 MAX_STATE_ENTRIES = 80           # STATE 只增不减会吃内存，完成后按时间淘汰
 RUNNING = 0
 
@@ -323,7 +326,7 @@ def _with_chain(spec, rest: str):
 llm_client.FALLBACK_RESOLVER = lambda name: _spec(name, _base_for(name))
 
 
-def _make_cfg(task_batch: str, ablate: str | None = None, model: str | None = None) -> RunConfig:
+def _make_cfg(task_batch: str, ablate: str | None = None, model: str | None = None, turns: int = 20) -> RunConfig:
     """model 给了就用它（答疑线程各自的选择），否则用全局设置；提供商在这里换成具体型号和备援链。
     Lab 实验不带备援链：一个实验组只能是一个型号，否则结果没法比。"""
     name, rest = _resolve(model, chain=task_batch != "lab")
@@ -340,7 +343,7 @@ def _make_cfg(task_batch: str, ablate: str | None = None, model: str | None = No
         # 必须和 CLI 走同一个构造函数：之前这里直接 new ModelSpec，
         # 漏掉 soft_no_think，Qwen3 的思维链把每轮预算吃光，表现为"空回复"。
         model=_with_chain(_spec(name, base), rest),
-        budget=Budget(max_turns=20),
+        budget=Budget.for_turns(turns),
         policy=policy,
         limits=SandboxLimits(),
         ablation=abl,
@@ -484,7 +487,7 @@ def _worker(run_id: str, task_name: str, ablate: str | None) -> None:
         task = resolve_task(task_name)
         if task is None:
             raise ValueError(f"Unknown challenge {task_name}")
-        cfg = _make_cfg("web", ablate)
+        cfg = _make_cfg("web", ablate, turns=STATE[run_id].get("turns") or WEB_TURNS)
         # 每次运行一个独立目录：以前 out_dir 固定是 runs/web，run_id 又只是
         # "题目-s0"，同一题跑第二遍会把上一遍的 trace 覆盖掉。四档连跑更糟，
         # B0→B3 只剩最后一档的痕迹，事后想核对"当时到底调了什么"就没了。
@@ -643,6 +646,7 @@ class Handler(BaseHTTPRequestHandler):
                 "model": SETTINGS["model"],
                 "ablation": SETTINGS["ablation"],
                 "ablations": [{"name": k, "desc": v.desc} for k, v in ABLATIONS.items()],
+                "turns": WEB_TURNS, "turn_choices": list(TURN_CHOICES),
             })
         if path == "/api/models":
             return self._json(200, {"providers": provider_list(), "current": SETTINGS["model"],
@@ -687,6 +691,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "messages": [r for r in rows
                                                  if r.get("type") in ("user", "reply", "error") and r.get("turn") not in gone],
                                     "model": runs_index.thread_model(rows),
+                                    # 这个对话是关于哪道题的：页面打开旧对话时把 Ask 的题目换成它（不动 Solve 的）
+                                    "task": next((str(r.get("task") or "") for r in rows if r.get("type") == "meta"), ""),
                                     "exists": bool(rows)})
         if path.startswith("/api/catalog/"):
             return self._catalog_get(path)
@@ -871,6 +877,10 @@ class Handler(BaseHTTPRequestHandler):
         ablate = payload.get("ablate")
         if ablate and str(ablate).upper() not in ABLATIONS:
             return self._json(400, {"error": f"Unknown tier {ablate}"})
+        turns = payload.get("turns")
+        turns = WEB_TURNS if turns is None else turns
+        if isinstance(turns, bool) or turns not in TURN_CHOICES:
+            return self._json(400, {"error": "turns must be one of " + ", ".join(map(str, TURN_CHOICES))})
         rid = uuid.uuid4().hex[:12]
         with LOCK:
             if RUNNING >= MAX_CONCURRENT_RUNS:
@@ -886,6 +896,7 @@ class Handler(BaseHTTPRequestHandler):
                           "control": _new_control(payload) if payload.get("backend") != "tacc" else None,
                           "finish": threading.Event() if payload.get("backend") == "tacc" else None,
                           "hint": _hint_of(payload),
+                          "turns": turns,
                           "ablate": ablate or SETTINGS["ablation"]}
         try:
             target = _tacc_worker if payload.get("backend") == "tacc" else _worker
@@ -894,7 +905,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 RUNNING = max(0, RUNNING - 1)
             raise
-        self._json(200, {"run_id": rid, "ablation": ablate or SETTINGS["ablation"]})
+        self._json(200, {"run_id": rid, "ablation": ablate or SETTINGS["ablation"], "turns": turns})
 
     # ---------- 运行时设置 ----------
 
@@ -1409,7 +1420,7 @@ def _tacc_worker(run_id: str, task_name: str, ablate: str | None) -> None:
     try:
         fin = st.get("finish") or threading.Event()
         d = tacc_live.run_task(task_name, tier, config.RUNS_ROOT, on_event, on_delta=on_delta, cancelled=fin.is_set,
-                               hint=st.get("hint") or "")
+                               hint=st.get("hint") or "", turns=st.get("turns") or WEB_TURNS)
         if st.get("finished"):                     # Finish：页面已经收到 done，作业在后台取消
             return
         res = dict(summary) or {"verdict": "error", "reason": (failed[-1] if failed else "") or "the TACC job returned no result",

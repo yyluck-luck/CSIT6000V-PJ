@@ -105,7 +105,38 @@ class TestWebAPI(unittest.TestCase):
                         return ev
         return None
 
+    def events_of(self, run_id, timeout=40):
+        out = []
+        with urllib.request.urlopen(self.base + f"/api/stream?id={run_id}", timeout=timeout) as s:
+            t0 = time.time()
+            while time.time() - t0 < timeout:
+                line = s.readline().decode()
+                if line.startswith("data:"):
+                    out.append(json.loads(line[5:]))
+                    if out[-1].get("type") == "done":
+                        break
+        return out
+
     # ---------- 用例 ----------
+
+    def test_a_run_uses_the_turn_budget_chosen_on_the_page(self):
+        """2026-11-21, "why only 20 rounds?": 20 is the evaluation's budget (batches, Lab); a run from the page defaults to
+        40 and may use 20, 60 or 100, with output tokens and time growing with the turns."""
+        tasks = json.loads(self.get("/api/tasks"))
+        self.assertEqual((tasks["turns"], tasks["turn_choices"]), (40, [20, 40, 60, 100]))
+        r = self.post("/api/run", {"task": self.task_name(), "ablate": "B3", "turns": 60})
+        self.assertEqual(r["turns"], 60)
+        meta = next(ev for ev in self.events_of(r["run_id"]) if ev.get("type") == "meta")
+        b = meta["budget"]
+        self.assertEqual((b["max_turns"], b["max_completion_tokens"], b["max_wall_s"]), (60, 96_000, 4_500))
+        r = self.post("/api/run", {"task": self.task_name(), "ablate": "B3", "turns": None})
+        self.assertEqual(r["turns"], 40, "no choice: the page's default")
+        self.assertEqual(next(ev for ev in self.events_of(r["run_id"]) if ev.get("type") == "meta")["budget"]["max_turns"], 40)
+        for bad in (7, "20", True, 0, 1000):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self.post("/api/run", {"task": self.task_name(), "ablate": "B3", "turns": bad})
+            self.assertEqual(ctx.exception.code, 400, bad)
+            ctx.exception.close()
 
     def test_index_has_controls(self):
         html = self.get("/")
@@ -328,6 +359,7 @@ class TestWebAPI(unittest.TestCase):
         self.assertIsNotNone(done)
         self.assertTrue(done["answer"].strip())
         self.assertEqual(done["steps"], [])
+        self.assertEqual(json.loads(self.get(f"/api/chat/history?id={sid}"))["task"], "", "a concept question has no challenge")
 
     def test_chat_executes_real_command(self):
         name = self.upload("答疑用题")["task"]["name"]
@@ -338,6 +370,8 @@ class TestWebAPI(unittest.TestCase):
             self.assertGreaterEqual(len(done["steps"]), 1, "命令没有被真正执行")
             self.assertIn("ls", done["steps"][0]["cmd"])
             self.assertIn("note.txt", done["steps"][0]["output"])
+            # the thread remembers its challenge: Ask shows it again when the thread is reopened (Solve is not touched)
+            self.assertEqual(json.loads(self.get(f"/api/chat/history?id={sid}"))["task"], name)
 
             # 同一会话继续追问：轮次要累加，历史要带上
             r2 = self.post("/api/chat", {"message": "那答案是什么", "session_id": sid})

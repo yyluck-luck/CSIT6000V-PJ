@@ -178,7 +178,7 @@ try {
   check("step mode: a held command can be edited, skipped or run; a hint reaches the next step", stHeld && edited && stSkipped && finished && hinted, JSON.stringify({stHeld, edited, stSecond, stSkipped, finished, hinted}));
   await js("localStorage.removeItem('fp.stepmode')");
   await js("(() => { const d = document.querySelector('#flow details.step'); if (d) d.open = true; const b = document.querySelector('[data-explain]'); b && b.click(); })()");
-  check("a step can be explained in Ask", await until("document.querySelector('.page.on').dataset.page === 'chat' && /Explain step \\d+ of my run/.test((document.querySelector('#chatLog .bub.me') || {}).textContent || '') && document.querySelector('#chatLog .bub.bot .md')", 15000));
+  check("a step can be explained in Ask, in a new conversation about the run's challenge", await until("document.querySelector('.page.on').dataset.page === 'chat' && /Explain step \\d+ of my run/.test((document.querySelector('#chatLog .bub.me') || {}).textContent || '') && document.querySelector('#chatLog .bub.bot .md') && askTask && askTask.name === sel", 15000));
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()");
 
   // 5c. Finish ends a run at once (its card says so), and the card runs it again with a hint that reaches the agent
@@ -368,7 +368,7 @@ try {
     const stayed = sel === keep;
     pick(MINE[MINE.length - 1]);
     const out = [row && row.querySelector('.nm').textContent, a && a.getAttribute('href') === src, stayed, document.querySelector('#sgLink').getAttribute('href') === src,
-      document.querySelector('#sgTitle').textContent === 'Children Tcache' || true, document.querySelector('#mountChip .tn').textContent, taskLabel('custom-20261120-000000-children_tcache-ab12')];
+      document.querySelector('#sgTitle').textContent === 'Children Tcache' || true, document.querySelector('.taskpill .tn').textContent, taskLabel('custom-20261120-000000-children_tcache-ab12')];
     MINE.pop(); pick(null); renderTaskList(); return out; })()`);
   const pvOpen = await until("!document.querySelector('#tpWrap').hidden && document.querySelector('#tpTitle').textContent === 'Children Tcache' && (document.querySelector('#tpActs a') || {}).href === 'https://github.com/sajjadium/ctf-archives/tree/main/ctfs/HITCON/2018/pwn/children_tcache'", 3000);
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 }); await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
@@ -619,9 +619,61 @@ try {
   await js("document.querySelector('.navbtn[data-page=\"chat\"]').click()"); await sleep(300);
   await js("document.querySelector('#mountChip').click()"); await until("!document.querySelector('#sheetWrap').hidden", 2000); await sleep(200);
   await js(sheetAll); await sleep(150);
-  const askPickName = await js("(() => { const r = [...document.querySelectorAll('#tasks .row')].filter(x => !x.hidden && x.dataset.name !== sel)[0]; r.click(); return r.dataset.name; })()");
-  const askStay = await until(`document.querySelector('.page.on').dataset.page === 'chat' && document.querySelector('#sheetWrap').hidden && sel === ${JSON.stringify(askPickName)}`, 2000);
-  check("picking a challenge from the Lab or Ask stays on that page", labStay && askStay, JSON.stringify({labStay, askStay}));
+  const solveWas = await js("sel");
+  const askPickName = await js("(() => { const r = [...document.querySelectorAll('#tasks .row')].filter(x => !x.hidden && x.dataset.name !== sel && x.dataset.name !== (askTask && askTask.name))[0]; r.click(); return r.dataset.name; })()");
+  const askStay = await until(`document.querySelector('.page.on').dataset.page === 'chat' && document.querySelector('#sheetWrap').hidden && askTask && askTask.name === ${JSON.stringify(askPickName)} && sel === ${JSON.stringify(solveWas)}`, 2000);
+  check("picking a challenge from the Lab stays on the Lab; from Ask it sets only Ask's (Solve keeps its own)", labStay && askStay, JSON.stringify({labStay, askStay, solveWas, askPickName}));
+
+  // Solve and Ask keep their own challenge: a new conversation starts with the one open in Solve; choosing one in Ask never
+  // changes Solve's; a conversation with messages stays with its challenge (choosing another opens a new one, Solve's
+  // changes leave it alone); reopening a thread brings its challenge back, and its messages go out with it
+  const [tA, tB, tC] = await js("(() => { const g = TASKS.filter(t => !t.custom); return [g[0].name, g[1].name, g[2].name]; })()");
+  await js(`pick(taskByName(${JSON.stringify(tA)}))`);
+  await js("document.querySelector('#newChat').click()"); await sleep(150);
+  const sxNew = await js(`askTask && askTask.name === ${JSON.stringify(tA)} && document.querySelector('#mountChip .tn').textContent === taskLabel(taskByName(${JSON.stringify(tA)}))`);
+  await js("document.querySelector('#mountChip').click()"); await until("!document.querySelector('#sheetWrap').hidden", 2000); await sleep(200);
+  await js(sheetAll); await sleep(150);
+  await js(`document.querySelector('#tasks .row[data-name=${JSON.stringify(tB)}]').click()`);
+  const sxOwn = await until(`askTask && askTask.name === ${JSON.stringify(tB)} && sel === ${JSON.stringify(tA)} && document.querySelector('#sheetWrap').hidden && document.querySelector('.page.on').dataset.page === 'chat'`, 2000);
+  await js("window.__chatBodies = []; window.__F3 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/chat') window.__chatBodies.push(JSON.parse(o.body)); return window.__F3(u, o); }");
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'what is in the files?'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const sxSent = await until(`window.__chatBodies.length >= 1 && window.__chatBodies[0].task === ${JSON.stringify(tB)} && chatId && !chatBusy && document.querySelector('#chatLog .bub.bot .md')`, 15000);
+  const threadB = await js("chatId");
+  await js(`pick(taskByName(${JSON.stringify(tC)}))`);
+  const sxKept = await js(`askTask.name === ${JSON.stringify(tB)} && document.querySelector('#mountChip .tn').textContent === taskLabel(taskByName(${JSON.stringify(tB)}))`);
+  await js(`askSwitch(taskByName(${JSON.stringify(tA)}))`);
+  const sxSplit = await js(`!chatId && !document.querySelector('#chatLog .bub') && askTask.name === ${JSON.stringify(tA)} && sel === ${JSON.stringify(tC)}`);
+  await until(`document.querySelector('#threadList .thread[data-sid=${JSON.stringify(threadB)}]')`, 5000);
+  await js(`document.querySelector('#threadList .thread[data-sid=${JSON.stringify(threadB)}]').click()`);
+  const sxBack = await until(`chatId === ${JSON.stringify(threadB)} && askTask && askTask.name === ${JSON.stringify(tB)} && sel === ${JSON.stringify(tC)}`, 5000);
+  await js(`(() => { const t = document.querySelector('#chatInput'); t.value = 'and the second file?'; t.dispatchEvent(new Event('input', {bubbles: true})); sendChat(); })()`);
+  const sxAgain = await until(`window.__chatBodies.length >= 2 && window.__chatBodies[1].task === ${JSON.stringify(tB)} && window.__chatBodies[1].session_id === ${JSON.stringify(threadB)} && !chatBusy`, 15000);
+  await js("window.fetch = window.__F3; newChat()");
+  check("Solve and Ask keep their own challenge (new conversation from Solve; Ask's choice never changes Solve; threads keep theirs)",
+    sxNew && sxOwn && sxSent && sxKept && sxSplit && sxBack && sxAgain, JSON.stringify({sxNew, sxOwn, sxSent, sxKept, sxSplit, sxBack, sxAgain, tA, tB, tC}));
+
+  // turns per run: the drawer offers 20/40/60/100 (40 by default, remembered); a run uses the choice; a run that used all
+  // its turns offers to run again with more (2026-11-21: "why only 20 rounds?")
+  await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
+  await js(`pick(taskByName(${JSON.stringify(tA)}))`);
+  const tb = await js("(() => { localStorage.removeItem('fp.turns'); renderTurns(turnChoices, 40); return {seg: [...document.querySelectorAll('#turnSeg button')].map(b => b.textContent).join(','), def: turnBudget}; })()");
+  await js("document.querySelector('#turnSeg button[data-turns=\"60\"]').click()");
+  const tbKept = await js("turnBudget === 60 && localStorage.getItem('fp.turns') === '60' && /60 turns/.test(document.querySelector('#turnDesc').textContent)");
+  await js("window.__runBodies = []; window.__F4 = window.fetch; window.fetch = (u, o) => { if (String(u) === '/api/run') window.__runBodies.push(JSON.parse(o.body)); return window.__F4(u, o); }");
+  await until("!document.querySelector('#run').disabled", 5000);
+  await js("document.querySelector('#run').click()");
+  const tbRun = await until("window.__runBodies.length >= 1 && window.__runBodies[0].turns === 60 && run && run.maxTurns === 60", 10000);
+  await until("!busy", 30000);
+  await js("run.maxTurns = 20; showDone({type: 'done', verdict: 'budget', reason: 'max_turns', turns: 20, ablation: 'B3'})");
+  const tbOffer = await js("(document.querySelector('#turnsRerun') || {}).textContent || ''");
+  const tbSaid = await js("/all 20 turns used/.test(document.querySelector('#verdict .vbar').textContent)");
+  await js("document.querySelector('#turnsRerun') && document.querySelector('#turnsRerun').click()");
+  const tbMore = await until("window.__runBodies.length >= 2 && window.__runBodies[1].turns === 40 && turnBudget === 40", 10000);
+  await until("!busy", 30000);
+  await js("window.fetch = window.__F4; localStorage.removeItem('fp.turns'); renderTurns(turnChoices, 40)");
+  check("turns per run: 20/40/60/100 (40 by default, remembered); a run uses the choice; a run out of turns offers more",
+    tb.seg === "20,40,60,100" && tb.def === 40 && tbKept && tbRun && /Run again with 40 turns/.test(tbOffer) && tbSaid && tbMore,
+    JSON.stringify({tb, tbKept, tbRun, tbOffer, tbSaid, tbMore}));
 
   // a reload comes back to the open challenge and picks its run up again; while a run is going the browser asks first
   await js("document.querySelector('.navbtn[data-page=\"solve\"]').click()"); await sleep(200);
