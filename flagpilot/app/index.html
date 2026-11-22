@@ -570,6 +570,7 @@
   .runset .rs-edit{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 22px}
   .runset .rs-f{display:flex;flex-direction:column;gap:6px} .runset .rs-l{font:600 15px var(--font);color:var(--ink2)}
   .runset .pillsel{min-width:180px} .runset .segc button{padding:8px 16px}
+  .rs-info{flex-wrap:wrap} .rs-info .rs-note{flex-basis:100%;order:10;margin:8px 0 0}
   .runset .rs-d{flex:1 1 100%;margin:2px 0 0}
   .runset .rs-info{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px} .runset .rs-now{font:500 15px var(--mono);color:var(--ink)}
   .runset .segc[aria-disabled="true"],.runset select:disabled{opacity:.5;pointer-events:none}
@@ -738,6 +739,23 @@
   .mmenu .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .mmenu .sub{margin-left:auto;padding-left:12px;font:500 15px var(--mono);color:var(--ink2);white-space:nowrap}
   .mmenu .ck{width:14px;flex:0 0 14px;font-weight:800;color:var(--blue);opacity:0} .mmenu [aria-checked=true] .ck{opacity:1} .mmenu [aria-checked=true] .nm{color:var(--blue)}
   .mmenu hr{border:0;border-top:1px solid var(--rule);margin:6px 0} .mmenu .danger{color:var(--red)}
+  /* select boxes (2026-11-22): the OS draws a native select's list (rounded, blurred) and CSS cannot reach it; every
+     select.pillsel keeps its value and events, and shows a button and a list in the page's own style instead */
+  .xsel{position:relative;display:inline-flex;min-width:0;max-width:100%;vertical-align:middle}
+  .frow .xsel{flex:1 1 0}
+  .xsel>select.xsel-native{position:absolute;left:0;top:0;width:100%;height:100%;opacity:0;pointer-events:none}
+  .xsel-b{display:inline-flex;align-items:center;justify-content:space-between;gap:14px;width:100%;min-width:180px;border:1.5px solid var(--ink);background:var(--white);color:var(--ink);font:600 15px var(--mono);padding:9px 12px;cursor:pointer;text-align:left;transition:transform var(--t1) var(--ease),box-shadow var(--t1) ease}
+  .xsel-b:hover:not(:disabled),.xsel-b[aria-expanded=true]{transform:translate(-1px,-1px);box-shadow:3px 3px 0 var(--ink)}
+  .xsel-b:active:not(:disabled){transform:translate(1px,1px);box-shadow:1px 1px 0 var(--ink)}
+  .xsel-b:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+  .xsel-b:disabled{opacity:.5;cursor:not-allowed}
+  .xsel-v{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .xsel-ar{flex:none;width:10px;height:6px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23141414' stroke-width='1.6' fill='none'/%3E%3C/svg%3E") no-repeat center;transition:transform var(--t2) var(--ease)}
+  .xsel-b[aria-expanded=true] .xsel-ar{transform:rotate(180deg)}
+  .mmenu.xsel-menu{width:auto;max-height:min(360px,60vh);overflow:auto;padding:6px 0}
+  .mmenu.xsel-menu button{padding:10px 16px;font:600 15px var(--mono)}
+  .mmenu.xsel-menu [aria-selected=true] .ck{opacity:1} .mmenu.xsel-menu [aria-selected=true] .nm{color:var(--blue)}
+  .mmenu.xsel-menu [aria-disabled=true]{opacity:.45;cursor:not-allowed}
   .chip.qwen .cv{margin-left:2px;transition:transform var(--t2) var(--ease)} .chip.qwen[aria-expanded=true] .cv{transform:rotate(180deg)}
   .rcpt .now{margin-left:12px;border:0;background:none;padding:0;font:inherit;color:var(--blue);text-decoration:underline;text-underline-offset:3px;cursor:pointer}
   .bub .who{margin:10px 0 0;font:500 15px var(--mono);color:var(--ink3)}
@@ -928,7 +946,7 @@
             <p class="hint rs-d"><span id="ablDesc">—</span><br><span id="turnDesc">—</span></p>
           </div>
           <div class="rs-info" id="rsInfo" hidden>
-            <span class="rs-now" id="rsNow"></span><span class="grow"></span>
+            <span class="rs-now" id="rsNow"></span><span class="grow"></span><span class="hint rs-note" id="rsNote" hidden></span>
             <button class="btn" id="rsMore" type="button" hidden data-tip="Give this run 20 more turns; it uses them if it needs them">+20 turns</button>
             <button class="btn primary" id="rsAgain" type="button" hidden data-tip="Run this challenge again with the same model, tier and turns">Run again<span class="arr">→</span></button>
             <button class="btn plain" id="rsChange" type="button" hidden>Change settings</button>
@@ -1925,12 +1943,27 @@ function readEvidence(t){
   if (/Traceback \(most recent call last\)/i.test(err)) F.push('The script raised an exception. On replay this becomes <code>unverified / script_error</code>.');
   return F;
 }
+/* why a reply could not be used, from what the provider said about it (its finish reason) and what the reply looks like:
+   no longer one sentence about "empty replies" for every case (2026-11-21 plan, item 1) */
+function whyRejected(t){
+  const f = String(t.finish || ''), raw = String(t.raw || ''), empty = !raw.trim(), tail = t.retries ? ` (after ${t.retries} ${t.retries === 1 ? 'retry' : 'retries'})` : '',
+        by = t.servedBy ? ` It was written by <code>${esc(t.servedBy)}</code>, after the chain moved on from the model you picked.` : '',
+        said = f ? ` The provider ended it with <code>${esc(f)}</code>${tail}.` : '';
+  if (/MALFORMED_FUNCTION_CALL/i.test(f)) return 'Gemini tried to call a function instead of writing its JSON as text (<code>MALFORMED_FUNCTION_CALL</code>)' + tail + '. FlagPilot asks again for plain JSON and then gives the turn to the next provider.' + by;
+  if (/content_filter|safety|blocked|recitation|prohibited/i.test(f)) return 'The provider\'s safety filter withheld the reply.' + said + by;
+  if (/^length$|max_tokens/i.test(f)) return 'The reply reached <code>max_tokens</code> before its JSON was complete.' + said + by;
+  if (f === 'repetition') return 'The reply was stuck repeating itself, so FlagPilot cut it off.' + by;
+  if (empty) return 'The reply came back with no text at all.' + (said || ' The provider gave no reason.') + by;
+  if (/<\s*[｜|]\s*DSML/i.test(raw)) return 'The model wrote its own tool-call markup (DSML) instead of the JSON protocol.' + said + by;
+  if (f === 'stop' && raw.includes('{')) return 'The model ended the reply on its own in the middle of its JSON (<code>stop</code>, not the token limit).' + by;
+  return said ? said.trim() + by : '';
+}
 function explainStep(t){
   const a = t.act, L = [];
   if (t.callError && !a){ L.push('The model API returned an error, so nothing ran and the run stopped here.' + (/429|quota/i.test(t.callError) ? ' The free quota for this model is used up: pick another model and run again.' : /503|overload|high demand/i.test(t.callError) ? ' The provider was overloaded; trying again later, or another model, usually works.' : '')); return L; }
   if (t.invalid){ const n = run ? run.turns.filter(x => x.invalid && x.n <= t.n).length : 0;
     L.push(`The model did not answer in the agreed JSON protocol, so nothing ran. The harness sent a correction; <b>the turn still counts</b>, and the third such reply ends the run (this is number ${n || '?'}). A protocol failure, not a solving failure.`);
-    if (String(t.invalid).includes('空回复') || /empty/i.test(String(t.invalid))) L.push('An empty reply usually means the reasoning used up <code>max_tokens</code>, or the hosted API returned nothing.'); return L; }
+    const why = whyRejected(t); if (why) L.push(why); return L; }
   if (!a) return L;
   if (a.action === 'shell'){ const tools = cmdTools(a.cmd), tgt = cmdTargets(a.cmd), docs = [...new Set(tools.map(x => TOOL_DOC[x]).filter(Boolean))];
     let s = 'Runs <code>' + esc((a.cmd || '').slice(0, 140)) + '</code>'; if (tgt.length) s += ' on <b>' + esc(tgt.slice(0, 3).join(', ')) + '</b>';
@@ -2204,7 +2237,8 @@ function onEvent(ev){
     case 'model': { dropLive(); run.stageAt = Date.now(); run.liveTurn = 0;
       const o = parseModel(ev.text), key = 't' + ev.turn;
       const t = {key, n: ev.turn, ptok: ev.prompt_tokens, ctok: ev.completion_tokens, ttft: ev.ttft_ms, ms: ev.latency_ms, raw: ev.text || '',
-                 act: (o && o.action) ? o : null, thought: (o && o.thought) ? o.thought : '', tool: null, invalid: null, repeat: 0, hint: (run.hints || {})[ev.turn] || '', callError: ev.error || ''};
+                 act: (o && o.action) ? o : null, thought: (o && o.thought) ? o.thought : '', tool: null, invalid: null, repeat: 0, hint: (run.hints || {})[ev.turn] || '', callError: ev.error || '',
+                 finish: ev.finish_reason || '', retries: ev.retries || 0, servedBy: ev.served_by || ''};
       run.turns.push(t); run.byKey.set(key, t); run.ctok += ev.completion_tokens || 0; run.ptok += ev.prompt_tokens || 0; run.modelMs += ev.latency_ms || 0;
       if (ev.ttft_ms > 0) run.ttfts.push(ev.ttft_ms);
       if (!R.bulk) openSteps.add(key); touch(key); break; }
@@ -2319,7 +2353,7 @@ function showDone(ev){
         $('.goldin').innerHTML = '<span class="hint">Answer removed. Runs are no longer judged against it.</span>'; $('#addGold').remove(); }
       catch(e){ toast(e.message); } };
   };
-  if ($('#changeModel')) $('#changeModel').onclick = () => { adoptRunSettings(); rsEditing = true; syncRunSet(); const m = $('#modelSel'); if (m){ m.scrollIntoView({block: 'center', behavior: 'smooth'}); m.focus({preventScroll: true}); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } };
+  if ($('#changeModel')) $('#changeModel').onclick = () => { adoptRunSettings(); rsEditing = true; syncRunSet(); const s0 = $('#modelSel'), m = s0 && s0._xsel ? s0._xsel.button : s0; if (m){ m.scrollIntoView({block: 'center', behavior: 'smooth'}); m.focus({preventScroll: true}); m.animate([{boxShadow: '0 0 0 0 rgba(244,180,0,.9)'}, {boxShadow: '0 0 0 10px rgba(244,180,0,0)'}], {duration: 900}); } };
   const rb = $('#run'); if (tone === 'ok' && !reduced()){ rb.classList.add('done'); setTimeout(() => rb.classList.remove('done'), 1400); }
   if (!R.bulk && page === 'solve' && !reduced()) requestAnimationFrame(() => $('#verdict').scrollIntoView({behavior: 'smooth', block: 'nearest'}));
   $('#mState').textContent = 'final'; $('#mState').className = 'badge ' + (tone === 'ok' ? 'ok' : tone);
@@ -2970,12 +3004,7 @@ function qwenChipLabel(){
 }
 /* 每秒把还开着的那几处文字改掉（只改文字，不重绘、不打断选择） */
 function qwenTick(){
-  const ph = QW.phase, m = document.getElementById('modelMenu');
-  if (m){
-    const s = m.querySelector('[data-qwtacc]');
-    if (s) s.textContent = ph === 'ready' ? `connected · ${Math.ceil(qwLeft() / 60)} min left`
-      : ph === 'starting' ? `starting · ${fmtClock(qwElapsed())}` : ph === 'failed' ? 'the last start did not work' : 'starts in about 5 min';
-  }
+  const ph = QW.phase;            // Ask's model menu no longer lists Qwen on TACC (2026-11-22): only Solve's chip counts
   if (ph !== 'starting' && ph !== 'ready') return;
   const c = $('#qwenChip'); if (c) c.querySelector('.tn').textContent = qwenChipLabel();
   syncAskChip();
@@ -2998,6 +3027,76 @@ async function qwenPoll(watch){
   if (pendingRun && QW.sdk && QW.sdk.ok === false){ pendingRun = null; pendingHint = ''; openQwenPanel(); }
   clearTimeout(qwT); if (ph === 'starting' || ph === 'ready') qwT = setTimeout(qwenPoll, ph === 'starting' ? 5000 : 15000);
 }
+/* ---- select boxes in the page's style: see .xsel in the CSS ---- */
+const SEL_VALUE = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+const SEL_INDEX = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex');
+function enhanceSelect(sel){
+  if (!sel || sel._xsel) return;
+  const wrap = document.createElement('span'); wrap.className = 'xsel';
+  sel.parentNode.insertBefore(wrap, sel); wrap.appendChild(sel);
+  sel.classList.add('xsel-native'); sel.tabIndex = -1; sel.setAttribute('aria-hidden', 'true');
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'xsel-b';
+  b.setAttribute('aria-haspopup', 'listbox'); b.setAttribute('aria-expanded', 'false');
+  const lab = sel.closest('label'), name = sel.getAttribute('aria-label') || (lab && lab.querySelector('.rs-l') ? lab.querySelector('.rs-l').textContent : '') || sel.title || '';
+  if (sel.title) b.dataset.tip = sel.title;
+  b.innerHTML = '<span class="xsel-v"></span><span class="xsel-ar" aria-hidden="true"></span>';
+  wrap.appendChild(b);
+  const sync = () => { const o = sel.options[SEL_INDEX.get.call(sel)];
+    b.querySelector('.xsel-v').textContent = o ? o.textContent : '—'; b.disabled = sel.disabled;
+    b.setAttribute('aria-label', (name ? name + ': ' : '') + (o ? o.textContent : 'nothing chosen')); };
+  /* code sets .value or .selectedIndex directly, or replaces the options: the button follows */
+  Object.defineProperty(sel, 'value', {configurable: true, get(){ return SEL_VALUE.get.call(this); }, set(v){ SEL_VALUE.set.call(this, v); sync(); }});
+  Object.defineProperty(sel, 'selectedIndex', {configurable: true, get(){ return SEL_INDEX.get.call(this); }, set(v){ SEL_INDEX.set.call(this, v); sync(); }});
+  new MutationObserver(sync).observe(sel, {childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['disabled', 'selected', 'label']});
+  sel.addEventListener('change', sync);
+  sel.focus = o => b.focus(o);
+  sel._xsel = {button: b, sync};
+  b.addEventListener('click', () => (b.getAttribute('aria-expanded') === 'true' ? closeSelMenu(true) : openSelMenu(sel)));
+  b.addEventListener('keydown', e => { if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)){ e.preventDefault(); openSelMenu(sel); } });
+  if (lab) lab.addEventListener('click', e => { if (!e.target.closest('.xsel-b')){ e.preventDefault(); b.focus(); } });
+  sync();
+}
+let selMenuFor = null;
+function openSelMenu(sel){
+  closeSelMenu(); if (typeof closeModelMenu === 'function') closeModelMenu();
+  const b = sel._xsel.button; if (b.disabled) return;
+  const row = o => o.hidden ? '' : `<button type="button" role="option" aria-selected="${o.selected}" data-i="${o.index}"${o.disabled ? ' aria-disabled="true"' : ''}><span class="ck">✓</span><span class="nm">${esc(o.textContent)}</span></button>`;
+  const m = document.createElement('div'); m.className = 'mmenu xsel-menu'; m.id = 'selMenu'; m.setAttribute('role', 'listbox');
+  m.setAttribute('aria-label', (b.getAttribute('aria-label') || 'Options').replace(/:.*$/, ''));
+  m.innerHTML = [...sel.children].map(c => c.tagName === 'OPTGROUP' ? `<p class="mh">${esc(c.label)}</p>` + [...c.children].map(row).join('') : c.tagName === 'OPTION' ? row(c) : '').join('')
+    || '<p class="mh">Nothing to choose yet</p>';
+  document.body.appendChild(m);
+  const a = b.getBoundingClientRect(); m.style.minWidth = Math.max(a.width, 220) + 'px';
+  const h = m.offsetHeight, w = m.offsetWidth, down = a.bottom + 8 + h <= innerHeight - 8 || a.top - 8 - h < 8;
+  m.style.top = (down ? Math.min(innerHeight - h - 8, a.bottom + 8) : a.top - 8 - h) + 'px';
+  m.style.left = Math.max(8, Math.min(innerWidth - w - 8, a.left)) + 'px';
+  b.setAttribute('aria-expanded', 'true'); selMenuFor = sel;
+  if (!reduced()) m.animate([{opacity: 0, transform: `translateY(${down ? -6 : 6}px)`}, {opacity: 1, transform: 'none'}], {duration: 160, easing: EASE});
+  const items = () => [...m.querySelectorAll('button[role=option]:not([aria-disabled=true])')];
+  const choose = i => { const o = sel.options[i]; if (!o || o.disabled) return; const was = SEL_INDEX.get.call(sel);
+    SEL_INDEX.set.call(sel, i); sel._xsel.sync(); closeSelMenu(true);
+    if (was !== i){ sel.dispatchEvent(new Event('input', {bubbles: true})); sel.dispatchEvent(new Event('change', {bubbles: true})); } };
+  m.addEventListener('click', e => { const o = e.target.closest('button[role=option]'); if (o && o.getAttribute('aria-disabled') !== 'true') choose(+o.dataset.i); });
+  m.addEventListener('keydown', e => { const list = items(), i = list.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); if (list.length) list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus(); }
+    else if (e.key === 'Home' || e.key === 'End'){ e.preventDefault(); if (list.length) list[e.key === 'Home' ? 0 : list.length - 1].focus(); }
+    else if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); if (i >= 0) choose(+list[i].dataset.i); }
+    else if (e.key === 'Escape'){ e.preventDefault(); closeSelMenu(true); }
+    else if (e.key === 'Tab'){ closeSelMenu(false); }
+    else if (e.key.length === 1 && /\S/.test(e.key)){ const k = e.key.toLowerCase(), n = list.length;   // first letter: the next option that starts with it
+      for (let j = 1; j <= n; j++){ const o = list[(i + j + n) % n]; if (o.textContent.replace('✓', '').trim().toLowerCase().startsWith(k)){ o.focus(); break; } } } });
+  (m.querySelector('button[aria-selected=true]:not([aria-disabled=true])') || items()[0] || m).focus({preventScroll: true});
+  setTimeout(() => { document.addEventListener('pointerdown', selOutside, true); addEventListener('scroll', selScroll, true); addEventListener('resize', selScroll); }, 0);
+}
+function selOutside(e){ const m = $('#selMenu'); if (m && !m.contains(e.target) && !(selMenuFor && selMenuFor._xsel.button.contains(e.target))) closeSelMenu(false); }
+function selScroll(e){ const m = $('#selMenu'); if (m && !(e && e.target && m.contains(e.target))) closeSelMenu(false); }
+function closeSelMenu(refocus){
+  document.removeEventListener('pointerdown', selOutside, true); removeEventListener('scroll', selScroll, true); removeEventListener('resize', selScroll);
+  const m = $('#selMenu'); if (m) m.remove();
+  const sel = selMenuFor; selMenuFor = null;
+  if (sel){ sel._xsel.button.setAttribute('aria-expanded', 'false'); if (refocus) sel._xsel.button.focus({preventScroll: true}); }
+}
+qs('select.pillsel').forEach(enhanceSelect);
 /* a question with two or three answers; resolves to the chosen value, null when dismissed (Esc, the backdrop) */
 function choose({title, body, buttons}){
   return new Promise(res => {
@@ -3132,32 +3231,28 @@ const prettyModel = m => !m ? '' : isTaccName(m) ? 'Qwen 27B on TACC' : /^mock/i
 const modelKind = m => isTaccName(m) ? 'tacc' : /^mock/i.test(m || '') ? 'demo' : providerOf(m) ? 'provider' : 'local';
 const modelGlyph = m => isTaccName(m) ? 'c blue' : /^mock/i.test(m || '') ? 'ring'
   : ({gemini: 'c blue', deepseek: 'ink', glm: 't yellow', qwen: 'red', gpt: 'd ink'})[providerOf(m)] || 'ring';
-/* 'auto' = never picked: Qwen while its session is up or starting, otherwise the local model (the behaviour before picks) */
-const askRouteOf = pk => pk.route === 'auto' ? ((QW.phase === 'ready' || QW.phase === 'starting') ? 'tacc' : 'local') : pk.route;
+/* Ask answers with the hosted models only (2026-11-22: "the discussion section should not support TACC"): a reply on TACC is
+   a Slurm job of half a minute to minutes and holds one of the account's two job slots. Qwen on TACC runs challenges from Solve */
+const askRouteOf = () => 'local';
 const modelOf = pk => pk.route === 'local' && pk.model ? pk.model : LOCALMODEL;
 function readPicks(){ try { return JSON.parse(localStorage.getItem(PICKS_KEY) || '{}') || {}; } catch(_){ return {}; } }
 function rememberPick(sid, pk){ const v = {route: pk.route, model: pk.model || ''};
   try { localStorage.setItem(PICK_KEY, JSON.stringify(v)); if (sid){ const m = readPicks(); delete m[sid]; m[sid] = v; const ks = Object.keys(m); while (ks.length > 300) delete m[ks.shift()]; localStorage.setItem(PICKS_KEY, JSON.stringify(m)); } } catch(_){} }
-function newPick(){ try { const d = JSON.parse(localStorage.getItem(PICK_KEY) || 'null'); if (d && (d.route === 'local' || d.route === 'tacc')) return {route: d.route, model: d.model || ''}; } catch(_){} return {route: 'auto', model: ''}; }
-function pickForThread(sid, serverModel){ const m = readPicks()[sid]; if (m && (m.route === 'local' || m.route === 'tacc')) return {route: m.route, model: m.model || ''};
-  return serverModel ? (isTaccName(serverModel) ? {route: 'tacc', model: ''} : {route: 'local', model: serverModel}) : newPick(); }
+/* a pick remembered as "Qwen on TACC" (before 2026-11-22) falls back to the default hosted model */
+function newPick(){ try { const d = JSON.parse(localStorage.getItem(PICK_KEY) || 'null'); if (d && d.route === 'local') return {route: 'local', model: d.model || ''}; } catch(_){} return {route: 'local', model: ''}; }
+function pickForThread(sid, serverModel){ const m = readPicks()[sid]; if (m && m.route === 'local') return {route: 'local', model: m.model || ''};
+  return serverModel && !isTaccName(serverModel) ? {route: 'local', model: serverModel} : newPick(); }
 let threadPick = newPick();
 function useThreadPick(pk){ threadPick = pk; syncAskChip(); }
-function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; const ph = QW.phase, r = askRouteOf(threadPick), mins = Math.ceil(qwLeft() / 60);
-  c.classList.toggle('on', r === 'tacc' && ph === 'ready'); c.classList.toggle('wait', r === 'tacc' && ph === 'starting');
-  c.querySelector('.g').className = 'g ' + (r === 'tacc' ? (ph === 'ready' ? 'c blue' : ph === 'starting' ? 'spin' : 'ring') : modelGlyph(modelOf(threadPick)));
-  c.querySelector('.tn').textContent = r === 'tacc' ? (ph === 'ready' ? `Qwen on TACC · ${mins} min left` : ph === 'starting' ? `Starting Qwen · ${fmtClock(qwElapsed())}` : 'Qwen on TACC · starts when you send')
-    : prettyModel(modelOf(threadPick)); }
+function syncAskChip(){ const c = $('#qwenChipAsk'); if (!c) return; c.classList.remove('on', 'wait');
+  c.querySelector('.g').className = 'g ' + modelGlyph(modelOf(threadPick)); c.querySelector('.tn').textContent = prettyModel(modelOf(threadPick)); }
 function openModelMenu(anchor){
-  closeModelMenu(); const ph = QW.phase, r = askRouteOf(threadPick), cur = modelOf(threadPick), mins = Math.ceil(qwLeft() / 60);
+  closeModelMenu(); if (typeof closeSelMenu === 'function') closeSelMenu(); const r = askRouteOf(threadPick), cur = modelOf(threadPick);
   const list = [...new Set([...MODELS, ...(/^mock/i.test(LOCALMODEL) ? [LOCALMODEL] : [])].filter(Boolean))];
   const row = (act, name, sub, on, cls) => `<button type="button" role="menuitemradio" aria-checked="${on}" data-act="${esc(act)}"${cls ? ` class="${cls}"` : ''}><span class="ck">✓</span><span class="nm">${esc(name)}</span><span class="sub">${esc(sub)}</span></button>`;
   const m = document.createElement('div'); m.className = 'mmenu'; m.id = 'modelMenu'; m.setAttribute('role', 'menu'); m.setAttribute('aria-label', 'Who answers this conversation');
-  m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), n === LOCALMODEL ? 'default' : '', r === 'local' && (n === cur || providerOf(n) === providerOf(cur)))).join('')
-    + '<hr>' + row('tacc', 'Qwen 27B on TACC', ph === 'ready' ? `connected · ${mins} min left` : ph === 'starting' ? `starting · ${fmtClock(qwElapsed())}` : 'starts in about 5 min', r === 'tacc')
-    + (ph === 'starting' ? row('progress', 'Show start-up progress', 'step by step', false) + row('stop', 'Stop starting Qwen', '', false, 'danger') : ph === 'ready' ? row('stop', 'Disconnect TACC', 'frees the GPUs', false, 'danger') : '');
+  m.innerHTML = '<p class="mh">Who answers this conversation</p>' + list.map(n => row('local:' + n, prettyModel(n), n === LOCALMODEL ? 'default' : '', r === 'local' && (n === cur || providerOf(n) === providerOf(cur)))).join('');
   document.body.appendChild(m);
-  const ts = m.querySelector('button[data-act="tacc"] .sub'); if (ts) ts.dataset.qwtacc = '1';   // qwenTick 每秒改它
   const a = anchor.getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth, up = a.top - h - 10 >= 8;
   m.style.top = (up ? a.top - h - 10 : Math.min(innerHeight - h - 8, a.bottom + 10)) + 'px'; m.style.left = Math.max(8, Math.min(innerWidth - w - 8, a.left)) + 'px';
   m.style.transformOrigin = up ? '20% 100%' : '20% 0'; anchor.setAttribute('aria-expanded', 'true');
@@ -3174,17 +3269,8 @@ function closeModelMenu(refocus){ document.removeEventListener('pointerdown', me
   const c = $('#qwenChipAsk'); c.setAttribute('aria-expanded', 'false'); if (refocus) c.focus({preventScroll: true}); }
 /* the pick is changed in place, so a message on hold in this conversation follows the switch at once */
 async function pickModel(act){
-  closeModelMenu(true); const pk = threadPick, post = path => fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {});
-  if (act === 'progress') return openQwenPanel();
-  if (act === 'stop'){ const was = QW.phase; if (was === 'ready' && !confirm('Disconnect and free the TACC GPUs?')) return;
-    if (askRouteOf(pk) === 'tacc'){ pk.route = 'local'; pk.model = pk.model || LOCALMODEL; rememberPick(chatId, pk); }
-    await post('/api/tacc/session/stop'); toast(was === 'starting' ? 'Stopped starting Qwen; ' + prettyModel(modelOf(pk)) + ' answers here' : 'Disconnected from TACC'); qwenPoll(); syncAskChip(); return; }
-  if (act === 'tacc'){ pk.route = 'tacc'; pk.model = ''; rememberPick(chatId, pk); syncAskChip();
-    if (QW.phase !== 'ready' && QW.phase !== 'starting'){
-      const d = await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(r => r.json()).catch(() => ({}));
-      if (d && d.need_tcloud) return openQwenPanel();       // 先问 SDK 在哪，别假装在启动
-      toast('Starting Qwen 27B on TACC (about 5 minutes); messages here wait for it'); }
-    qwenPoll(); return; }
+  closeModelMenu(true); const pk = threadPick;
+  if (!String(act).startsWith('local:')) return;
   pk.route = 'local'; pk.model = act.slice(6); rememberPick(chatId, pk); syncAskChip(); toast(prettyModel(pk.model) + ' answers in this conversation');
 }
 $('#qwenChipAsk').addEventListener('click', e => { $('#modelMenu') ? closeModelMenu() : openModelMenu(e.currentTarget); });
@@ -3665,9 +3751,9 @@ async function openThread(sid){
 $('#threadList').addEventListener('click', e => { const d = e.target.closest('.thread[data-key]'); if (d){ openDraft(d.dataset.key); return; }
   const b = e.target.closest('.thread[data-sid]'); if (b) openThread(b.dataset.sid); });
 /* ---- Ask's context: which earlier exchanges the model sees (server: flagpilot.chat.context_plan). Leave one out or put it
-   back, start fresh from a message, bring all back; the oldest are left out by themselves past 60% of the model's window ---- */
+   back, start fresh from a message, bring all back; past 60% of the model's window the oldest are compressed into a summary ---- */
 let CTX = null;
-const CTX_TAG = {excluded: 'Left out by you', before_fresh: 'Before the fresh start', auto: 'Left out to fit the model'};
+const CTX_TAG = {excluded: 'Left out by you', before_fresh: 'Before the fresh start', auto: 'Summarised to fit the model'};
 function paintContext(c){
   CTX = c && Array.isArray(c.turns) && c.turns.length ? c : null;
   const bar = $('#ctxBar'), st = new Map((CTX ? CTX.turns : []).map(t => [Number(t.turn), t.state]));
@@ -3687,7 +3773,7 @@ function paintContext(c){
   const mine = CTX.turns.filter(t => t.state === 'excluded' || t.state === 'before_fresh').length, auto = n - inN - mine;
   const k = v => v >= 1e6 ? +(v / 1e6).toFixed(1) + 'M' : v >= 1024 && v % 1024 === 0 ? v / 1024 + 'k' : v >= 1000 ? +(v / 1000).toFixed(1) + 'k' : String(v);   // 32768 → 32k
   $('#ctxText').textContent = `The model sees ${inN} of ${n} earlier ${n === 1 ? 'exchange' : 'exchanges'} · about ${k(CTX.tokens)} of ${k(CTX.window)} tokens`
-    + (auto ? ` · ${auto} oldest left out to fit` : '');
+    + (auto ? ` · ${auto} oldest summarised to fit` : '');
   bar.style.setProperty('--p', Math.min(100, Math.round(100 * CTX.tokens / Math.max(1, CTX.window))) + '%');
   bar.classList.toggle('hot', CTX.tokens > 0.6 * CTX.window);
   $('#ctxReset').hidden = !mine; bar.hidden = false;
@@ -3923,31 +4009,13 @@ async function exchange(it){
     if (!it.recalled) pump(it.key); };
   it.abort = () => { closed = true; if (es) es.close(); if (raf){ cancelAnimationFrame(raf); raf = 0; } done(null); if (!chatBusy) status('Ready'); };
   let r;
-  /* this conversation's pick decides who answers. Qwen still starting: hold the message until it is up, unless this conversation is switched to another model */
+  /* this conversation's pick decides who answers: one of the hosted models (Ask does not run on TACC) */
   const pick = it.pick || threadPick;
-  if (pick.route === 'tacc' && QW.phase !== 'ready' && QW.phase !== 'starting'){
-    await fetch('/api/tacc/session/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(() => {}); await qwenPoll(); }
   if (it.recalled) return;
-  if (askRouteOf(pick) === 'tacc' && QW.phase === 'ready' && Math.max(0, (QW.remaining || 0) - (Date.now() - qwAt) / 1000) < (QW.min_chat_s || 180)){
-    if (!(await renewThen('chat'))){ fail('<span class="bad">Not sent: this Qwen session on TACC is about to end. Start a new one from the menu, or pick another model, and send again.</span>', 'Qwen session ending');
-      done(false); status('Ready'); return; } }
-  if (it.recalled) return;
-  const waited = askRouteOf(pick) === 'tacc' && QW.phase === 'starting';
-  stage(waited ? 'Waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'Sending to Qwen 27B on TACC' : 'Thinking');
-  onHold(waited ? 'waiting for Qwen 27B on TACC to start' : askRouteOf(pick) === 'tacc' ? 'sending to Qwen 27B on TACC' : 'sending');
-  if (waited){ status('Thinking', '', 'waiting for Qwen 27B on TACC to start');
-    const now = document.createElement('button'); now.type = 'button'; now.className = 'now'; now.textContent = 'Use ' + prettyModel(pick.model || LOCALMODEL) + ' now';
-    now.onclick = () => { pick.route = 'local'; pick.model = pick.model || LOCALMODEL; rememberPick(it.sid || chatId, pick); if (pick === threadPick) syncAskChip(); };
-    rc.appendChild(now);
-    await new Promise(res => { const tw = Date.now(), wait = () => (!it.recalled && QW.phase === 'starting' && askRouteOf(pick) === 'tacc' && Date.now() - tw < 47 * 60000) ? setTimeout(wait, 300) : res(); wait(); }); }
-  if (it.recalled) return;
-  const viaTacc = askRouteOf(pick) === 'tacc' && QW.phase === 'ready', switched = waited && pick.route === 'local';
-  if (waited && !viaTacc && !switched){ fail(`<span class="bad">Qwen on TACC did not start${QW.error ? ': ' + esc(en(QW.error)) : ''}. Pick another model from the menu and send again.</span>`, 'Qwen on TACC did not start'); done(false); status('Ready'); return; }
-  if (viaTacc){ status('Thinking', '', 'Qwen 27B on TACC · queued'); stage('Sending to Qwen 27B on TACC'); onHold('sending to Qwen 27B on TACC'); }
-  else if (switched){ stage('Sending to ' + prettyModel(modelOf(pick))); onHold('sending to ' + prettyModel(modelOf(pick))); }
+  stage('Thinking'); onHold('sending');
   fetching = true;
   try { r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, task: it.task ? it.task.name : '', session_id: it.sid, tools: $('#chatTools').checked,
-    backend: viaTacc ? 'tacc' : '', ...(viaTacc ? {} : {model: modelOf(pick)})})}); }
+    model: modelOf(pick)})}); }
   catch(e){ fetching = false; resolveSent(null); if (it.recalled) return; fail('<span class="bad">Request failed: ' + esc(e.message) + '</span>', 'Request failed'); done(false); status('Ready'); return; }
   const d = await r.json().catch(() => ({}));
   fetching = false; resolveSent(r.ok ? d : null);
@@ -3960,7 +4028,7 @@ async function exchange(it){
     chatQ.forEach(q => { if (q.key === old){ q.key = sidNow; q.sid = sidNow; } }); if (curKey === old) curKey = sidNow; }
   it.sid = sidNow;
   if (isCur()) saveChatId(sidNow); if (pick.route !== 'auto') rememberPick(sidNow, pick); loadThreads();
-  if (viaTacc) onHold('uploading to TACC'); else { sent(); onHold('replying'); }
+  sent(); onHold('replying');
   es = new EventSource('/api/stream?id=' + it.sid);
   const attach = () => { if (attached) return; attached = true; live.appendChild(body); };
   /* Markdown as it streams; Text Generate (Aceternity): only the newly arrived characters fade in */
@@ -3969,7 +4037,6 @@ async function exchange(it){
     if (closed) return;
     let ev; try { ev = JSON.parse(e.data); } catch(_){ return; }
     if (ev.type === 'chat_delta'){ if (!acc){ stage('Writing'); sent(); onHold('replying'); } acc += ev.text || ''; if (!raf) raf = requestAnimationFrame(paint); }
-    else if (ev.type === 'chat_stage'){ const msg = taccStage(ev); stage(cap(msg)); onHold(msg); if (ev.stage === 'queued' || ev.stage === 'running') sent(); }
     else if (ev.type === 'chat_coach'){ if (ev.on) bot.insertAdjacentHTML('afterbegin', '<p class="note">Hint mode: flags are hidden in this reply.</p>'); }
     else if (ev.type === 'chat_check'){ if (raf){ cancelAnimationFrame(raf); raf = 0; } acc = ''; shownTxt = ''; body.innerHTML = '';
       stage('That flag did not check out; deriving it'); onHold('checking the flag'); }
@@ -4028,6 +4095,9 @@ function syncRunSet(){
   const st = runSettingsOf(run);
   $('#rsNow').textContent = (busy ? 'This run: ' : 'This run used: ') + [st.model ? prettyModel(st.model) + (st.tacc ? ' on TACC' : '') : '—', st.tier || '—', st.turns ? st.turns + ' turns' : '—'].join(' · ')
     + (busy && st.tacc ? ' (fixed when it was sent to TACC)' : '');
+  $('#rsNote').hidden = !busy;
+  $('#rsNote').textContent = st.tacc ? 'A run on TACC keeps the settings it was sent with; change them for the next run once it ends.'
+    : 'Model and tier stay fixed while it runs; change them for the next run once it ends. Only more turns can be given now.';
   $('#rsMore').hidden = !(busy && !st.tacc && ctlRid && st.turns < turnMax);
   $('#rsAgain').hidden = busy || !againTask(); $('#rsChange').hidden = busy;
 }

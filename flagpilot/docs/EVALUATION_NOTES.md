@@ -92,6 +92,15 @@ the 51 breaks came after such a reply in the same attempt, and that reply had it
 could write long complete replies until it had been shown one of its own cut off. All 42 parseable `v7` replies longer
 than 2,000 characters reached the history that way. This is an association in the records, not a controlled result.
 
+**Other reply shapes (2026-11-22).** Runs of three imported challenges with Gemini and GLM through the page lost turns,
+and two of six ended, on replies that meant a valid action in another shape: DeepSeek (the fail-over target when Gemini
+was overloaded) wrote its own tool-call markup (DSML) or a draft action before a stray `</think>`; GLM put raw tabs and
+newlines inside JSON strings. The parser now reads those as the action they spell out (`tests/test_markup_calls.py`
+holds the recorded replies); rerun with the change, none of the six runs ended on protocol failures. Of the evaluated
+batches' breaks, none of `v7`'s 51 is of these kinds and 2 of `v6`'s 85 are (B1 `crypto-072-s1`, turns 12 and 15:
+`{"thought":`, a stray `</think>`, then the whole JSON). Recorded and re-scored verdicts do not change: these replies
+were never submissions.
+
 Three switches address it, all off by default so that the default engine is still the one that produced `v7`:
 
 | Switch (CLI / TACC batch) | What changes |

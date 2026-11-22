@@ -12,8 +12,9 @@ submit, ps, cat, cancel, download): no login on the platform's servers and no SS
   to a serving job that is still running; `./start.sh --stop` ends the session, `--restart` keeps it.
 - **Run on TACC** submits a small client job with just that challenge. The job prints each trace event into its log;
   the page reads it with `tcloud cat` every 4 s, then downloads the finished run and mounts it as a replay.
-- **Ask** sends each message as one small job (`fp chat-once`) that returns its reply the same way. Threads stay on the
-  laptop in `runs/chat/`; the job receives the earlier exchanges the conversation's context plan selected.
+- **Ask** sent each message as one small job (`fp chat-once`) that returned its reply the same way, until 2026-11-22.
+  Since then Ask answers with the hosted models only: a reply on TACC took half a minute or more and held one of the
+  account's two job slots. The measurements of Ask below are from before that change.
 - A reply is a Slurm job, so most of its time is the SDK upload and scheduling, not the model. The SDK uploads files one
   by one, so client jobs ship everything except `tuxiv.conf`, `job.sh` and `run.env` as one `payload.tgz`: an Ask reply
   went from 43.7 s to 26.6 s, one with a challenge attached from about 79 s to 56 s.
@@ -57,9 +58,10 @@ Those steps run inside the course's serving script, whose settings the course fi
 
 ## Checked on the cluster
 
-`scripts/live_tacc_check.py` drives the page's own API against the real cluster: 20 checks covering the start-up
-panel, a solve, an uploaded and an `extra-gs` challenge, a hint, Finish while the job runs, Ask in Chinese and
-English, recall, and ending the session. It starts a Qwen session (two GPUs for about 25 minutes); run it only when no
+`scripts/live_tacc_check.py` drives the page's own API against the real cluster: 17 checks covering the start-up
+panel, a solve, an uploaded and an `extra-gs` challenge, a hint, Finish while the job runs, Ask refusing TACC, and
+ending the session. The passes below ran its earlier version, whose 20 checks still included Ask on TACC (a Chinese and
+an English answer, a recall that cancels its job). It starts a Qwen session (two GPUs for about 25 minutes); run it only when no
 other job of the account is on TACC. The logs of the three passes are in `flagpilot/results/live/`.
 
 The first two passes (serving jobs 30492 and 30507) found five problems, all fixed:
