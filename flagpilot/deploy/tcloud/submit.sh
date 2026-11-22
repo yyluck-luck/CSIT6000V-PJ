@@ -207,6 +207,8 @@ if [[ "$MODE" != serve && "$MODE" != cleanup ]]; then
   # 除了 SDK 自己要读的 tuxiv.conf、作业入口 job.sh 和 run.env，其余打成一个 payload.tgz，job.sh 开头解开。
   # COPYFILE_DISABLE：macOS 的 tar 默认给每个文件附一份 ._* 扩展属性，解到 Linux 上全是垃圾（GNU tar 忽略这个变量）
   (cd "$STAGE" && set -- $(ls -A | grep -v -x -e tuxiv.conf -e job.sh -e run.env) && COPYFILE_DISABLE=1 tar -czf payload.tgz "$@" && rm -rf -- "$@")
+  # job.sh 先核对包到齐了没有（SDK 交上来过包没到的作业，2026-11-21 作业 30538）
+  printf 'FP_PAYLOAD=%s\n' "$( (sha256sum "$STAGE/payload.tgz" 2>/dev/null || shasum -a 256 "$STAGE/payload.tgz") | cut -d' ' -f1)" >> "$STAGE/run.env"
 fi
 echo "[tcloud] 暂存目录 ${STAGE}，提交中…"
 cd "$STAGE"

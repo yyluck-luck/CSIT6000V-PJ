@@ -58,6 +58,9 @@ case "$1" in
              printf '(Worker_TP0 pid=9) INFO 11-21 16:27:34 [gpu_worker.py:857] Free memory on device (23.19/23.59 GiB) on startup. Desired GPU memory utilization is (0.9, 21.23 GiB).\r\n'
              if (( c > ${FAKE_QUEUE:-0} + ${FAKE_SERVE_WARN:-0} )); then printf 'INFO:     Application startup complete.\r\n'; fi ;;
       batch) c=$(( $(cat "$st/cats-$n" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$st/cats-$n"
+             if [[ -n "${FAKE_PAYLOAD_LOST:-}" ]]; then [[ -f "$st/lost-job" ]] || echo "$n" > "$st/lost-job"
+               if [[ "$FAKE_PAYLOAD_LOST" == all || "$n" == "$(cat "$st/lost-job")" ]]; then
+                 printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s node=10-0-4-10 mode=batch\n[fp] payload missing: the upload to TACC did not complete\nsrun: error: 10-0-4-10: task 0: Exited with exit code 3\n' "$n"; exit 0; fi; fi
              case "${FAKE_BATCH:-ok}" in
                nomatch) printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n[fp] tier B3 -> x-B3 (761s left)\n没有匹配到题目\n[fp] batch x-B3 exited non-zero\n[fp] done: /x\n' "$n"; exit 0 ;;
                vanish) printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n[fp] tier B3 -> x-B3 (761s left)\n' "$n"; grep -v "^ *$n " "$st/ps" > "$st/ps.new"; mv "$st/ps.new" "$st/ps"; exit 0 ;;
@@ -67,6 +70,9 @@ case "$1" in
              printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s\n@@ev {"type": "meta", "budget": {"max_turns": 20}}\n@@pd {"turn": 1, "d": "Let me "}\n@@pd {"turn": 1, "d": "look."}\n@@ev {"type": "model", "turn": 1, "text": "{}", "prompt_tokens": 5, "completion_tokens": 3}\n' "$n"
              printf '@@ev {"type": "summary", "verdict": "verified", "reason": "match", "turns": 1, "wall_s": 2.0}\n[fp] done: /x\n' ;;
       chat) if [[ -n "${FAKE_QUEUE_CHAT:-}" ]]; then echo "cat: slurm_log/$f: No such file or directory"; exit 0; fi
+            if [[ -n "${FAKE_PAYLOAD_LOST:-}" ]]; then [[ -f "$st/lost-job" ]] || echo "$n" > "$st/lost-job"
+              if [[ "$FAKE_PAYLOAD_LOST" == all || "$n" == "$(cat "$st/lost-job")" ]]; then
+                printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s node=10-0-4-10 mode=chat\n[fp] payload missing: the upload to TACC did not complete\nsrun: error: 10-0-4-10: task 0: Exited with exit code 3\n' "$n"; exit 0; fi; fi
             printf 'SDK_BOOTSTRAP=/env\n[fp] job=%s node=10-0-9-9 mode=chat batch=\n' "$n"; printf '@@delta "Hello "\n@@delta "from Qwen"\n@@ev {"type": "chat_tool", "cmd": "ls", "exit_code": 0, "output": "a"}\n@@reply {"answer": "Hello from Qwen", "rounds": 1, "steps": []}\n[fp] done: chat\n' ;;
     esac ;;
   download) d="${@: -1}/$(basename "${@: -2:1}")"; mkdir -p "$d"; echo "download $*" >> "$st/record"
@@ -788,6 +794,40 @@ class TestRobustness(TaccHarness):
         rows = [l for l in (self.tmp / "state" / "budget").read_text().splitlines() if l.startswith("batch ")]
         self.assertTrue(rows[0].endswith("turns=20 time=00:30:00"), rows)
         self.assertTrue(rows[1].endswith("turns=100 time=00:50:00"), rows)
+
+    # 2026-11-21, job 30538: with TACC's gateway dropping connections the SDK submitted a job whose payload never
+    # arrived; it ran without code. job.sh now says so, and the page sends the job again once (nothing had run).
+    def test_a_run_whose_upload_did_not_arrive_is_sent_again(self):
+        self.ready()
+        os.environ["FAKE_PAYLOAD_LOST"] = "1"
+        evs = []
+        d = tacc_live.run_task("demo-001", "B3", self.tmp / "runs", evs.append)
+        self.assertIsNotNone(d, evs)
+        self.assertEqual(self.record().count("batch job="), 2)
+        notes = [e for e in evs if e.get("stage") == "retrying"]
+        self.assertTrue(notes and "did not arrive whole" in notes[0]["message"], evs)
+        self.assertNotIn("error", [e["type"] for e in evs])
+        self.assertEqual([e["type"] for e in evs].count("summary"), 1)
+        self.assertEqual(tacc_live.S["busy"], "")
+
+    def test_an_upload_lost_twice_says_so(self):
+        self.ready()
+        os.environ["FAKE_PAYLOAD_LOST"] = "all"
+        evs = []
+        self.assertIsNone(tacc_live.run_task("demo-001", "B3", self.tmp / "runs", evs.append))
+        self.assertEqual(self.record().count("batch job="), 2, "sent again once, not forever")
+        self.assertIn("did not arrive whole", evs[-1]["message"])
+        self.assertEqual(tacc_live.S["busy"], "")
+
+    def test_a_question_whose_upload_did_not_arrive_is_sent_again(self):
+        self.ready()
+        os.environ["FAKE_PAYLOAD_LOST"] = "1"
+        stages = []
+        rep = tacc_live.chat("hi", [], "", True, lambda d: None, lambda e: None, stages.append)
+        self.assertEqual(rep.get("answer"), "Hello from Qwen", rep)
+        self.assertEqual(self.record().count("chat job="), 2)
+        self.assertTrue(any(st.get("stage") == "retrying" for st in stages))
+        self.assertEqual(tacc_live.S["busy"], "")
 
     def test_the_watchdog_notices_a_service_that_died(self):
         self.ready()

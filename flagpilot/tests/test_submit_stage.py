@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SUBMIT = ROOT / "deploy" / "tcloud" / "submit.sh"
 FAKE_TCLOUD = """#!/bin/sh
 ls > "$FAKE_DIR/listing"
-cp payload.tgz "$FAKE_DIR/" 2>/dev/null
+cp payload.tgz run.env "$FAKE_DIR/" 2>/dev/null
 echo "Submitted batch job 999"
 exit "${FAKE_RC:-0}"
 """
@@ -98,6 +98,9 @@ class TestSubmitStageCleanup(unittest.TestCase):
             self.assertIn(want, names)
         self.assertFalse(any(n.split("/")[-1].startswith("._") for n in names), "macOS ._ 元数据混进了包")
         self.assertFalse(any("_private" in n or "gold_private" in n for n in names))
+        import hashlib
+        sha = hashlib.sha256((self.tmp / "payload.tgz").read_bytes()).hexdigest()
+        self.assertIn(f"FP_PAYLOAD={sha}\n", (self.tmp / "run.env").read_text(), "the job can check that the payload arrived whole")
 
     def test_failed_submit_keeps_exit_code_and_still_cleans(self):
         r, left = self.submit(FAKE_RC="3")
@@ -210,7 +213,7 @@ class TestJobCleanupTrap(unittest.TestCase):
         """job.sh 开头那行原样拿出来跑：解开 payload.tgz 并删掉它（/mnt/home 已满，不留双份）。"""
         import tarfile
         lines = self.JOB.read_text(encoding="utf-8").splitlines()
-        line = next(l for l in lines if "payload.tgz" in l and l.startswith("if "))
+        line = next(l for l in lines if l.startswith("if [[ -f payload.tgz ]]"))
         self.assertLess(lines.index(line), next(i for i, l in enumerate(lines) if l.startswith("source ./run.env")))
         work = self.tmp / "workdir"
         (work / "src" / "bin").mkdir(parents=True)
@@ -222,6 +225,34 @@ class TestJobCleanupTrap(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((work / "bin" / "xxd").exists())
         self.assertFalse((work / "payload.tgz").exists())
+
+    def test_a_payload_that_did_not_arrive_whole_is_named_and_stops_the_job(self):
+        """2026-11-21, job 30538: the SDK submitted a job whose payload.tgz never arrived; it ran without code and ended in
+        "srun: error ... exit code 1". job.sh now checks the payload against the sha256 that submit.sh put in run.env."""
+        import hashlib
+        src = self.JOB.read_text(encoding="utf-8")
+        block = src[src.index("# >>> payload check"):src.index("# <<< payload check")]
+        work = self.tmp / "work"
+        work.mkdir()
+        good = b"payload bytes"
+
+        def run(payload: bytes | None, sha: str | None):
+            for f in work.iterdir():
+                f.unlink()
+            (work / "run.env").write_text("FP_MODE=batch\n" + (f"FP_PAYLOAD={sha}\n" if sha else ""))
+            if payload is not None:
+                (work / "payload.tgz").write_bytes(payload)
+            return subprocess.run(["bash", "-c", f"set -euo pipefail\ncd {work}\n{block}\necho checked"], capture_output=True,
+                                  text=True, timeout=30)
+        want = hashlib.sha256(good).hexdigest()
+        for payload in (None, b"payload by"):                                    # missing, or cut short on the way
+            r = run(payload, want)
+            self.assertEqual(r.returncode, 3, r.stderr)
+            self.assertIn("[fp] payload missing: the upload to TACC did not complete", r.stdout)
+        r = run(good, want)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "checked"), r.stderr)
+        r = run(None, None)                                                      # cleanup jobs carry no payload
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "checked"), r.stderr)
 
     def test_old_trap_shows_the_bug(self):
         self.assertEqual(self.run_with(self.OLD, 0), (1, True))     # 这就是作业日志里的 srun: error

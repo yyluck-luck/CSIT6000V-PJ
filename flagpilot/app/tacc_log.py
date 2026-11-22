@@ -46,9 +46,16 @@ def is_log(text: str) -> bool:
     return "SDK_BOOTSTRAP=" in (text or "")
 
 
+# job.sh says this when the payload (code, challenge, tools) did not arrive whole: the SDK uploads file by file, and
+# with TACC's gateway dropping connections it has submitted a job whose payload never came (2026-11-21, job 30538)
+PAYLOAD_MISSING = "[fp] payload missing"
+
+
 def why_no_result(log: str, jid: str) -> str:
     """Why a client job that has ended produced no result, in words a user can act on. Never Chinese."""
     log = log or ""
+    if PAYLOAD_MISSING in log:
+        return "the upload to TACC did not arrive whole (TACC's login gateway dropped part of it); run it again"
     if "没有匹配到题目" in log:
         return "the challenge was not in the job's task set"
     m = re.search(r"\[fp\] skip B\d: (-?\d+)s left", log)
