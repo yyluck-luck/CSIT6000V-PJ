@@ -72,10 +72,10 @@ nothing else**: no packages, no GPU, no setup. On the first run `./start.sh` fet
 (InterCode-CTF, about 100 MB, half a minute; see [Task set](#1-task-set)); offline it starts with the three bundled
 demo challenges instead.
 
-**Keys are included.** This repository is private, and [`shared.env`](shared.env) carries working keys (Gemini, and an
+**Keys are included.** The repository is public, and [`shared.env`](shared.env) carries working keys (Gemini, and an
 OpenAI-compatible relay that serves DeepSeek, GLM, Qwen and GPT models), so a fresh clone runs the real models at once.
 To use your own, copy [`env.example`](env.example) to `.env` (never committed; it takes precedence). `./start.sh
---model mock` runs with no keys at all. Read [Keys](#keys) before the repository is ever made public.
+--model mock` runs with no keys at all. Read [Keys](#keys) for what that means in a public repository.
 
 | Command | What it does |
 |---|---|
@@ -286,7 +286,7 @@ single DeepSeek baseline in `docs/EVALUATION_BASELINE.md` is reported as measure
 | Path | Contents |
 |---|---|
 | `proposal.pdf`, `course_project.pdf` | The proposal this artifact implements (goals, experiments E1–E4, cut order) and the course specification |
-| `start.sh`, `shared.env`, `env.example` | One-command start / restart / stop; the shared keys (private repository); a names-only template for `.env` |
+| `start.sh`, `shared.env`, `env.example` | One-command start / restart / stop; the shared keys (committed on purpose); a names-only template for `.env` |
 | `flagpilot/flagpilot/` | Core package: agent loop, tools, sandbox, replay verifier, metrics, storage |
 | `flagpilot/app/` | Web app (zero-dependency HTTP server and single-page frontend) |
 | `flagpilot/demo-tasks/` | **Three synthetic tasks bundled so the quickstart runs offline** (trivial on purpose: they exercise the pipeline, not the model) |
@@ -633,10 +633,9 @@ Keys and endpoints are read, first match wins, from environment variables, then 
 never committed), then [`shared.env`](shared.env) (committed). The tests read neither file (`FLAGPILOT_NO_DOTENV`).
 Keys are never logged, written into a run's fingerprint, or sent to the browser.
 
-- `shared.env` holds the owner's keys on purpose, so that a private clone runs with one command; anyone with read
-  access to the repository can use them.
-- **Before the repository is ever made public:** delete `shared.env`, rewrite it out of the history, and revoke the
-  keys at the provider (Google AI Studio; the relay's dashboard).
+- `shared.env` holds the owner's keys on purpose, so that a clone runs with one command. The repository is public, so
+  those keys are visible to everyone and can be revoked at any time; keep your own in `.env` for anything that matters.
+- **Before you publish a fork:** drop `shared.env`, rewrite it out of your history, and use your own keys.
 - `python3 flagpilot/scripts/scan_secrets.py` checks every tracked file, every file about to be added and the whole
   history for the keys in `.env` and for common key shapes; it prints names and places, never a value.
 
