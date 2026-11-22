@@ -360,7 +360,11 @@ def cmd_show(args) -> int:
 
     text = "\n".join(out)
     if args.out:
-        Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
+        target = Path(args.out).expanduser()
+        # 和 compare/pair/report 的 --md 一致：父目录没有就建出来。以前直接 write_text，
+        # 传一个 `--out notes/run.md`（notes 还没建）就抛 FileNotFoundError 的整段 traceback。
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text + "\n", encoding="utf-8")
         _p(f"已写入 {args.out}")
     else:
         _p(text)
