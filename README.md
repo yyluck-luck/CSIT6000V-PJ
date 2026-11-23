@@ -11,12 +11,11 @@
 ![verifier: clean replay + 4 gates](https://img.shields.io/badge/verifier-clean%20replay%20%2B%204%20gates-e0332e)
 ![README: NSDI '27 artifact format](https://img.shields.io/badge/README-NSDI%20%2727%20artifact-141414)
 
-FlagPilot is an end-to-end agent system that solves offline CTF challenges and **proves** that it solved them. A
-correct flag is not enough: the agent must also submit a standalone `solve.py`, and the verifier reruns it in a fresh
-directory holding only the original challenge files. Only a flag that the script reproduces, and that disappears when
-the files are taken away, counts as `verified`. The agent runs against a served model (vLLM on TACC, or any
-OpenAI-compatible endpoint); a web app shows runs live, replays them, runs experiments, imports challenges and offers a
-tutor; and every attempt is recorded as a replayable trace.
+FlagPilot is an end-to-end agent system for offline CTF challenges. Each attempt produces a trace, and the verifier
+reruns the submitted `solve.py` in a clean environment. A result counts as `verified` when the flag matches the known
+answer, the replay reproduces it, and the result passes the applicable checks for dependence on the challenge material.
+The agent uses vLLM on TACC or an OpenAI-compatible endpoint. The web app shows progress live and supports replay,
+experiments, challenge import, and tutoring.
 
 ![Verified attempts per tier on the 20 dev challenges](docs/figures/results.png)
 
@@ -35,7 +34,7 @@ The README follows the NSDI '27 artifact guidelines: **Getting Started Instructi
 **Detailed Instructions**, which open with the [claims](#claims-and-how-to-check-them) this artifact supports and how to
 check each one. Artifact for **CSIT6000V Advanced AI Computing and Systems**, HKUST CSE: the course specification is
 [`course_project.pdf`](course_project.pdf) and the proposal this artifact implements is [`proposal.pdf`](proposal.pdf).
-Group contributions are listed in the submitted PDF, not here.
+The [submission PDF](#final-report-pdf) includes the group contributions and the full README.
 
 **The course's requirements, and where this README covers them:**
 
@@ -67,48 +66,34 @@ cd CSIT6000V-PJ
 ./start.sh
 ```
 
-The browser opens at <http://127.0.0.1:8080> with the real agent ready. It needs **Python 3.11 or newer and git,
-nothing else**: no packages, no GPU, no setup. On the first run `./start.sh` fetches the 53 evaluation challenges once
-(InterCode-CTF, about 100 MB, half a minute; see [Task set](#1-task-set)); offline it starts with the three bundled
-demo challenges instead.
+The browser opens at <http://127.0.0.1:8080>. The app needs **Python 3.11 or newer and Git**. On the first run
+`./start.sh` fetches the 53 evaluation challenges (see [Task set](#1-task-set)). The three bundled demo challenges
+are available offline.
 
-**Keys are included.** The repository is public, and [`shared.env`](shared.env) carries working keys (Gemini, and an
-OpenAI-compatible relay that serves DeepSeek, GLM, Qwen and GPT models), so a fresh clone runs the real models at once.
-To use your own, copy [`env.example`](env.example) to `.env` (never committed; it takes precedence). `./start.sh
---model mock` runs with no keys at all. Read [Keys](#keys) for what that means in a public repository.
+A fresh clone can run the offline demo without keys. To use a hosted model, copy [`env.example`](env.example) to
+`.env` and add your own credentials, or set them in the environment. See [Keys](#keys).
 
 | Command | What it does |
 |---|---|
 | `./start.sh` | Start on port 8080 and open the browser (if it is already running, just open it) |
 | `./start.sh --port 9000` | Use another port |
 | `./start.sh --model mock` | Offline demo model; also `provider:deepseek`, `provider:glm`, `provider:qwen`, `provider:gpt`, or an exact model name |
-| `./start.sh --check` | Check that every model provider answers with this copy's keys (one tiny request each); starts no server |
+| `./start.sh --check` | Check the configured providers with one small request per model tried. Starts no server |
 | `./start.sh --restart` | Restart, for example after `git pull` |
 | `./start.sh --stop` | Stop the FlagPilot started from this folder (a port held by another copy is reported, not taken over) |
 
 The default model is `auto`: Gemini when a Gemini key is present, otherwise the first provider with a working key,
-otherwise the offline demo model. The server log is `flagpilot/.run/web-8080.log`. Expected output:
+otherwise the offline demo model. The server log is `flagpilot/.run/web-8080.log`. Example output from a clone without configured credentials:
 
 ```text
 First run: fetching the evaluation challenges (InterCode-CTF, about 100 MB, only this once)...
 Evaluation challenges ready: 53 in flagpilot/tasks.
 FlagPilot is running: http://127.0.0.1:8080
-  model: provider:gemini   log: flagpilot/.run/web-8080.log   stop: ./start.sh --stop
-
-$ ./start.sh --check
-  OK    Gemini    answered by gemini-flash-lite-latest in 2.1 s
-  OK    DeepSeek  answered by deepseek-v4.1-flash in 10.7 s
-  OK    GLM       answered by glm-5.3-flash in 2.5 s
-  OK    Qwen      answered by qwen3.8-flash in 2.4 s
-  OK    GPT       answered by gpt-6.2-astra in 2.6 s
-  when a provider fails, answers fall back to: deepseek-v4.1-flash
-  Qwen on TACC: needs no key; needs your own TACC account and the course SDK (tcloud at /path/to/tcloud)
+  model: mock   log: flagpilot/.run/web-8080.log   stop: ./start.sh --stop
 ```
 
-A quick end-to-end check: on **Solve**, pick `crypto-005` and press **Run**. With Gemini it ends `VERIFIED` in about 3
-turns and 15 seconds; on **Ask**, any question gets an answer in a few seconds. Qwen on TACC needs no API key, only
-your own TACC account with the course SDK (§4) — the page asks for the SDK's path the first time and remembers it;
-nothing here can submit jobs on someone else's account.
+The [offline walkthrough](#step-by-step-path-no-model-no-network) uses bundled demo data. Qwen on TACC uses your
+own course account and the TACC SDK (§4). The web app asks for the SDK path on first use.
 
 ### What you can do in the web app
 
@@ -118,7 +103,7 @@ nothing here can submit jobs on someone else's account.
 | **Runs** | Every past attempt, replayable step by step. |
 | **Lab** | Experiments on the agent with 95% intervals and paired tests: *Compare* tiers and models on one challenge, *Batch* over many, *Diff* two runs, and a memorization *Probe*. |
 | **Upload** | Upload your own challenge, or find one in a public archive of past CTFs and import it by search or link (a link that is a little wrong is corrected). An import can be previewed, customised and drafted by the AI, which never sees the answer. A challenge that needs its original network service is marked, and asks before its first run. |
-| **Ask** | A tutor that can run commands in the challenge's sandbox; every flag it states is checked. A new conversation is about Solve's challenge, and choosing another in Ask never changes Solve's. Messages queue while a reply comes in and can be recalled; a conversation can be left while it is answered (its row in **Threads** blinks, even before its first message has gone out). A bar above the box shows what the model sees: leave an exchange out, put it back, or start fresh from a message; past 60% of the model's window the oldest exchanges are compressed into a summary. Ask answers with the hosted models; Qwen on TACC runs challenges from Solve. |
+| **Ask** | A tutor that can run commands in the challenge's sandbox; every flag it states is checked. A new conversation is about Solve's challenge, and choosing another in Ask never changes Solve's. Messages queue while a reply comes in and can be recalled; a conversation can be left while it is answered (its row in **Threads** blinks, even before its first message has gone out). A bar above the box shows what the model sees: leave an exchange out, put it back, or start fresh from a message; past 60% of the model's window the oldest exchanges are compressed into a summary. Ask supports hosted models and Qwen through an active TACC session. |
 
 ![The Solve page replaying one of v7's verified attempts](docs/figures/app-solve.png)
 
@@ -273,7 +258,7 @@ Total time on a laptop: under a minute. No GPU, no API key, no network.
 | C2 | On the 20-challenge dev split, Qwen 3.8 27B verifies 33 of 40 attempts as the bare model (B0) and 36 of 40 as the full agent (B3), re-scored (as run: 33 and 35); B1 and B2 verify 33 each. No step of the ladder is significant (B0 to B3: exact McNemar p = 0.25); showing a gain of this size with 80% power would take about 190 paired attempts per tier | [§3](#3-reproducing-the-evaluation) | Offline from the records in `flagpilot/results/tacc/v7`; rerun on TACC with `deploy/tcloud/pipeline.sh` |
 | C3 | The verifier's rejections are checked, not assumed: replaying every recorded submission through today's verifier found 20 correct solutions rejected in `v6` and one in `v7`; re-scored, B3 goes from 31 (`v6`) to 36 (`v7`). The third stage of gate 4 changes none of the 320 verdicts | §3; [evaluation notes](flagpilot/docs/EVALUATION_NOTES.md) | `python3 scripts/rescore.py results/tacc/v6` and `results/tacc/v7` |
 | C4 | Failures are attributed from the traces: every one of `v7`'s 51 protocol breaks is a reply the model ended on its own, 48 of them inside their JSON, and 47 came after one of its own replies had been shown to it cut short (`v6`: 85, 81, 81) | §3; Known limitations, item 14 | `python3 scripts/protocol_breaks.py results/tacc/v7` |
-| C5 | The system works end to end: web app, live runs, replays, Lab statistics, hosted models with fail-over, and Qwen on TACC through the course SDK | Getting Started; §4 | `./start.sh`, `./start.sh --check`, `bash scripts/verify.sh` (14 checks, including 105 browser checks and 91 controls); on the cluster, `scripts/live_tacc_check.py` (17 checks) |
+| C5 | The system works end to end: web app, live runs, replays, Lab statistics, hosted models with fail-over, and Qwen on TACC through the course SDK | Getting Started; §4 | `./start.sh`, `./start.sh --check`, `bash scripts/verify.sh` and the optional live TACC checks in [Tests](#6-tests) |
 
 **Not claimed.** An order of the four tiers: no step from B0 to B3 is significant in `v6` or `v7`, so the ladder shows
 what each tier adds, not that it helps. The E3 efficiency grid and the E4 escalation study are implemented and tested
@@ -286,7 +271,7 @@ single DeepSeek baseline in `docs/EVALUATION_BASELINE.md` is reported as measure
 | Path | Contents |
 |---|---|
 | `proposal.pdf`, `course_project.pdf` | The proposal this artifact implements (goals, experiments E1–E4, cut order) and the course specification |
-| `start.sh`, `shared.env`, `env.example` | One-command start / restart / stop; the shared keys (committed on purpose); a names-only template for `.env` |
+| `start.sh`, `env.example` | One-command start, restart, and stop, plus an empty credential template for `.env` |
 | `flagpilot/flagpilot/` | Core package: agent loop, tools, sandbox, replay verifier, metrics, storage |
 | `flagpilot/app/` | Web app (zero-dependency HTTP server and single-page frontend) |
 | `flagpilot/demo-tasks/` | **Three synthetic tasks bundled so the quickstart runs offline** (trivial on purpose: they exercise the pipeline, not the model) |
@@ -413,13 +398,15 @@ challenges of the frozen dev split:
 
 | Batch | What | Claims |
 |---|---|---|
-| `v7` | All four tiers B0–B3, two attempts per challenge (n = 40 per tier), the final engine: B0 and B3 at commit `103411e`, B1 and B2 the same day at `e8b82d4` (the same engine with today's verifier) | C2–C4 |
+| `v7` | All four tiers B0–B3, two attempts per challenge (n = 40 per tier): B0 and B3 at commit `103411e`, B1 and B2 the same day at `e8b82d4` (the same engine with today's verifier) | C2–C4 |
 | `v6` | All four tiers, two attempts each, before the fixes; as run and re-scored | C3, C4 |
-| `v5` | B0 and B3, one attempt each; a sanity check against Gemini | — |
+| `v5` | One attempt per challenge per tier; the Gemini sanity check uses B0 and B3 | — |
 
 The records of all three are in `flagpilot/results/tacc/` (every attempt's trace, script and write-up, each batch's
 `runs.jsonl` ledger, summary and job logs). Design rationale: `flagpilot/docs/DESIGN.md`. A separate DeepSeek Flash
-B3 baseline on all 53 tasks is in `flagpilot/docs/EVALUATION_BASELINE.md`.
+B3 baseline covers 43 of 53 tasks (22 dev, 21 test). It recorded 25 correct flags and 22 replay-verified
+attempts. See the [Track H baseline](flagpilot/docs/EVALUATION_BASELINE.md#track-h-offline-baseline) for its budget,
+eligibility criteria and cost estimate.
 
 **Check the numbers offline** (no model, no cluster):
 
@@ -448,7 +435,7 @@ challenge × tier map and the paired tests (`./start.sh` copies the records into
 
 #### Results
 
-**`v7`, the final engine** (2026-11-21; the figure at the top):
+**`v7` reference evaluation** (2026-11-21; the figure at the top):
 
 | Tier | Verified as run | 95% interval | Re-scored | Mean turns | Mean tokens | Median wall time |
 |---|---|---|---|---|---|---|
@@ -457,7 +444,7 @@ challenge × tier map and the paired tests (`./start.sh` copies the records into
 | B2 + structured tools | 33/40 · 82.5% | 68.0–91.2% | 33/40 | 6.1 | 18,739 | 31 s |
 | B3 + full rules | 35/40 · 87.5% | 73.9–94.5% | 36/40 | 5.9 | 20,947 | 34 s |
 
-Re-scored, each step up the ladder is within chance: B0 to B1 2 attempts gained and 2 lost (exact McNemar p = 1.0), B1
+The exact McNemar tests did not detect a significant difference between tiers: B0 to B1 2 attempts gained and 2 lost (exact McNemar p = 1.0), B1
 to B2 3 and 3 (p = 1.0), B2 to B3 4 and 1 (p = 0.38), B0 to B3 3 and 0 (p = 0.25; as run 3 and 1, p = 0.63).
 
 **`v6` and what changed.** `v6` verified 26, 24, 25 and 25 of 40 as run, and 32, 29, 28 and 31 re-scored. Two things
@@ -619,9 +606,8 @@ submits SDK jobs and reads their Slurm logs, so nothing is forwarded.
 *Start-up of the serving job, from submission to the API answering: a typical run and one with slow shared storage
 (2026-11-21). The steps run inside the course's serving script, whose settings the course fixes.*
 
-**4E. Gemini instead of TACC.** `./start.sh` already uses Gemini with the key in `shared.env`. Your own key (Google AI
-Studio's free tier is enough; a Gemini app subscription does not include the API) goes in the root `.env` as
-`GEMINI_API_KEY=…`, then `./start.sh --restart`. A `gemini-*` model name defaults to Google's OpenAI-compatible
+**4E. Gemini instead of TACC.** Set your own `GEMINI_API_KEY` in the root `.env`, then run
+`./start.sh --restart`. A `gemini-*` model name defaults to Google's OpenAI-compatible
 endpoint; only standard chat fields are sent; a 503 or a stream that ends before any text is retried, a per-minute
 quota waits as long as the server says (up to four retries) and a daily quota fails at once with a plain reason. A
 reply that comes back empty or as a malformed function call is retried with a plain-JSON reminder, then handed to the
@@ -634,29 +620,25 @@ ready, leaving 43–55 minutes per job: long evaluations are split (`--shard i/n
 
 ### Keys
 
-Keys and endpoints are read, first match wins, from environment variables, then the repository-root `.env` (yours;
-never committed), then [`shared.env`](shared.env) (committed). The tests read neither file (`FLAGPILOT_NO_DOTENV`).
-Keys are never logged, written into a run's fingerprint, or sent to the browser.
+Configure keys and endpoints with environment variables or the ignored root `.env` file. Environment variables
+take precedence. Tests disable dotenv loading with `FLAGPILOT_NO_DOTENV`.
 
-- `shared.env` holds the owner's keys on purpose, so that a clone runs with one command. The repository is public, so
-  those keys are visible to everyone and can be revoked at any time; keep your own in `.env` for anything that matters.
-- **Before you publish a fork:** drop `shared.env`, rewrite it out of your history, and use your own keys.
-- `python3 flagpilot/scripts/scan_secrets.py` checks every tracked file, every file about to be added and the whole
-  history for the keys in `.env` and for common key shapes; it prints names and places, never a value.
+Run `python3 flagpilot/scripts/scan_secrets.py` to scan the checkout and Git history for configured values and
+common key formats. Use `--no-history` to scan the checkout alone. The scanner reports locations and match types.
 
 ### 5. Metrics
 
 | Metric | Definition |
 |---|---|
-| raw accuracy | `verdict != wrong`: the flag matched gold, with or without a working script |
+| raw accuracy | `verdict` is `verified` or `unverified`. The submitted flag matched the known answer |
 | verified rate | `verdict == verified`: the flag matched **and** the replay reproduced it from the material |
 | gap | raw accuracy − verified rate: answered but not reproducible |
 | Wilson interval | 95% confidence interval for a proportion |
 | McNemar | Exact paired test on matched attempts (same challenge, same repeat) between two batches |
 | p50 / p95 | End-to-end latency and verified solve time |
 
-`wrong` is returned only when the flag itself is wrong, so raw accuracy can be recomputed from any `runs.jsonl` ledger,
-including batches recorded before a code change.
+Compute raw accuracy from the verdicts in the corresponding `runs.jsonl` ledger. Budget or error outcomes and
+`reproduced` outcomes for tasks without a gold answer do not count as correct flags.
 
 ### 6. Tests
 
@@ -738,6 +720,14 @@ and drives the page against the real cluster. Run it only when no other job of y
 | A run of an imported challenge fails with nothing to show | The challenge needs its original network service | Expected: the page warns before the first run; such a flag cannot be confirmed offline |
 | An import says the link holds several challenges | The link points at a repository or folder of challenges | Pick one from the list, or paste the challenge's own folder |
 | `./start.sh` says the port is in use | Another program listens on 8080 | `./start.sh --port 9000` |
+
+### Final report PDF
+
+From the repository root, run `bash docs/submission/build.sh`. It writes
+`docs/submission/flagpilot-submission.pdf` with the repository link, contribution table, and the committed README and figures.
+The build uses Git, Python 3, Pandoc, and TeX with XeLaTeX and Latexmk. On Linux or WSL it can use Fontconfig with
+Liberation Sans, DejaVu Sans Mono, DejaVu Sans, and Noto Sans CJK SC. To build a specific revision, set `SUBMIT_REF` to its
+commit or tag. Review the PDF from the exact revision submitted for grading.
 
 ### Data and licensing
 

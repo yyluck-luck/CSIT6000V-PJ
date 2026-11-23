@@ -241,36 +241,28 @@ def is_gemini(base_url: str) -> bool:
     return urlparse(base_url or "").hostname == "generativelanguage.googleapis.com"
 
 
-# 密钥与端点从哪里读（前面的优先）：环境变量 > 仓库根目录 .env（个人的，不进 git）> 仓库根目录 shared.env
-# （仓库自带的共享密钥：私有仓库里给组员和评审"克隆后 ./start.sh 一键复现"用；仓库公开之前必须删掉它并作废这些密钥）。
-# 测试设 FLAGPILOT_NO_DOTENV，两个文件都不读。
-SHARED_ENV = PROJECT_ROOT.parent / "shared.env"
-
-
-def dotenv_files() -> list[Path]:
-    return [PROJECT_ROOT.parent / ".env", SHARED_ENV]
-
-
+# 模型凭据来自环境变量或仓库根目录下被 Git 忽略的 .env。
 def dotenv_pairs(dotenv: Path | None = None) -> dict[str, str]:
-    """NAME=value：给了 dotenv 只读那一个文件；否则先 .env 再 shared.env，先出现的有值的为准（空值不挡后面的）。"""
+    """读取指定的配置文件，默认使用仓库根目录的 .env。"""
+    path = dotenv if dotenv is not None else PROJECT_ROOT.parent / ".env"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+
     out: dict[str, str] = {}
-    for path in ([dotenv] if dotenv is not None else dotenv_files()):
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
+    for line in lines:
+        if "=" not in line or line.lstrip().startswith("#"):
             continue
-        for line in lines:
-            if "=" not in line or line.lstrip().startswith("#"):
-                continue
-            k, v = line.split("=", 1)
-            k, v = k.strip(), v.strip().strip('"').strip("'")
-            if k and v and k not in out:
-                out[k] = v
+        k, v = line.split("=", 1)
+        k, v = k.strip(), v.strip().strip('"').strip("'")
+        if k and v and k not in out:
+            out[k] = v
     return out
 
 
 def dotenv_value(name: str, dotenv: Path | None = None) -> str:
-    """.env / shared.env 里某个配置的值（例如 FLAGPILOT_FALLBACK_MODEL）；测试里设 FLAGPILOT_NO_DOTENV 就不读。"""
+    """.env 里某个配置的值（例如 FLAGPILOT_FALLBACK_MODEL）；测试里设 FLAGPILOT_NO_DOTENV 就不读。"""
     if dotenv is None and os.environ.get("FLAGPILOT_NO_DOTENV"):
         return ""
     return dotenv_pairs(dotenv).get(name, "")
@@ -300,7 +292,7 @@ def extra_endpoints(environ=None, dotenv: Path | None = None) -> dict[str, dict]
 
 
 def gemini_api_key(environ=None, dotenv: Path | None = None) -> str:
-    """Gemini 密钥：先看环境变量，再看 .env，最后 shared.env（只读这两个名字，不打印、不进指纹）。"""
+    """Gemini 密钥：先看环境变量，再看 .env（只读两个已知变量名）。"""
     env = os.environ if environ is None else environ
     for k in GEMINI["key_env"]:
         v = (env.get(k) or "").strip()

@@ -6,15 +6,35 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(git rev-parse --show-toplevel)"
 REF="${SUBMIT_REF:-HEAD}"
-FULL="$(git -C "$ROOT" rev-parse "$REF")"
-BLOB="https://github.com/yyluck-luck/CSIT6000V-PJ/blob/main"
+FULL="$(git -C "$ROOT" rev-parse --verify "$REF^{commit}")"
+BLOB="https://github.com/yyluck-luck/CSIT6000V-PJ/blob/$FULL"
+REPORT_TZ="${SUBMIT_TZ:-Asia/Shanghai}"
+
+choose_font() {
+  local preferred="$1" fallback="$2"
+  if command -v fc-list >/dev/null && [[ -z "$(fc-list ":family=$preferred" family)" ]]; then
+    printf "%s" "$fallback"
+  else
+    printf "%s" "$preferred"
+  fi
+}
+
+MAIN_FONT="$(choose_font "Helvetica Neue" "Liberation Sans")"
+MONO_FONT="$(choose_font "Menlo" "DejaVu Sans Mono")"
+CJK_FONT="$(choose_font "PingFang SC" "Noto Sans CJK SC")"
+
+PANDOC_HELP="$(pandoc --help)"
+HIGHLIGHT_STYLE=--highlight-style=tango
+if [[ "$PANDOC_HELP" == *--syntax-highlighting* ]]; then
+  HIGHLIGHT_STYLE=--syntax-highlighting=tango
+fi
 
 count() {   # commits and lines added by the given author names (no merges, data files left out)
   local args=() a
   for a in "$@"; do args+=(--author="^$a <"); done
   local commits lines
-  commits=$(git -C "$ROOT" log "$REF" --no-merges "${args[@]}" --format=%h | wc -l | tr -d ' ')
-  lines=$(git -C "$ROOT" log "$REF" --no-merges "${args[@]}" --numstat --format= -- . ':!*.pdf' ':!*.png' ':!*.svg' ':!flagpilot/results' ':!shared.env' \
+  commits=$(git -C "$ROOT" log "$FULL" --no-merges "${args[@]}" --format=%h | wc -l | tr -d ' ')
+  lines=$(git -C "$ROOT" log "$FULL" --no-merges "${args[@]}" --numstat --format= -- . ':!*.pdf' ':!*.png' ':!*.svg' ':!flagpilot/results' ':!shared.env' \
           | awk 'NF==3 && $1 != "-" {s+=$1} END {printf "%d", s}')
   printf '%s %s' "$commits" "$lines"
 }
@@ -22,31 +42,31 @@ span() {    # the dates of an author's first and last commit, in the timezone th
             # made at 11:12 -0800 reads as the next day here, which is when it landed for everyone else)
   local args=() a
   for a in "$@"; do args+=(--author="^$a <"); done
-  TZ="${SUBMIT_TZ:-Asia/Shanghai}" git -C "$ROOT" log "$REF" --no-merges "${args[@]}" --format=%ad --date=format-local:%Y-%m-%d | sort | sed -n '1p;$p' | paste -sd' ' - \
+  TZ="$REPORT_TZ" git -C "$ROOT" log "$FULL" --no-merges "${args[@]}" --format=%ad --date=format-local:%Y-%m-%d | sort | sed -n '1p;$p' | paste -sd' ' - \
     | awk '{print ($2 == "" || $1 == $2) ? $1 : $1 "\\newline to " $2}'
 }
 read -r LC LL <<< "$(count "Liu Yiyang" "yyluck")"
 read -r ZC ZL <<< "$(count "777study777")"
 read -r HC HL <<< "$(count "YifanHong7" "Leoasuka" "Hong Yifan")"
 LS="$(span "Liu Yiyang" "yyluck")"; ZS="$(span "777study777")"; HS="$(span "YifanHong7" "Leoasuka" "Hong Yifan")"
-TOTAL="$(git -C "$ROOT" log "$REF" --no-merges --format=%h | wc -l | tr -d ' ')"
+TOTAL="$(git -C "$ROOT" log "$FULL" --no-merges --format=%h | wc -l | tr -d ' ')"
 fmt() { printf "%'d" "$1" 2>/dev/null || printf '%d' "$1"; }
 cat > stats.tex <<TEX
-\\newcommand{\\SubmitCommit}{$(git -C "$ROOT" rev-parse --short "$REF")}
+\\newcommand{\\SubmitCommit}{$(git -C "$ROOT" rev-parse --short "$FULL")}
 \\newcommand{\\SubmitCommitFull}{$FULL}
-\\newcommand{\\SubmitCommitDate}{$(git -C "$ROOT" log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M' "$REF")}
-\\newcommand{\\SubmitDate}{$(date '+%Y-%m-%d')}
+\\newcommand{\\SubmitDate}{$(TZ="$REPORT_TZ" date '+%Y-%m-%d')}
 \\newcommand{\\LiuCommits}{$LC}\\newcommand{\\LiuLines}{$(fmt "$LL")}
 \\newcommand{\\ZhangCommits}{$ZC}\\newcommand{\\ZhangLines}{$(fmt "$ZL")}
 \\newcommand{\\HongCommits}{$HC}\\newcommand{\\HongLines}{$(fmt "$HL")}
 \\newcommand{\\LiuSpan}{$LS}\\newcommand{\\ZhangSpan}{$ZS}\\newcommand{\\HongSpan}{$HS}\\newcommand{\\TotalCommits}{$TOTAL}
 TEX
 
-# the README and its figures at that commit; links to files in the repository become links to the default branch on
-# GitHub, images stay local (pandoc embeds them from .ref/)
-git -C "$ROOT" show "$REF:README.md" > readme-src.md
+# Embed the selected commit's figures and pin relative GitHub links to that commit.
+git -C "$ROOT" show "$FULL:README.md" > readme-src.md
 rm -rf .ref && mkdir -p .ref
-git -C "$ROOT" archive "$REF" docs/figures 2>/dev/null | tar -x -C .ref 2>/dev/null || true
+if git -C "$ROOT" cat-file -e "$FULL:docs/figures"; then
+  git -C "$ROOT" archive "$FULL" docs/figures | tar -x -C .ref
+fi
 python3 - "$BLOB" <<'PY'
 import re, sys
 blob = sys.argv[1]
@@ -70,7 +90,7 @@ while i < len(lines):
     out.append(lines[i])
     i += 1
 s = "\n".join(out)
-# relative links (not images) point at the commit on GitHub; relative images are embedded from the checkout of that commit
+# Relative links point at the selected commit on GitHub. Embed images from the archived checkout.
 s = re.sub(r"(?<!!)\[([^\]]*)\]\((?!https?://|#|mailto:)([^)\s]+)\)", lambda m: f"[{m.group(1)}]({blob}/{m.group(2).lstrip('./')})", s)
 s = re.sub(r"!\[([^\]]*)\]\((?!https?://)([^)\s]+)\)", lambda m: f"![{m.group(1)}](.ref/{m.group(2).lstrip('./')})", s)
 
@@ -121,9 +141,9 @@ pandoc readme-src.md -f markdown+gfm_auto_identifiers+autolink_bare_uris+lists_w
   --columns=70 -t latex -s -o flagpilot-submission.tex \
   -H header.tex -B front.tex \
   -V documentclass=article -V fontsize=10pt -V geometry:margin=2cm -V block-headings \
-  -V mainfont="Helvetica Neue" -V monofont="Menlo" -V CJKmainfont="PingFang SC" \
+  -V mainfont="$MAIN_FONT" -V monofont="$MONO_FONT" -V monofontoptions="HyphenChar={-}" -V CJKmainfont="$CJK_FONT" \
   -V colorlinks=true -V linkcolor=blue!60!black -V urlcolor=blue!60!black \
-  -M title="" --syntax-highlighting=tango
-latexmk -xelatex -interaction=nonstopmode -halt-on-error -quiet flagpilot-submission.tex > build.log 2>&1 || { tail -40 build.log; exit 1; }
+  -M title="" "$HIGHLIGHT_STYLE"
+latexmk -xelatex -interaction=nonstopmode -halt-on-error -quiet flagpilot-submission.tex > build.log 2>&1 || { grep -m1 -A8 '^!' flagpilot-submission.log || tail -40 build.log; exit 1; }
 latexmk -c -quiet flagpilot-submission.tex >/dev/null 2>&1 || true
 echo "built: $(pwd)/flagpilot-submission.pdf ($(pdfinfo flagpilot-submission.pdf 2>/dev/null | awk '/^Pages/ {print $2}') pages)"

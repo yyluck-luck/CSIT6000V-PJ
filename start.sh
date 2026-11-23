@@ -3,14 +3,14 @@
 #
 #   ./start.sh                  start on http://127.0.0.1:8080 and open the browser
 #   ./start.sh --port 9000      use another port (to run a second copy next to the first)
-#   ./start.sh --model mock     choose the model (default "auto": Gemini with the repository's keys,
+#   ./start.sh --model mock     choose the model (default "auto": Gemini with a configured key,
 #                               another configured provider if Gemini has no key, else the offline demo model)
 #   ./start.sh --check          check that every model provider answers with this copy's keys (no server started)
 #   ./start.sh --restart        restart (after pulling new code)
 #   ./start.sh --stop           stop it (and end its Qwen session on TACC, which would otherwise hold two GPUs for up to an hour)
 #
 # Needs only Python 3.11 or newer (and git, to fetch the evaluation challenges on the first run): no packages to
-# install. Keys come from shared.env (shipped with this private repository) or from your own .env, which wins.
+# install. Hosted model keys come from the environment or your local .env.
 # --stop and --restart only touch the FlagPilot started from this folder, never another copy's.
 set -eu
 
