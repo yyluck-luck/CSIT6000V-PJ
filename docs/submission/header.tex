@@ -8,7 +8,9 @@
 \AtBeginEnvironment{longtable}{\small}
 \setlength{\LTpre}{6pt}\setlength{\LTpost}{6pt}
 \usepackage{newunicodechar}
-\newfontfamily\fallbackfont{Arial Unicode MS}[Scale=MatchLowercase]
+\IfFontExistsTF{Arial Unicode MS}
+  {\newfontfamily\fallbackfont{Arial Unicode MS}[Scale=MatchLowercase]}
+  {\newfontfamily\fallbackfont{DejaVu Sans}[Scale=MatchLowercase]}
 \newunicodechar{⌘}{{\fallbackfont ⌘}}
 \newunicodechar{↗}{{\fallbackfont ↗}}
 \newunicodechar{►}{{\fallbackfont ►}}
@@ -26,7 +28,6 @@
 \renewcommand{\arraystretch}{1.25}
 \setlength{\emergencystretch}{3em}
 \usepackage{xurl}
-\setmonofont{Menlo}[Scale=MatchLowercase,HyphenChar={-}]   % long code words may break at the end of a line
 
 % long identifiers such as enable_prefix_caching may break after an underscore
 \renewcommand{\_}{\textunderscore\allowbreak}

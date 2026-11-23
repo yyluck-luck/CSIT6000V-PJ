@@ -1,6 +1,7 @@
 # secrets stay on the laptop (API keys for DeepSeek, Gemini, ...)
 .env
 .env.*
+/shared.env
 
 # local agent notes / macOS metadata — never part of the artifact
 .workbuddy/

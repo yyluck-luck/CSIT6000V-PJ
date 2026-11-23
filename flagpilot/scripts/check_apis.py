@@ -1,4 +1,4 @@
-"""Check that every model provider answers with the keys this copy has (shared.env, .env or the environment).
+"""Check that every model provider answers with the credentials configured in .env or the environment.
 
 For each provider in the model menu (Gemini, DeepSeek, GLM, Qwen, GPT), one tiny request goes to the models of its
 chain, cheapest first, until one answers. The report says which model answered and how fast, or why none did (daily
@@ -54,7 +54,7 @@ def main() -> int:
     provs = server.provider_list()
     if not provs:
         print("No model provider has a key in this copy: only the offline demo model and replays work.")
-        print("Put a key in .env (see env.example), or check that shared.env is present.")
+        print("Configure a provider key in the environment or in .env (see env.example).")
         return 1
     bad = 0
     for p in provs:

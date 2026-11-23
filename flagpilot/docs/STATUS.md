@@ -1,6 +1,9 @@
 # Implementation Status
 
-Last updated: **2026-11-20**. This document is the primary reference for project progress and the remaining TODO list. README files summarize it; new proposals should be identified separately from existing project commitments.
+This page records the project's status on **2026-11-20**. For the submitted artifact, see the
+[latest evaluation](../../README.md#3-reproducing-the-evaluation),
+[TACC deployment](../../README.md#4-deployment-on-tacc), and
+[final report build](../../README.md#final-report-pdf).
 
 [PR #3](https://github.com/yyluck-luck/CSIT6000V-PJ/pull/3) merged the API integration, English writeups, and optional encrypted storage into `main` (`3d496bb`). Usage: [writeups and storage](WRITEUPS_AND_STORAGE.md).
 

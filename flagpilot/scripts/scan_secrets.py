@@ -1,9 +1,6 @@
 """Look for API keys where they must never be: files git tracks, files about to be added, the whole git history
 (every branch, commit messages included) and any extra folders you name.
 
-shared.env at the repository root is the one place keys are kept on purpose (the private repository ships the
-owner's keys for one-click reproduction); it is skipped, in the files and in the history. A key anywhere else counts.
-
 The keys come from the repository's .env (every *_KEY / *_TOKEN / *_SECRET / *_PASSWORD value of 12+ characters)
 plus a few well-known key shapes (Google, OpenAI-style sk-, GitHub, AWS, private-key blocks). Only variable names,
 key shapes and places are printed, never a value.
@@ -33,7 +30,6 @@ SHAPES = {
     "private-key-block": re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 }
 MAX_FILE = 20 * 1024 * 1024
-ALLOWED = {"shared.env"}           # paths relative to the repository root
 
 
 def repo_root() -> Path:
@@ -71,11 +67,9 @@ def hits_in(data: bytes, secrets: dict[str, bytes]) -> list[str]:
     return out
 
 
-def scan_files(paths: list[Path], secrets: dict[str, bytes], label: str, report: list[str], root: Path | None = None) -> int:
+def scan_files(paths: list[Path], secrets: dict[str, bytes], label: str, report: list[str]) -> int:
     n = 0
     for p in paths:
-        if root is not None and p.resolve().relative_to(root.resolve()).as_posix() in ALLOWED:
-            continue
         try:
             if not p.is_file() or p.stat().st_size > MAX_FILE:
                 continue
@@ -97,7 +91,7 @@ def git_files(root: Path) -> list[Path]:
 def scan_history(root: Path, secrets: dict[str, bytes], report: list[str]) -> int:
     proc = subprocess.Popen(["git", "log", "--all", "-p", "--text", "--no-color", "--format=@@commit %H%n%B"],
                             stdout=subprocess.PIPE, cwd=root)
-    commit, n, flagged, skip = "", 0, set(), False
+    commit, n, flagged = "", 0, set()
     buf: list[bytes] = []
 
     def flush() -> None:
@@ -111,13 +105,9 @@ def scan_history(root: Path, secrets: dict[str, bytes], report: list[str]) -> in
     for line in proc.stdout:
         if line.startswith(b"@@commit "):
             flush()
-            commit, buf, skip = line.split()[1].decode(), [], False
+            commit, buf = line.split()[1].decode(), []
             n += 1
-        elif line.startswith(b"diff --git "):
-            path = line.rstrip().split(b" b/", 1)[-1].decode("utf-8", "replace")
-            skip = path in ALLOWED                     # the sanctioned keys file: its own lines are not a leak
-            buf.append(line)
-        elif not skip:
+        else:
             buf.append(line)
     flush()
     proc.wait()
@@ -134,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     secrets = load_secrets(root / ".env")
     report: list[str] = []
     print(f"keys checked: {', '.join(sorted(secrets)) or '(none in .env)'} + {len(SHAPES)} key shapes")
-    n = scan_files(git_files(root), secrets, "repo", report, root=root)
+    n = scan_files(git_files(root), secrets, "repo", report)
     print(f"repo files scanned: {n}")
     if not args.no_history:
         print(f"commits scanned: {scan_history(root, secrets, report)}")

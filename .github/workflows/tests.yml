@@ -20,7 +20,7 @@ jobs:
       matrix:
         python: ["3.11", "3.12", "3.13"]
     env:
-      FLAGPILOT_NO_DOTENV: "1"     # never read shared.env or .env in CI
+      FLAGPILOT_NO_DOTENV: "1"     # never load local .env in tests
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - uses: actions/checkout@v4
@@ -51,5 +51,12 @@ jobs:
           node --check /tmp/page.js
           node --check flagpilot/scripts/ui_check.mjs
           node --check flagpilot/scripts/click_all.mjs
+      - name: scan checkout for credentials
+        run: |
+          if git ls-files --error-unmatch shared.env >/dev/null 2>&1; then
+            echo "shared.env must stay out of Git."
+            exit 1
+          fi
+          python3 flagpilot/scripts/scan_secrets.py --no-history
       - name: every shell script parses
         run: git ls-files '*.sh' | xargs -n1 bash -n

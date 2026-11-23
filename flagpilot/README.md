@@ -15,7 +15,7 @@
 ./start.sh            # 打开 127.0.0.1:8080；--model mock 离线演示，--restart 重启，--stop 停止
 ```
 
-私有仓库自带 `shared.env`（可直接用的密钥）；想换成自己的，把 `env.example` 复制成 `.env` 填好（`.env` 不进 git，优先于 `shared.env`）。仓库公开之前必须删掉 `shared.env` 并作废其中的密钥，见根目录 README 的 *Keys* 一节。
+使用托管模型时，把 `env.example` 复制成 `.env`，填写自己的密钥，或使用环境变量。离线演示无需密钥。
 
 只跑引擎、不开网页：
 
@@ -89,7 +89,7 @@ flagpilot/
 ├── demo-tasks/             ★ 内置合成题（3 道），供快速验证与自检
 ├── deploy/                 TACC / Slurm 提交脚本（通用集群模板）
 ├── scripts/                本地启停、自检、划分生成、H 轨一命令
-├── tests/                  414 条测试
+├── tests/                  单元测试与集成测试
 └── docs/                   设计、题库、TACC、实现状态
 ```
 
@@ -128,7 +128,7 @@ runs/<batch>/gpu.jsonl                   GPU 秒账本（检测到 GPU 时才写
 | [docs/DATASET.md](docs/DATASET.md) | 题库怎么接：数据契约、为什么独立分发、来源与版权 |
 | [docs/TASKS.md](docs/TASKS.md) | 题库目录结构、字段说明、怎么加自己的题 |
 | [docs/TACC.md](docs/TACC.md) | 集群提交流程与常见错误 |
-| [docs/STATUS.md](docs/STATUS.md) | 逐条对照 proposal 与课程要求的实现状态 |
+| [docs/STATUS.md](docs/STATUS.md) | 2026-11-20 的项目进度记录，含提案与课程要求对照 |
 | [Evaluation baseline](docs/EVALUATION_BASELINE.md) | Frozen dev/test split and DeepSeek Flash results |
 | [docs/WRITEUPS_AND_STORAGE.md](docs/WRITEUPS_AND_STORAGE.md) | writeup 生成与加密存储 |
 
@@ -136,7 +136,7 @@ runs/<batch>/gpu.jsonl                   GPU 秒账本（检测到 GPU 时才写
 
 ## 已知边界
 
-这些是**设计层面的限制**，不是 bug，写报告和答辩时必须说明（根 README 第 6 节有英文版）：
+这些是**设计层面的限制**，不是 bug，写报告和答辩时必须说明（根 README 第 7 节有英文版）：
 
 1. **沙箱不是安全边界。** 与主进程同 uid，无 `chroot` / `seccomp` / `cgroup`；`challenge/` 的只读权限可以用 `chmod` 改回来。真正的防线是「flag 不进沙箱」+「重放用干净副本」。
 2. **网络隔离是 `proxy-only`。** 只是把 `http_proxy` 指向死端口；实测裸 socket 仍可出网。
